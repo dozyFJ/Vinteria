@@ -177,7 +177,7 @@ fn audio_ticks(secs: f32, bpm: f32) -> u32 {
 const SNAPS: [(u32, &str); 6] = [(384, "1 bar"), (192, "1/2 bar"), (96, "1/4 (beat)"), (48, "1/8"), (24, "1/16"), (6, "Off (fine)")];
 
 /// Copy of clip `i` right after it (or at the next free spot on the same track).
-fn duplicate_clip(project: &mut Project, i: usize) -> Option<usize> {
+pub(super) fn duplicate_clip(project: &mut Project, i: usize) -> Option<usize> {
     let c = *project.arrangement.clips.get(i)?;
     for k in 1..=64u32 {
         let mut n = Clip { start: c.start + c.len * k, ..c };
