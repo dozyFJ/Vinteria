@@ -1607,7 +1607,8 @@ impl VinteriaApp {
         let playing = self.playing() && self.project.song_mode;
         let add_lane = ui.data(|d| d.get_temp::<bool>(egui::Id::new("m_browser_open"))).unwrap_or(false);
         let full_h = ruler + (tracks + usize::from(add_lane)) as f32 * lane_h;
-        let grid_h = full_h.min((ui.available_height() * 0.42).max(160.0));
+        let space = ui.available_height().max(1.0);
+        let grid_h = full_h.min((space * 0.65).max(1.0));
         let mut pick = None;
         let mut dropped_item = None;
         let mut dropped_effect = None;
@@ -1712,17 +1713,19 @@ impl VinteriaApp {
             }
         }
         ui.add_space(8.0);
-        // the device dock of the PC, scrolled sideways on a phone
+        // The device chain uses the space left below the timeline.
         let lane = self.arr.sel_lane;
         let tname = self.project.arrangement.tracks.get(lane).map(|t| t.name.clone()).unwrap_or_default();
         ui.horizontal(|ui| {
             ui.painter().circle_filled(ui.cursor().min + vec2(6.0, 9.0), 5.0, lane_col(lane));
             ui.add_space(16.0);
-            ui.label(RichText::new(tname).size(15.0).strong().color(ink()));
-            ui.label(RichText::new("track · instrument · effects").size(11.0).color(muted()));
+            ui.add(egui::Label::new(RichText::new(tname).size(15.0).strong().color(ink())).truncate());
         });
         ui.add_space(4.0);
-        let h = ui.available_height().max(200.0);
+        let h = ui.available_height();
+        if h < 24.0 {
+            return;
+        }
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::hover());
         panel(ui.painter(), rect, 14.0);
         let drop_target = ui.interact(rect, ui.id().with("m_effect_drop"), Sense::hover());
@@ -1732,9 +1735,12 @@ impl VinteriaApp {
         if let Some(kind) = drop_target.dnd_release_payload::<crate::fx::FxKind>() {
             self.m_drop_effect(*kind, lane);
         }
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(10.0)));
-        let inner_h = rect.height() - 20.0;
-        egui::ScrollArea::horizontal().id_salt("m_dock").auto_shrink([false, false]).show(&mut child, |ui| {
+        let inner = rect.shrink(8.0);
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
+        child.set_clip_rect(inner.intersect(ui.clip_rect()));
+        let inner_h = inner.height();
+        egui::ScrollArea::both().id_salt("m_device_chain").max_height(inner_h)
+            .auto_shrink([false, false]).show(&mut child, |ui| {
             let w = ui.available_width().max(660.0);
             ui.allocate_ui_with_layout(vec2(w, inner_h), egui::Layout::top_down(egui::Align::LEFT), |ui| {
                 ui.set_min_size(vec2(w, inner_h));
