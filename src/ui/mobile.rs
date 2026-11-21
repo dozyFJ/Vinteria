@@ -583,6 +583,9 @@ impl VinteriaApp {
                 self.m_studio_portrait_header(ctx);
                 if self.m_tab == 1 {
                     self.m_studio_dock(ctx);
+                    if self.m_tab == 1 && self.m_sec == SEC_PLAYLIST {
+                        self.m_playlist_track_nav(ctx);
+                    }
                 }
             } else {
                 self.m_studio_sidebar(ctx);
@@ -789,6 +792,44 @@ impl VinteriaApp {
                         });
                 });
             });
+    }
+
+    fn m_playlist_track_nav(&mut self, ctx: &egui::Context) {
+        let mut select = None;
+        egui::TopBottomPanel::bottom("m_playlist_track_nav")
+            .show_separator_line(false)
+            .frame(Frame::none().fill(bar_fill()).inner_margin(Margin::symmetric(7.0, 3.0)))
+            .show(ctx, |ui| {
+                pulse_visuals(ui);
+                mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_playlist_track_tabs")
+                    .auto_shrink([false, true]).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            for (lane, track) in self.project.arrangement.tracks.iter().enumerate() {
+                                let selected = self.arr.sel_lane == lane;
+                                let label = RichText::new(&track.name).color(lane_col(lane));
+                                let button = egui::Button::new(label).selected(selected)
+                                    .min_size(vec2(60.0, 44.0)).wrap_mode(egui::TextWrapMode::Extend);
+                                let response = ui.add(button).on_hover_text(if selected { "Track settings" } else { "Select track" });
+                                if response.clicked() || response.secondary_clicked() {
+                                    select = Some((lane, selected || response.secondary_clicked()));
+                                }
+                            }
+                        });
+                    });
+            });
+        if let Some((lane, open_settings)) = select {
+            self.arr.sel_lane = lane;
+            self.arr.sel_clip = None;
+            self.arr.sel.clear();
+            ctx.data_mut(|d| {
+                d.insert_temp(egui::Id::new("m_playlist_reveal_track"), lane);
+                d.remove::<usize>(egui::Id::new("m_clip_sheet_selection"));
+                d.remove::<(usize, u32)>(egui::Id::new("m_audio_clip_target"));
+                if open_settings {
+                    d.insert_temp(egui::Id::new("m_track_sheet_open"), true);
+                }
+            });
+        }
     }
 
     fn m_studio_exit(&mut self, ui: &mut Ui, ctx: &egui::Context, width: f32) -> bool {
@@ -2113,7 +2154,11 @@ impl VinteriaApp {
         let full_h = ruler + (tracks + usize::from(add_lane)) as f32 * lane_h;
         let panel_id = egui::Id::new("m_playlist_track_names");
         let panel_open = ui.data(|d| d.get_temp::<bool>(panel_id)).unwrap_or(false);
-        let panel_width: f32 = if panel_open { 106.0 } else { 28.0 };
+        let screen = ui.ctx().screen_rect();
+        let portrait = screen.width() < screen.height();
+        let panel_width: f32 = if portrait { 0.0 } else if panel_open { 106.0 } else { 28.0 };
+        let reveal_id = egui::Id::new("m_playlist_reveal_track");
+        let reveal_lane = ui.data_mut(|d| d.remove_temp::<usize>(reveal_id));
         let (viewport, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
         let mut grid = viewport;
         grid.min.x += panel_width.min((viewport.width() - 1.0).max(0.0));
@@ -2125,8 +2170,13 @@ impl VinteriaApp {
         let mut dropped_item = None;
         let mut dropped_effect = None;
         let scroll = mobile_scroll(egui::ScrollArea::both()).id_salt("m_playlist")
-            .drag_to_scroll(gesture.is_none()).max_height(grid.height()).auto_shrink([false, false])
-            .show(&mut grid_ui, |ui| {
+            .drag_to_scroll(gesture.is_none()).max_height(grid.height()).auto_shrink([false, false]);
+        let scroll = if let Some(lane) = reveal_lane.filter(|&lane| lane < tracks) {
+            scroll.vertical_scroll_offset((ruler + lane as f32 * lane_h - grid.height() * 0.35).max(0.0))
+        } else {
+            scroll
+        };
+        let scroll = scroll.show(&mut grid_ui, |ui| {
             let (rect, resp) = ui.allocate_exact_size(
                 vec2((bars as f32 * bar_w).max(grid.width()), full_h.max(grid.height())), Sense::click());
             let p = ui.painter_at(rect);
@@ -2272,40 +2322,42 @@ impl VinteriaApp {
                 }
             }
         });
-        let panel = Rect::from_min_max(viewport.min, pos2(grid.left(), viewport.bottom()));
-        let painter = ui.painter_at(panel);
-        painter.rect_filled(panel, 0.0, pick(0xFF252D37, 0xFFD6E0EA));
-        let track_y = scroll.inner_rect.top() + ruler - scroll.state.offset.y;
-        let names = Rect::from_min_max(pos2(panel.left(), panel.top() + ruler), panel.max);
-        if panel_open {
-            let labels = painter.with_clip_rect(names.intersect(ui.clip_rect()));
-            for (lane, track) in self.project.arrangement.tracks.iter().enumerate() {
-                let top = track_y + lane as f32 * lane_h;
-                let row = Rect::from_min_size(pos2(panel.left(), top), vec2(panel.width(), lane_h));
-                if !row.intersects(names) {
-                    continue;
-                }
-                let selected = lane == self.arr.sel_lane;
-                if selected {
-                    labels.rect_filled(row, 0.0, pick(0xFF323D4C, 0xFFC9D9E7));
-                }
-                labels.line_segment([row.left_top(), row.right_top()], Stroke::new(0.6, glass_edge()));
-                labels.circle_filled(row.left_center() + vec2(12.0, 0.0), 4.0, lane_col(lane));
-                labels.with_clip_rect(row.intersect(names).intersect(ui.clip_rect())).text(
-                    row.left_center() + vec2(23.0, 0.0), Align2::LEFT_CENTER, &track.name,
-                    FontId::proportional(13.0), if track.mute { muted() } else { ink() });
-                if ui.interact(row.intersect(names), panel_id.with(lane), Sense::click()).clicked() {
-                    selection = Some((lane, None, None, false));
+        if !portrait {
+            let panel = Rect::from_min_max(viewport.min, pos2(grid.left(), viewport.bottom()));
+            let painter = ui.painter_at(panel);
+            painter.rect_filled(panel, 0.0, pick(0xFF252D37, 0xFFD6E0EA));
+            let track_y = scroll.inner_rect.top() + ruler - scroll.state.offset.y;
+            let names = Rect::from_min_max(pos2(panel.left(), panel.top() + ruler), panel.max);
+            if panel_open {
+                let labels = painter.with_clip_rect(names.intersect(ui.clip_rect()));
+                for (lane, track) in self.project.arrangement.tracks.iter().enumerate() {
+                    let top = track_y + lane as f32 * lane_h;
+                    let row = Rect::from_min_size(pos2(panel.left(), top), vec2(panel.width(), lane_h));
+                    if !row.intersects(names) {
+                        continue;
+                    }
+                    let selected = lane == self.arr.sel_lane;
+                    if selected {
+                        labels.rect_filled(row, 0.0, pick(0xFF323D4C, 0xFFC9D9E7));
+                    }
+                    labels.line_segment([row.left_top(), row.right_top()], Stroke::new(0.6, glass_edge()));
+                    labels.circle_filled(row.left_center() + vec2(12.0, 0.0), 4.0, lane_col(lane));
+                    labels.with_clip_rect(row.intersect(names).intersect(ui.clip_rect())).text(
+                        row.left_center() + vec2(23.0, 0.0), Align2::LEFT_CENTER, &track.name,
+                        FontId::proportional(13.0), if track.mute { muted() } else { ink() });
+                    if ui.interact(row.intersect(names), panel_id.with(lane), Sense::click()).clicked() {
+                        selection = Some((lane, None, None, false));
+                    }
                 }
             }
-        }
-        let toggle = Rect::from_min_size(panel.min, vec2(panel.width(), ruler));
-        let toggle_response = ui.interact(toggle, panel_id, Sense::click())
-            .on_hover_text(if panel_open { "Hide track names" } else { "Show track names" });
-        painter.text(toggle.center(), Align2::CENTER_CENTER, if panel_open { "‹  Tracks" } else { "›" },
-            FontId::proportional(if panel_open { 13.0 } else { 24.0 }), ink());
-        if toggle_response.clicked() {
-            ui.data_mut(|d| d.insert_temp(panel_id, !panel_open));
+            let toggle = Rect::from_min_size(panel.min, vec2(panel.width(), ruler));
+            let toggle_response = ui.interact(toggle, panel_id, Sense::click())
+                .on_hover_text(if panel_open { "Hide track names" } else { "Show track names" });
+            painter.text(toggle.center(), Align2::CENTER_CENTER, if panel_open { "‹  Tracks" } else { "›" },
+                FontId::proportional(if panel_open { 13.0 } else { 24.0 }), ink());
+            if toggle_response.clicked() {
+                ui.data_mut(|d| d.insert_temp(panel_id, !panel_open));
+            }
         }
         if let Some((index, moved)) = move_clip {
             self.project.arrangement.clips[index] = moved;
