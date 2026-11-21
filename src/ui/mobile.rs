@@ -553,9 +553,27 @@ impl VinteriaApp {
                 painter.text(rect.center(), Align2::CENTER_CENTER, short, FontId::proportional(12.0), ink());
             }
         }
+        #[cfg(target_os = "android")]
+        self.m_sync_orientation(ctx);
         step("page done");
         let repaint = if self.playing() { 33 } else { 250 };
         ctx.request_repaint_after(std::time::Duration::from_millis(repaint));
+    }
+
+    #[cfg(target_os = "android")]
+    fn m_sync_orientation(&self, ctx: &egui::Context) {
+        let id = egui::Id::new("m_requested_landscape");
+        let previous = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+        let landscape = self.m_tab == 1;
+        if previous == landscape {
+            return;
+        }
+        if let Some(activity) = &self.android_updater {
+            ctx.data_mut(|d| d.insert_temp(id, landscape));
+            if let Err(error) = activity.request_landscape(landscape) {
+                crate::android_log_error(&format!("Cannot change Studio orientation: {error}"));
+            }
+        }
     }
 
     // ───────────────────── shell: header, rail, dock ─────────────────────

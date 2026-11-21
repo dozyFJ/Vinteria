@@ -54,6 +54,16 @@ impl Updater {
         }
     }
 
+    pub(crate) fn request_landscape(&self, landscape: bool) -> Result<(), String> {
+        const SENSOR_LANDSCAPE: i32 = 6;
+        const SENSOR_PORTRAIT: i32 = 7;
+        let orientation = if landscape { SENSOR_LANDSCAPE } else { SENSOR_PORTRAIT };
+        with_activity(&self.app, |env, activity| {
+            env.call_method(activity, "setRequestedOrientation", "(I)V", &[JValue::Int(orientation)])?;
+            Ok(())
+        }).map_err(|error| error.to_string())
+    }
+
     fn check(&mut self, ctx: &egui::Context) {
         self.last_check = Some(Instant::now());
         *self.status.lock().unwrap() = Status::Checking;
