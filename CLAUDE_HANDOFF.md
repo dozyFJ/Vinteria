@@ -57,3 +57,12 @@ source /workspace/android-tools/winteria-build.env
 - Новая иконка приложения: инь-ян из ночного и дневного цвета Pulse с буквой W, которая меняет цвет на изгибе.
 - Иконки лежат в `android/res/mipmap-*/ic_launcher.png`, подключены в Cargo.toml (`resources = "android/res"`, `icon = "@mipmap/ic_launcher"`).
   Перерисовать: `python tools/make_android_icon.py`. Тот же логотип в доке и профиле приложения.
+
+## 1.0.7 — НАСТОЯЩАЯ причина вылета найдена и исправлена
+
+- Через adb на телефоне (Realme RMX5303, Android 15): `UnsatisfiedLinkError: dlopen failed: cannot locate symbol "__cxa_pure_virtual"`.
+  Приложение падает ещё до запуска Rust-кода. Все APK со звуком (1.0.1–1.0.6) битые: в `libvinteria_daw.so` неразрешённые
+  C++ символы Oboe (`_Znwm`, `__cxa_*`), C++ runtime не слинкован (oboe-sys ставит `c++_static` раньше своей библиотеки).
+- Исправление: `build.rs` добавляет `-lc++_static -lc++abi` в конец команды линковки для Android.
+- `tools/build-android.sh` теперь проверяет .so через `llvm-nm` и не выпускает APK с неразрешёнными C++ символами.
+- Проверка вручную: `llvm-nm -D --undefined-only libvinteria_daw.so | grep -E "__cxa_pure_virtual|_Znwm"` должна ничего не вывести.

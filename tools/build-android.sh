@@ -35,4 +35,11 @@ target_dir="${CARGO_TARGET_DIR:-$PWD/target}"
 cargo apk build "${build_args[@]}" --target-dir "$target_dir"
 apk="$target_dir/$profile/apk/Winteria.apk"
 "$apksigner" verify "$apk"
+# the .so must not need C++ symbols that nothing provides (that is the "cannot locate symbol __cxa_pure_virtual" start-up crash)
+so="$target_dir/aarch64-linux-android/$profile/libvinteria_daw.so"
+nm_tool=$(ls "$ANDROID_NDK_HOME"/toolchains/llvm/prebuilt/*/bin/llvm-nm 2>/dev/null | head -n1)
+if [[ -n "$nm_tool" && -f "$so" ]] && "$nm_tool" -D --undefined-only "$so" | grep -Eq ' (__cxa_pure_virtual|_Znwm|__cxa_begin_catch)$'; then
+    printf 'libvinteria_daw.so has unresolved C++ symbols: the APK would crash at start.\n' >&2
+    exit 1
+fi
 printf '%s\n' "$apk"
