@@ -3,9 +3,7 @@ use super::{Cmd, Engine};
 use crate::mixer::NUM_STRIPS;
 use crate::project::Project;
 use arc_swap::ArcSwap;
-#[cfg(not(target_os = "android"))]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-#[cfg(not(target_os = "android"))]
 use cpal::{BufferSize, SampleFormat, SampleRate, StreamConfig};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
@@ -92,7 +90,6 @@ impl Shared {
     }
 }
 
-#[cfg(not(target_os = "android"))]
 mod io {
     use super::*;
 
@@ -148,7 +145,12 @@ mod io {
 
         fn find_device(name: &str) -> Option<cpal::Device> {
             let host = cpal::default_host();
-            host.output_devices().ok()?.find(|d| d.name().map(|n| n == name).unwrap_or(false))
+            let found = host.output_devices().ok().and_then(|mut it| it.find(|d| d.name().map(|n| n == name).unwrap_or(false)));
+            // Android reports the default output as a device without a listed name: fall back to it
+            if found.is_none() && (cfg!(target_os = "android") || name.is_empty()) {
+                return host.default_output_device();
+            }
+            found
         }
 
         /// Open `name` with preferred sample rate (0 = auto) and buffer size in frames (0 = driver default).
@@ -361,30 +363,4 @@ mod io {
     }
 
 }
-#[cfg(not(target_os = "android"))]
 pub use io::AudioIo;
-
-/// Android: no audio device in the first beta (the interface works, nothing is played).
-#[cfg(target_os = "android")]
-pub struct AudioIo {
-    pub shared: Arc<Shared>,
-    pub devices: Vec<String>,
-    pub device_name: String,
-    pub sample_rate: u32,
-    pub rates: Vec<u32>,
-    pub buffer_frames: u32,
-    pub error: Option<String>,
-}
-
-#[cfg(target_os = "android")]
-impl AudioIo {
-    pub fn new(shared: Arc<Shared>) -> Self {
-        AudioIo { shared, devices: vec![], device_name: String::new(), sample_rate: 48000, rates: vec![], buffer_frames: 0, error: Some("Audio is not available in the first Android beta".into()) }
-    }
-    pub fn refresh_devices(&mut self) {}
-    pub fn has_stream(&self) -> bool {
-        false
-    }
-    pub fn poll_error(&mut self) {}
-    pub fn open(&mut self, _name: &str, _want_rate: u32, _buffer_frames: u32) {}
-}

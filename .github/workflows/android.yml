@@ -1,0 +1,79 @@
+name: Android APK
+
+on:
+  push:
+    branches: [main, android-audio]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    env:
+      NDK_VERSION: 26.3.11579264
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Android SDK packages
+        run: sdkmanager --install "platforms;android-34" "build-tools;34.0.0" "ndk;${NDK_VERSION}" > /dev/null
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-apk
+        run: cargo install cargo-apk --locked
+
+      - name: Build APK
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          export ANDROID_HOME="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          export ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/$NDK_VERSION"
+          # with the ANDROID_KEYSTORE_B64 secret every build has the same key, so a new APK installs over the old one;
+          # without it cargo-apk signs with a fresh debug key (the old app has to be removed before installing)
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            export CARGO_APK_RELEASE_KEYSTORE_PASSWORD="$KEYSTORE_PASSWORD"
+          else
+            echo "::warning::ANDROID_KEYSTORE_B64 secret is not set - signing with a one-off key"
+            keytool -genkeypair -keystore "$RUNNER_TEMP/release.keystore" -storetype PKCS12 -storepass android -keypass android \
+              -alias vinteria -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Vinteria Daw"
+            export CARGO_APK_RELEASE_KEYSTORE_PASSWORD=android
+          fi
+          export CARGO_APK_RELEASE_KEYSTORE="$RUNNER_TEMP/release.keystore"
+          cargo apk build --release --lib
+          mkdir -p out
+          cp target/release/apk/VinteriaDaw.apk out/VinteriaDaw.apk
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VinteriaDaw-apk
+          path: out/VinteriaDaw.apk
+
+      - name: Publish release "android-latest"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete android-latest --yes --cleanup-tag || true
+          gh release create android-latest out/VinteriaDaw.apk \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Vinteria Daw (Android)" \
+            --notes "Автосборка из ${GITHUB_SHA::7}. Скачай VinteriaDaw.apk и установи."

@@ -46,3 +46,9 @@ Z..M lower piano row, Q..P upper piano row (number keys are sharps) - minus/equa
 - Plugin Grid Template (`src/ui/plugin_ui.rs`): one adaptive editor (header, presets, graph, knob grid, dry/wet) for every built-in plugin.
 - 20 Essentials FX + signature plugins **ViHalla** (12 modes, Shimmer, Freeze, Ducking, Dual Space A/B) and **ViGross** (Reverse, Stutter, volume pattern, Pattern Morph) in `src/fx.rs` / `src/fx_ext.rs`. Old projects load unchanged (`FxSlot::x` defaults to zeros).
 - Smart Steps (`src/ui/smart_steps.rs`): per-step Velocity / Pitch / Pan / Slide / Probability for drum lanes, Step Paint, waveform, Morph A/B. Stored in `sequencer::Step` (serde defaults keep old projects valid).
+
+## Android APK
+GitHub Actions (`.github/workflows/android.yml`) builds a signed `VinteriaDaw.apk` on every push and publishes it in the
+`android-latest` release. Sound plays through Oboe (AAudio/OpenSL); MIDI input and file dialogs are not available on Android yet.
+For updates that install over the old app, add the repo secrets `ANDROID_KEYSTORE_B64` (base64 of a keystore) and
+`ANDROID_KEYSTORE_PASSWORD`; without them each build gets a one-off key.

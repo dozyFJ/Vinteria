@@ -349,7 +349,7 @@ pub fn desktop_main() -> eframe::Result<()> {
     eframe::run_native("Vinteria Daw", options, Box::new(|cc| Ok(Box::new(ui::VinteriaApp::new(cc)))))
 }
 
-/// Android entry point (the first Android beta shows the interface only: no audio device, MIDI or file dialogs yet).
+/// Android entry point (sound plays through Oboe; MIDI input and file dialogs are not available on Android yet).
 #[cfg(target_os = "android")]
 #[no_mangle]
 fn android_main(app: android_activity::AndroidApp) {

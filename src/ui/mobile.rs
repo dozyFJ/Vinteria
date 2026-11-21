@@ -140,8 +140,6 @@ impl VinteriaApp {
             match sub {
                 3 => {
                     // Sounds
-                    ui.label(RichText::new("Sound output is not available in this beta yet.").size(11.0).color(DIM()));
-                    ui.add_space(8.0);
                     self.hub_sounds_list(ui);
                 }
                 2 => {
@@ -283,8 +281,6 @@ impl VinteriaApp {
                     ui.add_space(5.0);
                 }
             }
-            ui.add_space(8.0);
-            ui.label(RichText::new("Sound output is not available in this beta yet.").size(11.0).color(DIM()));
         });
     }
 

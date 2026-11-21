@@ -21,10 +21,11 @@ arc-swap = "1"
 crossbeam-channel = "0.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-
-# desktop only: audio device, file dialogs and MIDI input (the first Android beta has the interface only)
-[target.'cfg(not(target_os = "android"))'.dependencies]
+# audio device: WASAPI on Windows, AAudio/OpenSL (Oboe) on Android
 cpal = "0.15"
+
+# desktop only: file dialogs and MIDI input
+[target.'cfg(not(target_os = "android"))'.dependencies]
 rfd = "0.15"
 midir = "0.10"
 
