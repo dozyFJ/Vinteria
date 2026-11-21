@@ -1296,14 +1296,22 @@ impl VinteriaApp {
         let names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
         let record_id = egui::Id::new(("m_piano_record", pi));
         let mut record_step = ui.data(|d| d.get_temp::<usize>(record_id));
-        // horizontal zoom (width of one 1/16 step) and the optional keyboard along the bottom
-        let zoom_id = egui::Id::new("m_piano_step_w");
-        let mut step_w = ui.data(|d| d.get_temp::<f32>(zoom_id)).unwrap_or(32.0);
-        let keys_id = egui::Id::new("m_piano_bottom_keys");
-        let mut bottom_keys = ui.data(|d| d.get_temp::<bool>(keys_id)).unwrap_or(false);
-        let valid_pattern = pi < self.project.patterns.len();
         let screen = ui.ctx().screen_rect();
         let portrait = screen.width() < screen.height();
+        let ruler_width = if portrait { 50.0 } else { 58.0 };
+        let pattern = self.project.patterns.get(pi);
+        let valid_pattern = pattern.is_some();
+        let steps = pattern.map_or(1, |pattern| pattern.length_steps.max(1) as usize);
+        let zoom_id = egui::Id::new(("m_piano_step_w", portrait, drawer.is_some()));
+        let default_step_w = if portrait {
+            32.0
+        } else {
+            ((ui.available_width() - ruler_width) / steps.min(16) as f32).clamp(32.0, 72.0)
+        };
+        let mut step_w = ui.data(|d| d.get_temp::<f32>(zoom_id)).unwrap_or(default_step_w);
+        let mut zoom_changed = false;
+        let keys_id = egui::Id::new("m_piano_bottom_keys");
+        let mut bottom_keys = portrait && ui.data(|d| d.get_temp::<bool>(keys_id)).unwrap_or(true);
         let mut close = false;
         mobile_scroll(egui::ScrollArea::horizontal())
             .id_salt(("m_piano_toolbar", drawer.is_some(), portrait))
@@ -1351,11 +1359,13 @@ impl VinteriaApp {
                     }
                     if p_button(ui, "Zoom −", false, vec2(70.0, 44.0)).clicked() {
                         step_w = (step_w / 1.25).max(14.0);
+                        zoom_changed = true;
                     }
                     if p_button(ui, "Zoom +", false, vec2(70.0, 44.0)).clicked() {
                         step_w = (step_w * 1.25).min(72.0);
+                        zoom_changed = true;
                     }
-                    if p_button(ui, "Keys", bottom_keys, vec2(58.0, 44.0)).clicked() {
+                    if portrait && p_button(ui, "Keys", bottom_keys, vec2(58.0, 44.0)).clicked() {
                         bottom_keys = !bottom_keys;
                     }
                     ui.menu_button(format!("Key {}", names[(self.project.key_root % 12) as usize]), |ui| {
@@ -1390,8 +1400,12 @@ impl VinteriaApp {
             d.insert_temp(oct_id, oct);
             d.insert_temp(chord_id, chords);
             d.insert_temp(loop_id, looping);
-            d.insert_temp(zoom_id, step_w);
-            d.insert_temp(keys_id, bottom_keys);
+            if zoom_changed {
+                d.insert_temp(zoom_id, step_w);
+            }
+            if portrait {
+                d.insert_temp(keys_id, bottom_keys);
+            }
         });
         ui.add_space(3.0);
         ui.add(egui::Label::new(RichText::new("Double-tap to delete · Drag to move")
@@ -1402,7 +1416,6 @@ impl VinteriaApp {
         let rows = usize::from(high_pitch) + 1;
         let row_h = 24.0;
         let kb_h = if bottom_keys { (ui.available_height() * 0.20).clamp(34.0, 58.0) } else { 0.0 };
-        let steps = self.project.patterns[pi].length_steps.max(1) as usize;
         let track = self.project.arrangement.tracks.get(self.arr.sel_lane).and_then(|track| track.instrument)
             .or_else(|| self.project.patterns[pi].notes.first().map(|note| note.track)).unwrap_or(Track::Synth);
         let held_id = egui::Id::new("m_piano_held");
@@ -1411,7 +1424,7 @@ impl VinteriaApp {
         let pos = self.shared.position.load(Ordering::Relaxed);
         let play_step = (pos / TICKS_PER_STEP) as usize % steps;
         let cursor = if playing { Some(play_step) } else { record_step.map(|step| step % steps) };
-        let (ruler_width, timeline_height) = (50.0, 23.0);
+        let timeline_height = 23.0;
         let view_h = (ui.available_height() - kb_h - if bottom_keys { 12.0 } else { 4.0 }).max(timeline_height + 1.0);
         let (viewport, _) = ui.allocate_exact_size(vec2(ui.available_width(), view_h), Sense::hover());
         let grid = Rect::from_min_max(viewport.min + vec2(ruler_width, timeline_height), viewport.max);
