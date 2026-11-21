@@ -275,25 +275,34 @@ fn section(ui: &mut Ui, title: &str, width: f32, content: impl FnOnce(&mut Ui)) 
 
 /// Track Settings: General, Input / Output, Time & Pitch and Routing of the selected track.
 /// `lead` draws extra cards in front of the track's own (the options of the selected clip), in the same flow.
-fn track_settings(ui: &mut Ui, p: &mut Project, lane: usize, mut extra: impl FnMut(&mut Ui, &mut Project, u8)) {
+fn track_settings(ui: &mut Ui, p: &mut Project, lane: usize, mobile: bool, mut extra: impl FnMut(&mut Ui, &mut Project, u8)) {
     let Some((kind, name)) = p.arrangement.tracks.get(lane).map(|t| (t.kind, t.name.clone())) else { return };
     // the pages depend on what was picked: a MIDI track has an instrument, an audio track has a sound to time-stretch / pitch
     let is_midi = p.arrangement.tracks.get(lane).map_or(true, |t| t.kind == TrackKind::Midi);
     // three pages like a sampler panel: Main (name, instrument, level, pitch) / Instrument (clip options + editor) / Routing (in, out, sidechain)
-    let pages: [(&str, Vec<u8>); 3] = if is_midi {
-        [("Main", vec![1, 5]), ("Instrument", vec![0]), ("Routing", vec![2, 4])]
+    let pages = if is_midi {
+        let main = if mobile { vec![1] } else { vec![1, 5] };
+        [("Main", main), ("Instrument", vec![0]), ("Routing", vec![2, 4]), ("Effects", vec![6])]
     } else {
-        [("Main", vec![1, 3]), ("Sample", vec![0]), ("Routing", vec![2, 4])]
+        [("Main", vec![1, 3]), ("Sample", vec![0]), ("Routing", vec![2, 4]), ("Effects", vec![6])]
     };
-    let tab_id = egui::Id::new(("ts_page", lane));
-    let mut cur_tab = ui.data(|d| d.get_temp::<usize>(tab_id)).unwrap_or(0).min(2);
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(format!("Track Settings – {name}")).strong().size(14.0));
-        ui.add_space(16.0);
-        for (i, (n, _)) in pages.iter().enumerate() {
+    let page_count = if mobile { 4 } else { 3 };
+    let tab_id = egui::Id::new(("ts_page", lane, mobile));
+    let mut cur_tab = ui.data(|d| d.get_temp::<usize>(tab_id)).unwrap_or(0).min(page_count - 1);
+    let tabs = |ui: &mut Ui| {
+        if !mobile {
+            ui.label(RichText::new(format!("Track Settings – {name}")).strong().size(14.0));
+            ui.add_space(16.0);
+        }
+        for (i, (n, _)) in pages.iter().take(page_count).enumerate() {
             if pill_tab(ui, n, cur_tab == i) { cur_tab = i; }
         }
-    });
+    };
+    if mobile {
+        ui.horizontal_wrapped(tabs);
+    } else {
+        ui.horizontal(tabs);
+    }
     ui.data_mut(|d| d.insert_temp(tab_id, cur_tab));
     ui.add_space(6.0);
     let tids: Vec<u8> = pages[cur_tab].1.clone();
@@ -308,9 +317,8 @@ fn track_settings(ui: &mut Ui, p: &mut Project, lane: usize, mut extra: impl FnM
                 extra(ui, p, 0);
                 continue;
             }
-            if tid == 5 {
-                // the instrument of a MIDI track: its whole editor (sampler, synth ...) lives here now
-                extra(ui, p, 1);
+            if tid == 5 || tid == 6 {
+                extra(ui, p, if tid == 5 { 1 } else { 2 });
                 continue;
             }
             let Some(tr) = p.arrangement.tracks.get_mut(lane) else { continue };
@@ -384,6 +392,27 @@ fn track_settings(ui: &mut Ui, p: &mut Project, lane: usize, mut extra: impl FnM
     });
         });
 }
+pub(super) fn mobile_track_settings(
+    ui: &mut Ui,
+    project: &mut Project,
+    state: &mut ArrState,
+    detail: &mut DetailCtx<'_>,
+    plugin_window: &mut bool,
+    library: &mut Library,
+    shared: &crate::audio_engine::device::Shared,
+) {
+    let lane = state.sel_lane;
+    let audio = project.arrangement.kind(lane) == TrackKind::Audio;
+    track_settings(ui, project, lane, true, |ui, project, part| {
+        match part {
+            0 if audio => super::track_ui::sample_panel(ui, project, lane, state.sel_sample, library, shared),
+            0 => show(ui, project, state, detail, plugin_window, library, shared.position.load(std::sync::atomic::Ordering::Relaxed), 1),
+            2 => show(ui, project, state, detail, plugin_window, library, shared.position.load(std::sync::atomic::Ordering::Relaxed), 2),
+            _ => {}
+        }
+    });
+}
+
 /// id of the dock page (0 Track Settings, 1 Instruments, 2 Track Effects, 3 Editor); set it to 3 to open the clip editor
 pub fn dock_page_id() -> egui::Id {
     egui::Id::new("bottom_dock_page")
@@ -464,7 +493,7 @@ pub fn dock(
                         for v in [&mut w.inactive, &mut w.hovered, &mut w.active, &mut w.open, &mut w.noninteractive] { v.rounding = egui::Rounding::ZERO; }
                         ui.visuals_mut().menu_rounding = egui::Rounding::ZERO;
                     }
-                    track_settings(ui, p, lane, |ui, p, what| {
+                    track_settings(ui, p, lane, false, |ui, p, what| {
                         if what == 1 {
                             let mut dc = DetailCtx { roll_track: &mut roll.track, live_track, inst };
                             show(ui, p, st, &mut dc, plugin_window, lib, playhead, 1);

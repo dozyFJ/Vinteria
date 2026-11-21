@@ -629,7 +629,10 @@ impl VinteriaApp {
                 self.m_tab = 0;
                 self.m_sec = 0;
                 self.hub_cache = None;
-                ui.data_mut(|d| d.remove::<usize>(egui::Id::new("m_clip_sheet_selection")));
+                ui.data_mut(|d| {
+                    d.remove::<usize>(egui::Id::new("m_clip_sheet_selection"));
+                    d.remove::<bool>(egui::Id::new("m_track_sheet_open"));
+                });
                 return;
             }
 
@@ -637,7 +640,13 @@ impl VinteriaApp {
             ui.menu_button(format!("{editor} ▾"), |ui| {
                 for (index, title) in STUDIO_SECTIONS.iter().enumerate() {
                     if ui.selectable_label(self.m_sec == index, *title).clicked() {
-                        self.m_sec = index;
+                        if self.m_sec != index {
+                            self.m_sec = index;
+                            ui.data_mut(|d| {
+                                d.remove::<usize>(egui::Id::new("m_clip_sheet_selection"));
+                                d.remove::<bool>(egui::Id::new("m_track_sheet_open"));
+                            });
+                        }
                         ui.close_menu();
                     }
                 }
@@ -881,6 +890,7 @@ impl VinteriaApp {
         self.m_step_sheet(ui.ctx());
         self.m_export_sheet(ui.ctx());
         self.m_clip_sheet(ui.ctx());
+        self.m_track_sheet(ui.ctx());
     }
 
     /// Pattern chips: tap to switch the pattern that the Steps and Piano screens edit.
@@ -997,35 +1007,39 @@ impl VinteriaApp {
         let mut oct = ui.data(|d| d.get_temp::<u8>(oct_id)).unwrap_or(4);
         let mut chords = ui.data(|d| d.get_temp::<bool>(chord_id)).unwrap_or(false);
         let names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-        egui::ScrollArea::horizontal().id_salt("m_piano_tools").auto_shrink([false, true]).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                if p_button(ui, "Oct −", false, vec2(64.0, 34.0)).clicked() {
-                    oct = oct.saturating_sub(1).max(1);
-                }
-                if p_button(ui, "Oct +", false, vec2(64.0, 34.0)).clicked() {
-                    oct = (oct + 1).min(7);
-                }
-                ui.label(format!("C{oct}–B{}", oct + 1));
-                ui.menu_button(format!("Key {}", names[(self.project.key_root % 12) as usize]), |ui| {
-                    for (root, name) in names.iter().enumerate() {
-                        if ui.selectable_value(&mut self.project.key_root, root as u8, *name).clicked() {
-                            ui.close_menu();
+        egui::SidePanel::right("m_piano_tools").resizable(false)
+            .exact_width(94.0)
+            .frame(Frame::none().fill(bar_fill()).inner_margin(5.0))
+            .show_inside(ui, |ui| {
+                egui::ScrollArea::vertical().id_salt("m_piano_tools_scroll").show(ui, |ui| {
+                    let width = ui.available_width();
+                    if p_button(ui, "Oct −", false, vec2(width, 32.0)).clicked() {
+                        oct = oct.saturating_sub(1).max(1);
+                    }
+                    ui.label(format!("C{oct}–B{}", oct + 1));
+                    if p_button(ui, "Oct +", false, vec2(width, 32.0)).clicked() {
+                        oct = (oct + 1).min(7);
+                    }
+                    ui.menu_button(format!("Key {}", names[(self.project.key_root % 12) as usize]), |ui| {
+                        for (root, name) in names.iter().enumerate() {
+                            if ui.selectable_value(&mut self.project.key_root, root as u8, *name).clicked() {
+                                ui.close_menu();
+                            }
                         }
+                    });
+                    let scale = self.project.key_scale.min(crate::theory::CHROMATIC);
+                    ui.menu_button(crate::theory::SCALES[scale].0, |ui| {
+                        for (index, (name, _)) in crate::theory::SCALES.iter().enumerate() {
+                            if ui.selectable_value(&mut self.project.key_scale, index, *name).clicked() {
+                                ui.close_menu();
+                            }
+                        }
+                    });
+                    if p_button(ui, "Chords", chords, vec2(width, 32.0)).clicked() {
+                        chords = !chords;
                     }
                 });
-                let scale = self.project.key_scale.min(crate::theory::CHROMATIC);
-                ui.menu_button(crate::theory::SCALES[scale].0, |ui| {
-                    for (index, (name, _)) in crate::theory::SCALES.iter().enumerate() {
-                        if ui.selectable_value(&mut self.project.key_scale, index, *name).clicked() {
-                            ui.close_menu();
-                        }
-                    }
-                });
-                if p_button(ui, "Chords", chords, vec2(78.0, 34.0)).clicked() {
-                    chords = !chords;
-                }
             });
-        });
         ui.data_mut(|d| {
             d.insert_temp(oct_id, oct);
             d.insert_temp(chord_id, chords);
@@ -1134,33 +1148,40 @@ impl VinteriaApp {
             ctx.data_mut(|d| d.remove::<usize>(id));
             return;
         };
-        let screen = ctx.screen_rect();
-        let width = (screen.width() - 22.0).max(1.0);
-        let height = (screen.height() * 0.76).max(96.0);
-        let mut done = false;
-        egui::Window::new("Clip editor").id(egui::Id::new("m_clip_sheet_window"))
-            .title_bar(false).resizable(false).movable(false)
-            .anchor(Align2::CENTER_BOTTOM, [0.0, -8.0])
-            .fixed_size(vec2(width, height))
-            .frame(Frame::none().fill(p_bg()).stroke(Stroke::new(1.0, outline())).rounding(16.0).inner_margin(10.0))
-            .show(ctx, |ui| {
-                pulse_visuals(ui);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(if clip.audio { "Audio clip" } else { "Piano Roll" }).size(17.0).strong().color(ink()));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        done = p_button(ui, "Done", true, vec2(68.0, 32.0)).clicked();
-                    });
+        let title = if clip.audio { "Audio clip" } else { "Piano Roll" };
+        if mobile_editor_sheet(ctx, "m_clip_sheet_window", title, |ui| {
+            if clip.audio {
+                egui::ScrollArea::vertical().id_salt("m_audio_clip_controls").show(ui, |ui| {
+                    arrangement_ui::clip_options(ui, &mut self.project, &mut self.arr, &mut self.lib, index, clip.start);
                 });
-                if clip.audio {
-                    egui::ScrollArea::vertical().id_salt("m_audio_clip_controls").show(ui, |ui| {
-                        arrangement_ui::clip_options(ui, &mut self.project, &mut self.arr, &mut self.lib, index, clip.start);
-                    });
-                } else {
-                    self.m_piano_editor(ui, clip.pattern);
-                }
-            });
-        if done || ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            } else {
+                self.m_piano_editor(ui, clip.pattern);
+            }
+        }) {
             ctx.data_mut(|d| d.remove::<usize>(id));
+        }
+    }
+
+    fn m_track_sheet(&mut self, ctx: &egui::Context) {
+        let id = egui::Id::new("m_track_sheet_open");
+        if !ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false) {
+            return;
+        }
+        let Some(track) = self.project.arrangement.tracks.get(self.arr.sel_lane) else {
+            ctx.data_mut(|d| d.remove::<bool>(id));
+            return;
+        };
+        let title = format!("Track Settings · {}", track.name);
+        if mobile_editor_sheet(ctx, "m_track_sheet_window", &title, |ui| {
+            let mut detail = arrangement_ui::DetailCtx {
+                roll_track: &mut self.roll.track,
+                live_track: &mut self.live_track,
+                inst: &mut self.inst,
+            };
+            devices_ui::mobile_track_settings(ui, &mut self.project, &mut self.arr, &mut detail,
+                &mut self.plugin_window, &mut self.lib, &self.shared);
+        }) {
+            ctx.data_mut(|d| d.remove::<bool>(id));
         }
     }
 
@@ -1572,8 +1593,7 @@ impl VinteriaApp {
         }
     }
 
-    /// Playlist on top, and under it the same device dock as the PC (track settings, instrument, effects, clip options)
-    /// for the selected track: tap a track name or a clip to select it.
+    /// Tap a track name or clip to open its editor sheet.
     fn m_playlist(&mut self, ui: &mut Ui) {
         ui.horizontal_wrapped(|ui| {
             if p_button(ui, "+ MIDI clip", true, vec2(104.0, 37.0)).clicked() {
@@ -1587,6 +1607,14 @@ impl VinteriaApp {
             }
             if p_button(ui, "+ Audio clip", false, vec2(108.0, 37.0)).clicked() {
                 ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("m_browser_open"), true));
+            }
+            if !self.project.arrangement.tracks.is_empty()
+                && p_button(ui, "Track Settings", false, vec2(124.0, 37.0)).clicked()
+            {
+                ui.data_mut(|d| {
+                    d.remove::<usize>(egui::Id::new("m_clip_sheet_selection"));
+                    d.insert_temp(egui::Id::new("m_track_sheet_open"), true);
+                });
             }
         });
         if !self.arr.msg.is_empty() {
@@ -1607,8 +1635,7 @@ impl VinteriaApp {
         let playing = self.playing() && self.project.song_mode;
         let add_lane = ui.data(|d| d.get_temp::<bool>(egui::Id::new("m_browser_open"))).unwrap_or(false);
         let full_h = ruler + (tracks + usize::from(add_lane)) as f32 * lane_h;
-        let space = ui.available_height().max(1.0);
-        let grid_h = full_h.min((space * 0.65).max(1.0));
+        let grid_h = ui.available_height().max(1.0);
         let mut pick = None;
         let mut dropped_item = None;
         let mut dropped_effect = None;
@@ -1688,7 +1715,7 @@ impl VinteriaApp {
                     if pt.y > gy {
                         let lane = (((pt.y - gy) / lane_h) as usize).min(tracks - 1);
                         let clip = clip_rects.iter().find(|(_, _, r)| r.contains(pt)).map(|(i, _, _)| *i);
-                        pick = Some((lane, clip));
+                        pick = Some((lane, clip, pt.x < gx));
                     }
                 }
             }
@@ -1700,64 +1727,27 @@ impl VinteriaApp {
             self.m_drop_effect(kind, lane);
             self.arr.sel_clip = None;
         }
-        if let Some((lane, clip)) = pick {
+        if let Some((lane, clip, settings)) = pick {
             self.arr.sel_lane = lane;
             self.arr.sel_clip = clip;
+            if settings {
+                ui.data_mut(|d| {
+                    d.remove::<usize>(egui::Id::new("m_clip_sheet_selection"));
+                    d.insert_temp(egui::Id::new("m_track_sheet_open"), true);
+                });
+            }
             if let Some(i) = clip {
                 if let Some(c) = self.project.arrangement.clips.get(i) {
                     if !c.audio && c.pattern < self.project.patterns.len() {
                         self.project.current_pattern = c.pattern;
                     }
-                    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("m_clip_sheet_selection"), i));
+                    ui.data_mut(|d| {
+                        d.remove::<bool>(egui::Id::new("m_track_sheet_open"));
+                        d.insert_temp(egui::Id::new("m_clip_sheet_selection"), i);
+                    });
                 }
             }
         }
-        ui.add_space(8.0);
-        // The device chain uses the space left below the timeline.
-        let lane = self.arr.sel_lane;
-        let tname = self.project.arrangement.tracks.get(lane).map(|t| t.name.clone()).unwrap_or_default();
-        ui.horizontal(|ui| {
-            ui.painter().circle_filled(ui.cursor().min + vec2(6.0, 9.0), 5.0, lane_col(lane));
-            ui.add_space(16.0);
-            ui.add(egui::Label::new(RichText::new(tname).size(15.0).strong().color(ink())).truncate());
-        });
-        ui.add_space(4.0);
-        let h = ui.available_height();
-        if h < 24.0 {
-            return;
-        }
-        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::hover());
-        panel(ui.painter(), rect, 14.0);
-        let drop_target = ui.interact(rect, ui.id().with("m_effect_drop"), Sense::hover());
-        if drop_target.dnd_hover_payload::<crate::fx::FxKind>().is_some() {
-            ui.painter().rect_stroke(rect, 14.0, Stroke::new(1.5, p_accent()));
-        }
-        if let Some(kind) = drop_target.dnd_release_payload::<crate::fx::FxKind>() {
-            self.m_drop_effect(*kind, lane);
-        }
-        let inner = rect.shrink(8.0);
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
-        child.set_clip_rect(inner.intersect(ui.clip_rect()));
-        let inner_h = inner.height();
-        egui::ScrollArea::both().id_salt("m_device_chain").max_height(inner_h)
-            .auto_shrink([false, false]).show(&mut child, |ui| {
-            let w = ui.available_width().max(660.0);
-            ui.allocate_ui_with_layout(vec2(w, inner_h), egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                ui.set_min_size(vec2(w, inner_h));
-                devices_ui::dock(
-                    ui,
-                    &mut self.project,
-                    &mut self.arr,
-                    &mut self.roll,
-                    &mut self.live_track,
-                    &mut self.inst,
-                    &mut self.plugin_window,
-                    &mut self.lib,
-                    self.shared.position.load(Ordering::Relaxed),
-                    &self.shared,
-                );
-            });
-        });
     }
 
     fn m_tracks(&mut self, ui: &mut Ui) {
@@ -1967,6 +1957,25 @@ impl VinteriaApp {
             list_row(ui, lane_col(4), "R", "Recent", &format!("{} opened", self.recent.len()), "", false);
         });
     }
+}
+
+fn mobile_editor_sheet(ctx: &egui::Context, id: &'static str, title: &str, body: impl FnOnce(&mut Ui)) -> bool {
+    let screen = ctx.screen_rect();
+    let size = vec2((screen.width() - 22.0).max(1.0), (screen.height() * 0.76).max(96.0));
+    let mut done = false;
+    egui::Window::new(title).id(egui::Id::new(id)).title_bar(false).resizable(false).movable(false)
+        .anchor(Align2::CENTER_BOTTOM, [0.0, -8.0]).fixed_size(size)
+        .frame(Frame::none().fill(p_bg()).stroke(Stroke::new(1.0, outline())).rounding(16.0).inner_margin(10.0))
+        .show(ctx, |ui| {
+            pulse_visuals(ui);
+            ui.horizontal(|ui| {
+                let title_width = (ui.available_width() - 76.0).max(1.0);
+                ui.add_sized([title_width, 32.0], egui::Label::new(RichText::new(title).size(17.0).strong().color(ink())).truncate());
+                done = p_button(ui, "Done", true, vec2(68.0, 32.0)).clicked();
+            });
+            body(ui);
+        });
+    done || ctx.input(|input| input.key_pressed(egui::Key::Escape))
 }
 
 fn browser_drag_row<T: std::any::Any + Send + Sync>(ui: &mut Ui, label: &str, item: T) -> bool {
