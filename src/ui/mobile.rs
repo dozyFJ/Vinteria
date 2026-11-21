@@ -1405,7 +1405,7 @@ impl VinteriaApp {
         let shown = ctx.animate_bool(animation, true);
         let full = ctx.data(|d| d.get_temp::<bool>(full_id)).unwrap_or(false);
         let screen = ctx.screen_rect();
-        let portrait = screen.height() >= screen.width();
+        let portrait = screen.width() < screen.height();
         let bottom_sheet = portrait && !full;
         let width = if full || portrait {
             screen.width()
@@ -1940,7 +1940,21 @@ impl VinteriaApp {
         if !self.arr.msg.is_empty() {
             ui.colored_label(RED, &self.arr.msg);
         }
-        let (bar_w, lane_h, hdr, ruler) = (64.0f32, 52.0f32, 106.0f32, 24.0f32);
+        let (bar_w, hdr, ruler) = (64.0_f32, 106.0_f32, 24.0_f32);
+        let height_id = egui::Id::new("m_playlist_lane_height");
+        let gesture = ui.input(|input| input.multi_touch());
+        let viewport = ui.available_rect_before_wrap().intersect(ui.clip_rect());
+        let zoom = gesture.filter(|touch| viewport.contains(touch.start_pos));
+        let lane_h = ui.data_mut(|d| {
+            let height = d.get_temp::<f32>(height_id).unwrap_or(52.0);
+            if let Some(touch) = zoom {
+                let height = (height * touch.zoom_delta_2d.y).clamp(42.0, 140.0);
+                d.insert_temp(height_id, height);
+                height
+            } else {
+                height
+            }
+        });
         let tracks = self.project.arrangement.tracks.len();
         if tracks == 0 {
             ui.label(RichText::new("No tracks yet. Open a template in Projects.").color(muted()));
@@ -1957,9 +1971,10 @@ impl VinteriaApp {
         let grid_h = ui.available_height().max(1.0);
         let grid_w = ui.available_width().max(1.0);
         let mut selection = None;
+        let mut delete_clip = None;
         let mut dropped_item = None;
         let mut dropped_effect = None;
-        mobile_scroll(egui::ScrollArea::both()).id_salt("m_playlist").max_height(grid_h).auto_shrink([false, false]).show(ui, |ui| {
+        mobile_scroll(egui::ScrollArea::both()).id_salt("m_playlist").drag_to_scroll(gesture.is_none()).max_height(grid_h).auto_shrink([false, false]).show(ui, |ui| {
             let (rect, resp) = ui.allocate_exact_size(vec2((hdr + bars as f32 * bar_w).max(grid_w), full_h.max(grid_h)), Sense::click());
             let p = ui.painter_at(rect);
             let gx = rect.left() + hdr;
@@ -2045,20 +2060,49 @@ impl VinteriaApp {
                     }
                 }
             }
-            if resp.clicked() || resp.double_clicked() {
-                if let Some(pt) = resp.interact_pointer_pos() {
-                    if pt.y >= gy {
-                        let lane = ((pt.y - gy) / lane_h) as usize;
-                        if lane < tracks {
-                            let tick = (pt.x >= gx).then(|| ((pt.x - gx) / bar_w * TICKS_PER_BAR as f32) as u32);
-                            let clip = tick.and_then(|tick| self.project.arrangement.clips.iter().rposition(|clip|
-                                clip.lane == lane && (clip.start..clip.end_tick()).contains(&tick)));
-                            selection = Some((lane, clip, tick));
+            let edit = resp.double_clicked();
+            let menu = resp.secondary_clicked();
+            let menu_id = resp.id.with("clip_actions");
+            if gesture.is_none() && (resp.clicked() || edit || menu) {
+                let mut hit_clip = None;
+                if let Some(pt) = resp.interact_pointer_pos().filter(|pt| pt.y >= gy) {
+                    let lane = ((pt.y - gy) / lane_h) as usize;
+                    if lane < tracks {
+                        let tick = (pt.x >= gx).then(|| ((pt.x - gx) / bar_w * TICKS_PER_BAR as f32) as u32);
+                        let clip = tick.and_then(|tick| self.project.arrangement.clips.iter().rposition(|clip|
+                            clip.lane == lane && (clip.start..clip.end_tick()).contains(&tick)));
+                        hit_clip = clip;
+                        if !menu || clip.is_some() {
+                            selection = Some((lane, clip, tick, edit && !menu));
                         }
                     }
                 }
+                if menu {
+                    ui.data_mut(|d| {
+                        d.remove::<usize>(menu_id);
+                        if let Some(index) = hit_clip {
+                            d.insert_temp(menu_id, index);
+                        }
+                    });
+                }
+            }
+            let menu_clip = ui.data(|d| d.get_temp::<usize>(menu_id))
+                .filter(|index| *index < self.project.arrangement.clips.len());
+            if let Some(index) = menu_clip {
+                resp.context_menu(|ui| {
+                    if ui.button("Delete clip").clicked() {
+                        delete_clip = Some(index);
+                        ui.close_menu();
+                    }
+                });
             }
         });
+        if let Some(index) = delete_clip {
+            self.project.arrangement.clips.remove(index);
+            self.arr.sel_clip = None;
+            self.arr.sel.clear();
+            return;
+        }
         if let Some((item, lane, tick)) = dropped_item {
             self.m_drop_browser_item(&item, lane, tick);
         }
@@ -2066,7 +2110,7 @@ impl VinteriaApp {
             self.m_drop_effect(kind, lane);
             self.arr.sel_clip = None;
         }
-        if let Some((lane, clip, tick)) = selection {
+        if let Some((lane, clip, tick, edit)) = selection {
             self.arr.sel_lane = lane;
             self.arr.sel_clip = clip;
             self.arr.msg.clear();
@@ -2078,7 +2122,7 @@ impl VinteriaApp {
                 });
             }
             if let Some(i) = clip {
-                if let Some(c) = self.project.arrangement.clips.get(i) {
+                if let Some(c) = self.project.arrangement.clips.get(i).filter(|_| edit) {
                     if !c.audio && c.pattern < self.project.patterns.len() {
                         self.project.current_pattern = c.pattern;
                     }
