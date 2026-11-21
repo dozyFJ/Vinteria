@@ -1,0 +1,27 @@
+# Build output and packaged binaries
+/target/
+/release/
+/updates/
+*.log
+
+# Local preferences, project history and account data
+/favorite_projects.txt
+/fill_style.txt
+/library_*.txt
+/recent_projects.txt
+/theme.txt
+/update_url.txt
+/google_oauth.json
+/google_profile.json
+/beat-audio-check.json
+/layout-check.png
+/.env
+/.env.*
+*.keystore
+*.jks
+*.pem
+*.key
+
+# User sample packs; include the small factory sounds only
+/samples/*
+!/samples/Factory*.wav
