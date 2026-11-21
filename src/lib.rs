@@ -378,13 +378,18 @@ fn android_main(app: android_activity::AndroidApp) {
         builder.with_android_app(app);
     }));
     boot_log("eframe::run_native");
-    let _ = eframe::run_native("Winteria DAW", options, Box::new(move |cc| {
+    let result = eframe::run_native("Winteria DAW", options, Box::new(move |cc| {
         boot_log("window and GL ready");
         let mut app = ui::VinteriaApp::new(cc);
         boot_log("app created");
         app.android_updater = Some(android_update::Updater::new(activity));
         Ok(Box::new(app))
     }));
+    if let Err(error) = result {
+        let report = format!("Android window initialization failed: {error}");
+        boot_log(&report);
+        android_log_error(&report);
+    }
 }
 
 static BOOT_TRACE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -426,21 +431,26 @@ pub fn leave_safe_mode() {
 /// A panic on the phone closes the app without a trace: write it (with a backtrace) to `crash.txt` in the app's storage and to
 /// logcat, so the next start can show what happened.
 #[cfg(target_os = "android")]
-fn android_panic_hook() {
+fn android_log_error(report: &str) {
     extern "C" {
         fn __android_log_write(prio: i32, tag: *const std::os::raw::c_char, text: *const std::os::raw::c_char) -> i32;
     }
+    if let Ok(text) = std::ffi::CString::new(report.replace('\0', " ")) {
+        unsafe {
+            __android_log_write(6, c"Winteria".as_ptr(), text.as_ptr());
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+fn android_panic_hook() {
     std::panic::set_hook(Box::new(|info| {
         let t = std::thread::current();
         let bt = std::backtrace::Backtrace::force_capture();
         let report = format!("Winteria {} crashed\n[thread {}] {}\n\n{}", env!("CARGO_PKG_VERSION"), t.name().unwrap_or("unnamed"), info, bt);
         let _ = std::fs::write(ui::CRASH_FILE, &report);
         boot_log(&format!("PANIC: {info}"));
-        if let (Ok(tag), Ok(text)) = (std::ffi::CString::new("Winteria"), std::ffi::CString::new(report.replace('\0', " "))) {
-            unsafe {
-                __android_log_write(6, tag.as_ptr(), text.as_ptr());
-            }
-        }
+        android_log_error(&report);
     }));
 }
 
