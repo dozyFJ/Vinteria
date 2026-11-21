@@ -752,10 +752,12 @@ impl VinteriaApp {
                     self.m_studio_orientation_button(ui, ctx, width);
                     self.m_studio_full_view_button(ui, ctx, width);
                     let folder = self.m_sec == SEC_PLAYLIST;
-                    let reserved = if folder { 81.0 } else { 45.0 };
+                    let button_slot = width + ui.spacing().item_spacing.x;
+                    let reserved = 45.0 + (2 + usize::from(folder)) as f32 * button_slot;
                     let title_width = (ui.available_width() - reserved).max(1.0);
                     ui.add_sized([title_width, 32.0], egui::Label::new(RichText::new(&self.project.name)
                         .strong().size(14.0).color(ink())).truncate());
+                    self.m_studio_play_stop(ui, ctx, width);
                     self.m_studio_tempo(ui, 41.0);
                     if folder {
                         self.m_studio_browser_button(ui, ctx, width);
@@ -822,16 +824,8 @@ impl VinteriaApp {
         if studio_icon(ui, width, Icon::Rewind, false, "Return to start").clicked() {
             self.return_to_start(ctx, playing);
         }
-        let play = if playing {
-            studio_icon(ui, width, Icon::Pause, true, "Pause")
-        } else {
-            studio_icon(ui, width, Icon::Play, true, "Play")
-        };
-        if play.clicked() {
-            self.m_toggle_play(ctx);
-        }
-        if studio_icon(ui, width, Icon::Stop, false, "Stop").clicked() {
-            self.return_to_start(ctx, false);
+        if !portrait {
+            self.m_studio_play_stop(ui, ctx, width);
         }
         if studio_icon(ui, width, Icon::Record, self.record, "Arm recording").clicked() {
             self.record = !self.record;
@@ -858,6 +852,20 @@ impl VinteriaApp {
         }
         if !portrait && self.m_sec == SEC_PLAYLIST {
             self.m_studio_browser_button(ui, ctx, width);
+        }
+    }
+
+    fn m_studio_play_stop(&mut self, ui: &mut Ui, ctx: &egui::Context, width: f32) {
+        let play = if self.playing() {
+            studio_icon(ui, width, Icon::Pause, true, "Pause")
+        } else {
+            studio_icon(ui, width, Icon::Play, true, "Play")
+        };
+        if play.clicked() {
+            self.m_toggle_play(ctx);
+        }
+        if studio_icon(ui, width, Icon::Stop, false, "Stop").clicked() {
+            self.return_to_start(ctx, false);
         }
     }
 
