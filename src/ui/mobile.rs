@@ -746,10 +746,6 @@ impl VinteriaApp {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
                     let width = 32.0;
-                    if self.m_studio_exit(ui, ctx, width) {
-                        return;
-                    }
-                    self.m_studio_orientation_button(ui, ctx, width);
                     self.m_studio_full_view_button(ui, ctx, width);
                     let folder = self.m_sec == SEC_PLAYLIST;
                     let button_slot = width + ui.spacing().item_spacing.x;
@@ -775,6 +771,11 @@ impl VinteriaApp {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 5.0;
                     let width = 38.0;
+                    if self.m_studio_exit(ui, ctx, width) {
+                        return;
+                    }
+                    self.m_studio_orientation_button(ui, ctx, width);
+                    ui.separator();
                     mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_studio_port_controls")
                         .auto_shrink([false, true]).show(ui, |ui| {
                             ui.horizontal(|ui| {
