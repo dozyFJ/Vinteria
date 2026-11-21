@@ -2,6 +2,8 @@ pub mod arrangement;
 pub mod audio_engine;
 pub mod audio_rec;
 pub mod updater;
+#[cfg(target_os = "android")]
+mod android_update;
 pub mod bounce;
 pub mod effects;
 pub mod fx;
@@ -360,10 +362,15 @@ fn android_main(app: android_activity::AndroidApp) {
     }
     use winit::platform::android::EventLoopBuilderExtAndroid;
     let mut options = eframe::NativeOptions::default();
+    let activity = app.clone();
     options.event_loop_builder = Some(Box::new(move |builder| {
         builder.with_android_app(app);
     }));
-    let _ = eframe::run_native("Winteria DAW", options, Box::new(|cc| Ok(Box::new(ui::VinteriaApp::new(cc)))));
+    let _ = eframe::run_native("Winteria DAW", options, Box::new(move |cc| {
+        let mut app = ui::VinteriaApp::new(cc);
+        app.android_updater = Some(android_update::Updater::new(activity));
+        Ok(Box::new(app))
+    }));
 }
 
 /// Route named saves to private app storage until Android file pickers are available.

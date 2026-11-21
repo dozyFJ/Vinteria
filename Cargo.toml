@@ -1,6 +1,6 @@
 [package]
 name = "vinteria_daw"
-version = "1.0.0-beta.1"
+version = "1.0.1"
 edition = "2021"
 description = "Winteria DAW - a from-scratch DAW (audio engine, synths, sequencer, piano roll, arrangement, mixer)"
 
@@ -31,12 +31,16 @@ midir = "0.10"
 [target.'cfg(target_os = "android")'.dependencies]
 eframe = { version = "0.29", default-features = false, features = ["glow", "default_fonts", "android-native-activity"] }
 android-activity = { version = "0.6", features = ["native-activity"] }
+jni = "0.21"
 winit = { version = "0.30", default-features = false, features = ["android-native-activity"] }
 
 [package.metadata.android]
-package = "com.synthesia.daw"
+package = "com.winteria.daw"
 build_targets = ["aarch64-linux-android"]
 apk_name = "Winteria"
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.INTERNET"
 
 [package.metadata.android.sdk]
 min_sdk_version = 26

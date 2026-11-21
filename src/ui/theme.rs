@@ -1,4 +1,4 @@
-//! VINTERIA design system, in the style of the AOS launcher.
+//! Winteria design system, in the style of the AOS launcher.
 //!
 //! One look in two modes (AOS Night / AOS Day): cool graphite surfaces, a bright cyan accent,
 //! big rounded pill controls, Segoe UI throughout. Everything in the UI reads its colours / radii from here, so a change in
@@ -306,6 +306,30 @@ pub fn apply(ctx: &Context) {
     fonts.families.insert(FontFamily::Name("serif".into()), chain);
     ctx.set_fonts(fonts);
     apply_visuals(ctx);
+}
+
+pub fn paint_glass_background(ctx: &Context) {
+    let rect = ctx.screen_rect();
+    let base = BG();
+    let accent = TEAL();
+    let violet = if is_dark() { Color32::from_rgb(90, 62, 155) } else { Color32::from_rgb(165, 144, 225) };
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(rect.left_top(), lerp_rgb(base, accent, if is_dark() { 0.23 } else { 0.18 }));
+    mesh.colored_vertex(rect.right_top(), lerp_rgb(base, violet, 0.37));
+    mesh.colored_vertex(rect.right_bottom(), lerp_rgb(base, accent, if is_dark() { 0.10 } else { 0.12 }));
+    mesh.colored_vertex(rect.left_bottom(), base);
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    ctx.layer_painter(egui::LayerId::background()).add(egui::Shape::mesh(mesh));
+}
+
+pub fn glass_frame() -> egui::Frame {
+    let surface = SIDE();
+    let line = if is_dark() { Color32::from_white_alpha(50) } else { Color32::from_white_alpha(170) };
+    egui::Frame::none()
+        .fill(Color32::from_rgba_unmultiplied(surface.r(), surface.g(), surface.b(), 192))
+        .stroke(Stroke::new(1.0, line))
+        .rounding(12.0)
 }
 
 pub fn apply_visuals(ctx: &Context) {

@@ -292,7 +292,10 @@ pub struct VinteriaApp {
     account_open: bool,
     /// the exe this live copy was started from and its time stamp: a new build replaces it and the program restarts into it
     live_origin: Option<(PathBuf, std::time::SystemTime)>,
+    #[cfg(not(target_os = "android"))]
     updater: crate::updater::Updater,
+    #[cfg(target_os = "android")]
+    pub(crate) android_updater: Option<crate::android_update::Updater>,
     update_seen: Option<(std::time::SystemTime, std::time::Instant)>,
     last_update_check: std::time::Instant,
     export: ExportUi,
@@ -394,7 +397,10 @@ impl VinteriaApp {
             browser_open: true,
             account_open: false,
             live_origin,
+            #[cfg(not(target_os = "android"))]
             updater: crate::updater::Updater::new(),
+            #[cfg(target_os = "android")]
+            android_updater: None,
             update_seen: None,
             last_update_check: std::time::Instant::now(),
             export: ExportUi { open: false, rate: 44100, depth: BitDepth::Pcm24, bars: 8, tail: 2.0, song: true, only_picked: false, pick: Vec::new(), rx: None, result: String::new(), path: None },
@@ -800,7 +806,7 @@ impl VinteriaApp {
             if age < 90 { "just now".to_string() } else if age < 3600 { format!("{} min ago", age / 60) } else if age < 86400 { format!("{} h ago", age / 3600) } else { format!("{} days ago", age / 86400) }
         };
         // one column, scrolling down: a wide horizontal card for every project
-        egui::CentralPanel::default().frame(egui::Frame::none().fill(BG()).inner_margin(egui::Margin::symmetric(mx, 16.0))).show(ctx, |ui| {
+        egui::CentralPanel::default().frame(egui::Frame::none().inner_margin(egui::Margin::symmetric(mx, 16.0))).show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new("Winteria DAW").size(26.0).strong().color(TEAL()));
                 ui.label(RichText::new(" BETA 1 ").size(11.0).strong().color(Color32::WHITE).background_color(CYAN()));
@@ -2094,6 +2100,7 @@ impl eframe::App for VinteriaApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        paint_glass_background(ctx);
         self.audio.poll_error();
         crate::silence_system_beeps();
         self.check_update(ctx);
@@ -2169,10 +2176,16 @@ impl eframe::App for VinteriaApp {
             }
         }
 
-        egui::TopBottomPanel::top("transport").frame(egui::Frame::none().fill(BG()).inner_margin(egui::Margin::symmetric(16.0, 10.0))).show(ctx, |ui| {
+        egui::TopBottomPanel::top("transport").frame(glass_frame().inner_margin(egui::Margin::symmetric(16.0, 10.0))).show(ctx, |ui| {
             if cfg!(target_os = "android") {
                 egui::ScrollArea::horizontal().id_salt("android_menu_bar").show(ui, |ui| {
-                    ui.horizontal(|ui| self.header_brand(ui));
+                    ui.horizontal(|ui| {
+                        #[cfg(target_os = "android")]
+                        if let Some(updater) = &mut self.android_updater {
+                            updater.show(ui);
+                        }
+                        self.header_brand(ui);
+                    });
                 });
                 egui::ScrollArea::horizontal().id_salt("android_transport_bar").show(ui, |ui| {
                     ui.horizontal(|ui| {
@@ -2189,8 +2202,6 @@ impl eframe::App for VinteriaApp {
                 ui.add_space(4.0);
             }
             let width = ui.available_width();
-            // AOS-style floating pill behind the whole header row
-            // flat header: a straight full-width band, no corners, no shadow, only a thin line along its lower edge
             let band = egui::Rect::from_min_max(
                 pos2(ui.max_rect().left() - 16.0, ui.cursor().min.y - 10.0),
                 pos2(ui.max_rect().right() + 16.0, ui.cursor().min.y + 46.0 + 10.0),
@@ -2253,7 +2264,7 @@ impl eframe::App for VinteriaApp {
                 });
             });
         });
-        egui::TopBottomPanel::bottom("status").frame(egui::Frame::none().fill(BG()).inner_margin(egui::Margin::symmetric(10.0, 4.0))).show(ctx, |ui| {
+        egui::TopBottomPanel::bottom("status").frame(glass_frame().inner_margin(egui::Margin::symmetric(10.0, 4.0))).show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(format!("Octave {} (- / =)", self.octave + 1)).color(DIM()));
                 if self.record {
@@ -2283,7 +2294,7 @@ impl eframe::App for VinteriaApp {
             let mut out = browser_panel::Out::default();
             let sec = ctx.data(|d| d.get_temp::<u8>(egui::Id::new("browser_filter"))).unwrap_or(browser_panel::SEC_SAMPLES);
             egui::SidePanel::left("studio_browser").default_width(270.0).min_width(220.0).max_width(420.0)
-                .frame(egui::Frame::none().fill(SIDE()).stroke(Stroke::new(border_w(), border())).inner_margin(egui::Margin::symmetric(10.0, 6.0)))
+                .frame(glass_frame().inner_margin(egui::Margin::symmetric(10.0, 6.0)))
                 .show(ctx, |ui| {
                     // Project Files: the clip list, the action history and the project summary live at the bottom
                     if sec == browser_panel::SEC_PROJECTS {
@@ -2323,7 +2334,7 @@ impl eframe::App for VinteriaApp {
             return;
         }
         // page tabs: a bar of their own right under the header, centred above the work area (right of the browser / pattern columns)
-        egui::TopBottomPanel::top("pages_bar").frame(egui::Frame::none().fill(BG()).inner_margin(egui::Margin::symmetric(14.0, 6.0))).show(ctx, |ui| {
+        egui::TopBottomPanel::top("pages_bar").frame(glass_frame().inner_margin(egui::Margin::symmetric(14.0, 6.0))).show(ctx, |ui| {
             // centred: the row's width from the previous frame decides the left padding
             let wid = egui::Id::new("pages_bar_w");
             let row_w: f32 = ui.data(|d| d.get_temp(wid)).unwrap_or(0.0);
@@ -2654,7 +2665,7 @@ impl eframe::App for VinteriaApp {
             }
             None => {}
         }
-        egui::CentralPanel::default().frame(egui::Frame::none().fill(BG()).inner_margin(10.0)).show(ctx, |ui| {
+        egui::CentralPanel::default().frame(egui::Frame::none().inner_margin(10.0)).show(ctx, |ui| {
             match self.main {
                 Tab::Session => session_ui::show(ui, &mut self.project, &self.shared, &mut self.lib, &mut self.arr),
                 Tab::Sequencer => {
@@ -2722,7 +2733,7 @@ impl eframe::App for VinteriaApp {
                             rack_action = sequencer_ui::show(ui, &mut self.project, &mut self.seq, &self.shared, &mut self.lib);
                         });
                     }
-                    egui::CentralPanel::default().frame(egui::Frame::none().fill(BG())).show_inside(ui, |ui| {
+                    egui::CentralPanel::default().frame(egui::Frame::none()).show_inside(ui, |ui| {
                         session_ui::show(ui, &mut self.project, &self.shared, &mut self.lib, &mut self.arr);
                     });
                 }

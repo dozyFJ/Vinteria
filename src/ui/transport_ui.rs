@@ -196,6 +196,7 @@ pub(super) fn show(app: &mut VinteriaApp, ui: &mut Ui) {
     }
     ui.add_space(4.0);
     // Update: pulls a newer build from GitHub over the exe; the running copy restarts into it by itself
+    #[cfg(not(target_os = "android"))]
     {
         use crate::updater::UpState;
         let orig = app.live_origin.as_ref().map(|o| o.0.clone()).or_else(|| std::env::current_exe().ok()).unwrap_or_default();

@@ -42,6 +42,17 @@ running Android 8.0 or later. For a release build, set
 `CARGO_APK_RELEASE_KEYSTORE` and `CARGO_APK_RELEASE_KEYSTORE_PASSWORD` and add
 `--release`.
 
+The Android app uses package ID `com.winteria.daw`. Keep the same signing
+key for every release so Android can install updates over the existing app.
+
+Android checks the public OTA feed on startup and every ten minutes while open.
+When an update is available, the download button opens the APK in the system
+browser. Android verifies the app signature and asks for installation approval.
+To publish a release, increase the Cargo patch version, sign the APK, and publish
+`releases/Winteria-<versionName>.apk` with `latest.json` in the feed repository.
+The manifest contains `versionCode`, `versionName`, `url`, and `sha256`.
+Read the version code from the signed APK with `aapt dump badging`.
+
 Android runs the desktop interface in landscape with audio playback via Oboe.
 Projects and WAV exports are saved in app storage. External file selection,
 microphone recording, and MIDI input remain desktop features.
