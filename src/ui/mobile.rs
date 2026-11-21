@@ -9,7 +9,7 @@ const TOUCH: f32 = 44.0;
 /// written by the Android panic hook, shown on the next start
 pub const CRASH_FILE: &str = "crash.txt";
 
-// ───────────────────── Pulse palette ─────────────────────
+// ───────────────────── phone palette (FL Studio Mobile-like: graphite panels, orange accent) ─────────────────────
 
 fn argb(v: u32) -> Color32 {
     Color32::from_rgba_unmultiplied((v >> 16) as u8, (v >> 8) as u8, v as u8, (v >> 24) as u8)
@@ -19,37 +19,48 @@ fn pick(dark: u32, light: u32) -> Color32 {
 }
 /// main text
 fn ink() -> Color32 {
-    pick(0xFFF1F3F5, 0xFF202A30)
+    pick(0xFFE8EAEC, 0xFF1E2124)
 }
 /// secondary text
 fn muted() -> Color32 {
-    pick(0xFFBFC5CC, 0xFF35454D)
+    pick(0xFF9FA6AD, 0xFF4A5157)
 }
-/// Pulse accent: a calm near-white (night) / slate (day) pill
+/// accent: FL-style orange for active buttons, the playhead and selections
 fn p_accent() -> Color32 {
-    pick(0xFFDCE5EE, 0xFF334953)
+    pick(0xFFF7941D, 0xFFE07B00)
 }
 fn on_accent() -> Color32 {
-    pick(0xFF1A1B1D, 0xFFE4EAEB)
+    pick(0xFF1C1C1C, 0xFFFFFFFF)
 }
 fn p_bg() -> Color32 {
-    pick(0xFF1A1E23, 0xFFB8C2C7)
+    pick(0xFF2B2F33, 0xFFC9CDD1)
 }
+/// tool bars (header, dock): a shade darker than the work area
 fn bar_fill() -> Color32 {
-    pick(0xFF22272E, 0xFFC2CBCE)
+    pick(0xFF202326, 0xFFB4B9BE)
 }
 fn outline() -> Color32 {
-    pick(0xFF555F69, 0xFF74858D)
+    pick(0xFF5A6066, 0xFF8E959B)
 }
 fn card_fill() -> Color32 {
-    pick(0xFF2A3139, 0xFFCBD2D4)
+    pick(0xFF3A3F44, 0xFFDCDFE2)
 }
 fn selected_fill() -> Color32 {
-    pick(0xFF3B4B57, 0xFFA4B8C0)
+    pick(0xFF4B5157, 0xFFEBD3B1)
 }
 fn grid_line() -> Color32 {
-    pick(0xFF45525E, 0xFF96A7AF)
+    pick(0xFF41464B, 0xFFA9AFB4)
 }
+/// green of a running transport (like FL's play button)
+fn play_green() -> Color32 {
+    pick(0xFF6BCB3F, 0xFF3E9E1E)
+}
+/// dark inset display (BPM) with orange digits
+fn lcd_fill() -> Color32 {
+    pick(0xFF15181A, 0xFF2A2E31)
+}
+/// small, square-ish corners like FL's buttons
+const ROUND: f32 = 5.0;
 
 fn panel(p: &Painter, rect: Rect, radius: f32) {
     p.rect_filled(rect, radius, card_fill());
@@ -57,7 +68,7 @@ fn panel(p: &Painter, rect: Rect, radius: f32) {
 }
 
 fn pill(p: &Painter, rect: Rect, fill: Color32) {
-    p.rect_filled(rect, rect.height() * 0.5, fill);
+    p.rect_filled(rect, ROUND, fill);
 }
 
 fn mobile_background(ctx: &egui::Context) {
@@ -297,9 +308,9 @@ fn p_button(ui: &mut Ui, text: &str, primary: bool, size: egui::Vec2) -> Respons
     if primary {
         pill(p, rect, if resp.is_pointer_button_down_on() { p_accent().linear_multiply(0.8) } else { p_accent() });
     } else {
-        panel(p, rect, rect.height() * 0.5);
+        panel(p, rect, ROUND);
     }
-    p.text(rect.center(), Align2::CENTER_CENTER, text, FontId::proportional(15.0), if primary { on_accent() } else { ink() });
+    p.text(rect.center(), Align2::CENTER_CENTER, text, FontId::proportional(14.0), if primary { on_accent() } else { ink() });
     resp
 }
 
@@ -337,7 +348,7 @@ fn mobile_visuals(ui: &mut Ui) {
     v.override_text_color = Some(ink());
     v.window_fill = card_fill();
     v.panel_fill = p_bg();
-    v.extreme_bg_color = pick(0xFF1B2026, 0xFFACB9BF);
+    v.extreme_bg_color = pick(0xFF1E2124, 0xFFB9BEC2);
     v.selection.bg_fill = selected_fill();
     v.selection.stroke = Stroke::new(1.0, p_accent());
     for (widget, fill) in [
@@ -349,7 +360,7 @@ fn mobile_visuals(ui: &mut Ui) {
         widget.bg_fill = fill;
         widget.weak_bg_fill = fill;
         widget.bg_stroke = Stroke::new(1.0, outline());
-        widget.rounding = egui::Rounding::same(10.0);
+        widget.rounding = egui::Rounding::same(ROUND);
         widget.fg_stroke = Stroke::new(1.5, ink());
     }
     v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, ink());
@@ -591,7 +602,8 @@ impl VinteriaApp {
             }
         }
         step("page done");
-        let repaint = if self.playing() { 33 } else { 250 };
+        // ~60 fps while playing so the playhead glides
+        let repaint = if self.playing() { 16 } else { 250 };
         ctx.request_repaint_after(std::time::Duration::from_millis(repaint));
     }
 
@@ -925,11 +937,14 @@ impl VinteriaApp {
     }
 
     fn m_studio_play_stop(&mut self, ui: &mut Ui, ctx: &egui::Context, width: f32) {
-        let play = if self.m_transport_playing(ctx) {
-            studio_icon(ui, width, Icon::Pause, true, "Pause")
-        } else {
-            studio_icon(ui, width, Icon::Play, true, "Play")
-        };
+        // FL-style transport: play lights up green while running
+        let running = self.m_transport_playing(ctx);
+        let (rect, play) = ui.allocate_exact_size(vec2(width, 44.0), Sense::click());
+        let p = ui.painter();
+        p.rect_filled(rect, ROUND, if running { play_green() } else { card_fill() });
+        p.rect_stroke(rect, ROUND, Stroke::new(1.0, if running { play_green() } else { outline() }));
+        icon(p, if running { Icon::Pause } else { Icon::Play }, rect.center(), if running { Color32::from_gray(20) } else { play_green() });
+        let play = play.on_hover_text(if running { "Pause" } else { "Play" });
         if play.clicked() {
             self.m_toggle_play(ctx);
         }
@@ -940,7 +955,9 @@ impl VinteriaApp {
 
     fn m_studio_tempo(&mut self, ui: &mut Ui, width: f32, show_unit: bool) {
         let unit = if show_unit { " BPM" } else { "" };
-        let tempo = egui::Button::new(RichText::new(format!("{:.0}{unit}", self.project.bpm)).size(12.0))
+        // tempo on a small LCD, like FL's display
+        let tempo = egui::Button::new(RichText::new(format!("{:.0}{unit}", self.project.bpm)).monospace().size(13.0).color(p_accent()))
+            .fill(lcd_fill()).stroke(Stroke::new(1.0, outline()))
             .wrap_mode(egui::TextWrapMode::Extend).min_size(vec2(width, 44.0));
         ui.scope(|ui| {
             ui.spacing_mut().button_padding.x = 3.0;
@@ -1253,7 +1270,7 @@ impl VinteriaApp {
                 let cell = ((w - 24.0 - 7.0 * 6.0 - 6.0) / 8.0).clamp(28.0, 64.0);
                 let h = 34.0 + 2.0 * cell + 8.0 + 14.0;
                 let (rect, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
-                panel(ui.painter(), rect, 16.0);
+                panel(ui.painter(), rect, ROUND + 3.0);
                 let col = lane_col(lane);
                 ui.painter().circle_filled(rect.left_top() + vec2(20.0, 18.0), 5.0, col);
                 ui.painter().text(rect.left_top() + vec2(32.0, 18.0), Align2::LEFT_CENTER, DRUM_NAMES[lane], FontId::proportional(15.0), ink());
@@ -1273,16 +1290,21 @@ impl VinteriaApp {
                     let on = self.project.patterns[pi].drums[lane][s].on;
                     let p = ui.painter();
                     let st = self.project.patterns[pi].drums[lane][s];
+                    // FL-style step buttons: off steps alternate light / dark by beat, on steps light up in the lane colour
+                    let beat_light = (s / 4) % 2 == 0;
                     if on {
-                        p.rect_filled(r, 10.0, col.linear_multiply(0.45 + 0.55 * st.vel as f32 / 127.0));
+                        p.rect_filled(r, ROUND, col.gamma_multiply(0.55 + 0.45 * st.vel as f32 / 127.0));
+                        p.rect_filled(Rect::from_min_size(r.min + vec2(3.0, 3.0), vec2(r.width() - 6.0, 3.0)), 1.5, Color32::WHITE.gamma_multiply(0.35));
                         if st.is_smart() {
-                            p.circle_filled(r.right_top() + vec2(-7.0, 7.0), 3.0, Color32::WHITE);
+                            p.circle_filled(r.right_top() + vec2(-7.0, 9.0), 3.0, Color32::WHITE);
                         }
                     } else {
-                        panel(p, r, 10.0);
+                        let off = if beat_light { pick(0xFF4A5056, 0xFFC4C9CD) } else { pick(0xFF33373B, 0xFFAEB4B9) };
+                        p.rect_filled(r, ROUND, off);
+                        p.rect_stroke(r, ROUND, Stroke::new(1.0, pick(0xFF1E2124, 0xFF8E959B)));
                     }
                     if playing && play_step == s {
-                        p.rect_stroke(r.expand(2.0), 12.0, Stroke::new(2.0, p_accent()));
+                        p.rect_stroke(r.expand(2.0), ROUND + 1.0, Stroke::new(2.0, p_accent()));
                     }
                     if resp.clicked() && !resp.long_touched() {
                         let st = &mut self.project.patterns[pi].drums[lane][s];
@@ -1466,9 +1488,13 @@ impl VinteriaApp {
         let piano_x_id = egui::Id::new((grid_id, "offset_x"));
         let piano_shown_x = ui.data(|d| d.get_temp::<f32>(piano_x_id)).unwrap_or(0.0);
         if playing {
-            let head = play_step as f32 * step_w;
-            if head < piano_shown_x || head > piano_shown_x + grid.width() - step_w {
+            // glide along: keep the playhead within the left 70 % of the view instead of turning pages
+            let local = pos % (steps as u32 * TICKS_PER_STEP).max(1);
+            let head = local as f32 / TICKS_PER_STEP as f32 * step_w;
+            if head < piano_shown_x {
                 scroll = scroll.horizontal_scroll_offset((head - step_w).max(0.0));
+            } else if head > piano_shown_x + grid.width() * 0.7 {
+                scroll = scroll.horizontal_scroll_offset(head - grid.width() * 0.7);
             }
         }
         let first_view = !ui.data(|d| d.get_temp::<bool>(initialized)).unwrap_or(false);
@@ -1500,7 +1526,14 @@ impl VinteriaApp {
                 p.line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], stroke);
             }
             if let Some(step) = cursor {
-                let x = rect.left() + step as f32 * step_w;
+                // while playing the line glides with the exact tick (it used to jump from cell to cell);
+                // the record cursor stays on its step
+                let x = if playing {
+                    let local = pos % (steps as u32 * TICKS_PER_STEP).max(1);
+                    rect.left() + local as f32 / TICKS_PER_STEP as f32 * step_w
+                } else {
+                    rect.left() + step as f32 * step_w
+                };
                 let color = if record_step.is_some() { RED } else { p_accent() };
                 p.line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], Stroke::new(2.0, color));
             }
@@ -2463,8 +2496,10 @@ impl VinteriaApp {
         let follow_id = egui::Id::new("m_playlist_offset_x");
         let shown_x = ui.data(|d| d.get_temp::<f32>(follow_id)).unwrap_or(0.0);
         let head_x = pos as f32 / TICKS_PER_BAR as f32 * bar_w;
-        let scroll = if playing && gesture.is_none() && (head_x < shown_x || head_x > shown_x + grid.width() - 24.0) {
+        let scroll = if playing && gesture.is_none() && head_x < shown_x {
             scroll.horizontal_scroll_offset((head_x - 16.0).max(0.0))
+        } else if playing && gesture.is_none() && head_x > shown_x + grid.width() * 0.7 {
+            scroll.horizontal_scroll_offset(head_x - grid.width() * 0.7)
         } else {
             scroll
         };
@@ -3016,7 +3051,7 @@ fn studio_icon(ui: &mut Ui, width: f32, symbol: Icon, active: bool, label: &str)
     if active {
         pill(ui.painter(), rect, p_accent());
     } else if response.hovered() {
-        panel(ui.painter(), rect, 9.0);
+        panel(ui.painter(), rect, ROUND);
     }
     icon(ui.painter(), symbol, rect.center(), if active { on_accent() } else { ink() });
     response.on_hover_text(label)
