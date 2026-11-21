@@ -750,16 +750,16 @@ impl VinteriaApp {
                 pulse_visuals(ui);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
-                    let width = 32.0;
+                    let width = 44.0;
                     self.m_studio_full_view_button(ui, ctx, width);
                     let folder = self.m_sec == SEC_PLAYLIST;
                     let button_slot = width + ui.spacing().item_spacing.x;
-                    let reserved = 45.0 + (2 + usize::from(folder)) as f32 * button_slot;
+                    let reserved = (3 + usize::from(folder)) as f32 * button_slot;
                     let title_width = (ui.available_width() - reserved).max(1.0);
-                    ui.add_sized([title_width, 32.0], egui::Label::new(RichText::new(&self.project.name)
+                    ui.add_sized([title_width, 44.0], egui::Label::new(RichText::new(&self.project.name)
                         .strong().size(14.0).color(ink())).truncate());
                     self.m_studio_play_stop(ui, ctx, width);
-                    self.m_studio_tempo(ui, 41.0);
+                    self.m_studio_tempo(ui, width);
                     if folder {
                         self.m_studio_browser_button(ui, ctx, width);
                     }
@@ -775,7 +775,7 @@ impl VinteriaApp {
                 pulse_visuals(ui);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 5.0;
-                    let width = 38.0;
+                    let width = 44.0;
                     if self.m_studio_exit(ui, ctx, width) {
                         return;
                     }
@@ -877,7 +877,7 @@ impl VinteriaApp {
 
     fn m_studio_tempo(&mut self, ui: &mut Ui, width: f32) {
         let tempo = egui::Button::new(RichText::new(format!("{:.0}", self.project.bpm)).size(12.0))
-            .wrap_mode(egui::TextWrapMode::Extend).min_size(vec2(width, 28.0));
+            .wrap_mode(egui::TextWrapMode::Extend).min_size(vec2(width, 44.0));
         ui.scope(|ui| {
             ui.spacing_mut().button_padding.x = 3.0;
             egui::menu::menu_custom_button(ui, tempo, |ui| {
@@ -1195,9 +1195,10 @@ impl VinteriaApp {
             .id_salt(("m_piano_toolbar", drawer.is_some(), portrait))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
+                    ui.spacing_mut().interact_size.y = 44.0;
                     if let Some((full_id, full)) = drawer {
-                        close = p_button(ui, "Done", true, vec2(60.0, 32.0)).clicked();
-                        if p_button(ui, if full { "Restore" } else { "Full view" }, false, vec2(86.0, 32.0)).clicked() {
+                        close = p_button(ui, "Done", true, vec2(60.0, 44.0)).clicked();
+                        if p_button(ui, if full { "Restore" } else { "Full view" }, false, vec2(86.0, 44.0)).clicked() {
                             ui.data_mut(|d| d.insert_temp(full_id, !full));
                         }
                     }
@@ -1206,7 +1207,7 @@ impl VinteriaApp {
                     }
                     let pattern_playing = self.playing() && !self.project.song_mode && self.project.current_pattern == pi;
                     let transport = if pattern_playing { Icon::Pause } else { Icon::Play };
-                    if studio_icon(ui, 34.0, transport, true, if pattern_playing { "Pause pattern" } else { "Play pattern" }).clicked() {
+                    if studio_icon(ui, 44.0, transport, true, if pattern_playing { "Pause pattern" } else { "Play pattern" }).clicked() {
                         if pattern_playing {
                             self.shared.send(Cmd::Pause);
                         } else {
@@ -1220,16 +1221,16 @@ impl VinteriaApp {
                             self.shared.send(Cmd::Play);
                         }
                     }
-                    if studio_icon(ui, 34.0, Icon::Stop, false, "Stop").clicked() {
+                    if studio_icon(ui, 44.0, Icon::Stop, false, "Stop").clicked() {
                         self.return_to_start(ui.ctx(), false);
                     }
-                    if p_button(ui, "Rec", record_step.is_some(), vec2(44.0, 32.0)).clicked() {
+                    if p_button(ui, "Rec", record_step.is_some(), vec2(44.0, 44.0)).clicked() {
                         record_step = if record_step.is_some() { None } else { Some(0) };
                     }
-                    if p_button(ui, "Oct −", false, vec2(62.0, 32.0)).clicked() {
+                    if p_button(ui, "Oct −", false, vec2(62.0, 44.0)).clicked() {
                         oct = oct.saturating_sub(1);
                     }
-                    if p_button(ui, "Oct +", false, vec2(62.0, 32.0)).clicked() {
+                    if p_button(ui, "Oct +", false, vec2(62.0, 44.0)).clicked() {
                         oct = (oct + 1).min(9);
                     }
                     ui.menu_button(format!("Key {}", names[(self.project.key_root % 12) as usize]), |ui| {
@@ -1247,10 +1248,10 @@ impl VinteriaApp {
                             }
                         }
                     });
-                    if p_button(ui, "Chords", chords, vec2(76.0, 32.0)).clicked() {
+                    if p_button(ui, "Chords", chords, vec2(76.0, 44.0)).clicked() {
                         chords = !chords;
                     }
-                    if p_button(ui, if looping { "Loop on" } else { "Loop off" }, looping, vec2(87.0, 32.0)).clicked() {
+                    if p_button(ui, if looping { "Loop on" } else { "Loop off" }, looping, vec2(87.0, 44.0)).clicked() {
                         looping = !looping;
                         self.shared.send(Cmd::PatternLoop(looping));
                     }
@@ -2585,7 +2586,7 @@ impl VinteriaApp {
 }
 
 fn studio_icon(ui: &mut Ui, width: f32, symbol: Icon, active: bool, label: &str) -> Response {
-    let (rect, response) = ui.allocate_exact_size(vec2(width, 32.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 44.0), Sense::click());
     if active {
         pill(ui.painter(), rect, p_accent());
     } else if response.hovered() {
