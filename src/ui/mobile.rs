@@ -1,0 +1,1081 @@
+//! Phone layout in the style of the Pulse messenger (the PC keeps its own AOS look).
+//! Portrait: translucent header, glass cards over a grey doodle background, an icon rail above the bottom dock,
+//! and the dock itself: profile avatar + Projects · Studio · Settings.
+use super::*;
+use crate::mixer::{NUM_CH, NUM_INSERTS};
+use crate::sequencer::{NUM_DRUMS, TICKS_PER_STEP};
+use egui::{Align2, FontId, Frame, Margin, Painter, Pos2, Rect, Response, RichText, Sense, Shape, Ui};
+
+const TOUCH: f32 = 44.0;
+
+// ───────────────────── Pulse palette ─────────────────────
+
+fn argb(v: u32) -> Color32 {
+    Color32::from_rgba_unmultiplied((v >> 16) as u8, (v >> 8) as u8, v as u8, (v >> 24) as u8)
+}
+fn pick(dark: u32, light: u32) -> Color32 {
+    argb(if is_dark() { dark } else { light })
+}
+/// main text
+fn ink() -> Color32 {
+    pick(0xFFF1F3F5, 0xFF222A32)
+}
+/// secondary text
+fn muted() -> Color32 {
+    pick(0xFFBFC5CC, 0xFF4F5B68)
+}
+/// Pulse accent: a calm near-white (night) / slate (day) pill
+fn p_accent() -> Color32 {
+    pick(0xFFDCE5EE, 0xFF35424F)
+}
+fn on_accent() -> Color32 {
+    pick(0xFF1A1B1D, 0xFFFFFFFF)
+}
+fn p_bg() -> Color32 {
+    pick(0xFF1A1E23, 0xFFD9E1E9)
+}
+fn doodle() -> Color32 {
+    pick(0x10FFFFFF, 0x18404855)
+}
+fn bar_fill() -> Color32 {
+    pick(0xA022262B, 0xA0F1F5F9)
+}
+fn outline() -> Color32 {
+    pick(0xFF555F69, 0x826C7A89)
+}
+fn glass_top() -> Color32 {
+    pick(0x80404750, 0xA6FCFDFF)
+}
+fn glass_bottom() -> Color32 {
+    pick(0x60272C32, 0x66EFF4F9)
+}
+fn glass_edge() -> Color32 {
+    pick(0x48AAB7C4, 0xB3FFFFFF)
+}
+fn lerp_c(a: Color32, b: Color32, t: f32) -> Color32 {
+    let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
+    Color32::from_rgba_premultiplied(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()), m(a.a(), b.a()))
+}
+
+// ───────────────────── drawing helpers ─────────────────────
+
+fn rounded_points(r: Rect, rad: f32) -> Vec<Pos2> {
+    let rad = rad.min(r.width() * 0.5).min(r.height() * 0.5).max(0.0);
+    let corners = [
+        (pos2(r.right() - rad, r.top() + rad), -90.0f32),
+        (pos2(r.right() - rad, r.bottom() - rad), 0.0),
+        (pos2(r.left() + rad, r.bottom() - rad), 90.0),
+        (pos2(r.left() + rad, r.top() + rad), 180.0),
+    ];
+    let mut pts = Vec::with_capacity(32);
+    for (c, start) in corners {
+        for i in 0..=6 {
+            let a = (start + i as f32 * 15.0).to_radians();
+            pts.push(pos2(c.x + rad * a.cos(), c.y + rad * a.sin()));
+        }
+    }
+    pts
+}
+
+/// Glassmorphism card: translucent top-to-bottom gradient with a light rim, like Pulse's `glass()`.
+fn glass(p: &Painter, r: Rect, rad: f32) {
+    glass_tinted(p, r, rad, None);
+}
+
+fn glass_tinted(p: &Painter, r: Rect, rad: f32, tint: Option<Color32>) {
+    let pts = rounded_points(r, rad);
+    let (top, bottom) = match tint {
+        Some(t) => (t, lerp_c(t, Color32::TRANSPARENT, 0.25)),
+        None => (glass_top(), glass_bottom()),
+    };
+    let col = |y: f32| lerp_c(top, bottom, ((y - r.top()) / r.height().max(1.0)).clamp(0.0, 1.0));
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(r.center(), col(r.center().y));
+    for q in &pts {
+        mesh.colored_vertex(*q, col(q.y));
+    }
+    let n = pts.len() as u32;
+    for i in 0..n {
+        mesh.add_triangle(0, 1 + i, 1 + (i + 1) % n);
+    }
+    p.add(Shape::mesh(mesh));
+    p.add(Shape::closed_line(pts, Stroke::new(1.0, glass_edge())));
+}
+
+/// Glass on an opaque base, for editors where the doodles would get in the way (steps, piano roll, playlist, mixer).
+fn panel(p: &Painter, r: Rect, rad: f32) {
+    p.rect_filled(r, rad, p_bg());
+    glass(p, r, rad);
+}
+
+fn pill(p: &Painter, r: Rect, fill: Color32) {
+    p.rect_filled(r, r.height() * 0.5, fill);
+}
+
+/// Grey background with a faint pattern of music doodles (Pulse uses chat icons, like Telegram).
+fn doodle_background(ctx: &egui::Context) {
+    let rect = ctx.screen_rect();
+    let p = ctx.layer_painter(egui::LayerId::background());
+    p.rect_filled(rect, 0.0, p_bg());
+    let col = doodle();
+    let s = Stroke::new(1.4, col);
+    let cell = 62.0;
+    let cols = (rect.width() / cell).ceil() as i32 + 1;
+    let rows = (rect.height() / cell).ceil() as i32 + 1;
+    for j in 0..rows {
+        for i in 0..cols {
+            let h = (i as u32).wrapping_mul(73856093) ^ (j as u32).wrapping_mul(19349663);
+            let ox = (h % 17) as f32 - 8.0;
+            let oy = ((h >> 5) % 17) as f32 - 8.0;
+            let c = pos2(rect.left() + i as f32 * cell + cell * 0.5 + ox, rect.top() + j as f32 * cell + cell * 0.5 + oy + if i % 2 == 1 { cell * 0.5 } else { 0.0 });
+            match (h >> 10) % 5 {
+                0 => {
+                    // eighth note
+                    p.circle_stroke(c + vec2(-4.0, 6.0), 4.0, s);
+                    p.line_segment([c + vec2(0.0, 6.0), c + vec2(0.0, -9.0)], s);
+                    p.line_segment([c + vec2(0.0, -9.0), c + vec2(6.0, -4.0)], s);
+                }
+                1 => {
+                    // beamed notes
+                    p.circle_stroke(c + vec2(-7.0, 6.0), 3.5, s);
+                    p.circle_stroke(c + vec2(5.0, 4.0), 3.5, s);
+                    p.line_segment([c + vec2(-3.5, 6.0), c + vec2(-3.5, -8.0)], s);
+                    p.line_segment([c + vec2(8.5, 4.0), c + vec2(8.5, -10.0)], s);
+                    p.line_segment([c + vec2(-3.5, -8.0), c + vec2(8.5, -10.0)], s);
+                }
+                2 => {
+                    // wave
+                    let pts: Vec<Pos2> = (0..=16).map(|k| c + vec2(-11.0 + k as f32 * 1.4, (k as f32 * 0.8).sin() * 4.0)).collect();
+                    p.add(Shape::line(pts, s));
+                }
+                3 => {
+                    // knob
+                    p.circle_stroke(c, 7.0, s);
+                    p.line_segment([c, c + vec2(4.0, -4.0)], s);
+                }
+                _ => {
+                    // little fader
+                    p.line_segment([c + vec2(0.0, -9.0), c + vec2(0.0, 9.0)], s);
+                    p.rect_stroke(Rect::from_center_size(c + vec2(0.0, 2.0), vec2(9.0, 4.0)), 1.0, s);
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Icon {
+    Folder,
+    Clock,
+    Layout,
+    Wave,
+    Plug,
+    Steps,
+    Keys,
+    Timeline,
+    Mixer,
+    Tracks,
+    Play,
+    Stop,
+    Plus,
+}
+
+fn icon(p: &Painter, kind: Icon, c: Pos2, col: Color32) {
+    let s = Stroke::new(1.8, col);
+    match kind {
+        Icon::Folder => {
+            let r = Rect::from_center_size(c + vec2(0.0, 1.5), vec2(18.0, 13.0));
+            p.rect_stroke(r, 2.0, s);
+            p.line_segment([r.left_top() + vec2(1.0, 0.0), r.left_top() + vec2(6.0, -3.0)], s);
+            p.line_segment([r.left_top() + vec2(6.0, -3.0), r.left_top() + vec2(9.0, 0.0)], s);
+        }
+        Icon::Clock => {
+            p.circle_stroke(c, 8.5, s);
+            p.line_segment([c, c + vec2(0.0, -5.0)], s);
+            p.line_segment([c, c + vec2(4.0, 2.0)], s);
+        }
+        Icon::Layout => {
+            p.rect_stroke(Rect::from_center_size(c, vec2(17.0, 15.0)), 2.0, s);
+            p.line_segment([c + vec2(-8.5, -2.0), c + vec2(8.5, -2.0)], s);
+            p.line_segment([c + vec2(-1.0, -2.0), c + vec2(-1.0, 7.5)], s);
+        }
+        Icon::Wave => {
+            for (k, h) in [3.0f32, 7.0, 10.0, 6.0, 8.0, 3.5].iter().enumerate() {
+                let x = c.x - 7.5 + k as f32 * 3.0;
+                p.line_segment([pos2(x, c.y - h), pos2(x, c.y + h)], s);
+            }
+        }
+        Icon::Plug => {
+            p.rect_stroke(Rect::from_center_size(c + vec2(0.0, 1.0), vec2(12.0, 9.0)), 3.0, s);
+            p.line_segment([c + vec2(-3.0, -3.5), c + vec2(-3.0, -8.0)], s);
+            p.line_segment([c + vec2(3.0, -3.5), c + vec2(3.0, -8.0)], s);
+            p.line_segment([c + vec2(0.0, 5.5), c + vec2(0.0, 9.0)], s);
+        }
+        Icon::Steps => {
+            for y in 0..3 {
+                for x in 0..3 {
+                    let r = Rect::from_center_size(c + vec2(-6.0 + x as f32 * 6.0, -6.0 + y as f32 * 6.0), vec2(4.2, 4.2));
+                    if (x + y) % 2 == 0 {
+                        p.rect_filled(r, 1.0, col);
+                    } else {
+                        p.rect_stroke(r, 1.0, Stroke::new(1.2, col));
+                    }
+                }
+            }
+        }
+        Icon::Keys => {
+            let r = Rect::from_center_size(c, vec2(18.0, 15.0));
+            p.rect_stroke(r, 2.0, s);
+            for k in 1..4 {
+                let x = r.left() + k as f32 * 4.5;
+                p.line_segment([pos2(x, r.top()), pos2(x, r.bottom())], Stroke::new(1.2, col));
+            }
+            for k in [1.0f32, 2.0] {
+                p.rect_filled(Rect::from_min_size(pos2(r.left() + k * 4.5 + 1.2 + (k - 1.0) * 4.5 - 4.5, r.top()), vec2(3.0, 8.0)), 0.5, col);
+            }
+        }
+        Icon::Timeline => {
+            for (k, (x0, w)) in [(-8.0f32, 9.0f32), (-3.0, 11.0), (-8.0, 6.0)].iter().enumerate() {
+                let y = c.y - 6.0 + k as f32 * 6.0;
+                p.rect_filled(Rect::from_min_size(pos2(c.x + x0, y - 2.0), vec2(*w, 4.0)), 1.5, col);
+            }
+        }
+        Icon::Mixer => {
+            for (k, y) in [3.0f32, -4.0, 1.0].iter().enumerate() {
+                let x = c.x - 6.0 + k as f32 * 6.0;
+                p.line_segment([pos2(x, c.y - 9.0), pos2(x, c.y + 9.0)], Stroke::new(1.2, col));
+                p.rect_filled(Rect::from_center_size(pos2(x, c.y + y), vec2(5.0, 3.0)), 1.0, col);
+            }
+        }
+        Icon::Tracks => {
+            for k in 0..3 {
+                let y = c.y - 6.0 + k as f32 * 6.0;
+                p.circle_filled(pos2(c.x - 7.0, y), 1.8, col);
+                p.line_segment([pos2(c.x - 3.0, y), pos2(c.x + 9.0, y)], s);
+            }
+        }
+        Icon::Play => {
+            p.add(Shape::convex_polygon(vec![c + vec2(-4.0, -7.0), c + vec2(7.0, 0.0), c + vec2(-4.0, 7.0)], col, Stroke::NONE));
+        }
+        Icon::Stop => {
+            p.rect_filled(Rect::from_center_size(c, vec2(11.0, 11.0)), 2.0, col);
+        }
+        Icon::Plus => {
+            p.line_segment([c + vec2(-7.0, 0.0), c + vec2(7.0, 0.0)], Stroke::new(2.2, col));
+            p.line_segment([c + vec2(0.0, -7.0), c + vec2(0.0, 7.0)], Stroke::new(2.2, col));
+        }
+    }
+}
+
+/// Section title inside the scrolling body.
+fn heading(ui: &mut Ui, text: &str) {
+    ui.add_space(4.0);
+    ui.label(RichText::new(text.to_uppercase()).size(12.0).strong().color(muted()));
+    ui.add_space(4.0);
+}
+
+/// Glass list row: coloured badge with a letter, title, subtitle and a right-hand note.
+fn list_row(ui: &mut Ui, badge: Color32, letter: &str, title: &str, sub: &str, note: &str, selected: bool) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 64.0), Sense::click());
+    let p = ui.painter();
+    if selected {
+        glass_tinted(p, rect, 14.0, Some(p_accent().linear_multiply(0.30)));
+    } else {
+        glass(p, rect, 14.0);
+    }
+    let b = Rect::from_center_size(pos2(rect.left() + 32.0, rect.center().y), vec2(42.0, 42.0));
+    p.circle_filled(b.center(), 21.0, badge.linear_multiply(0.85));
+    p.text(b.center(), Align2::CENTER_CENTER, letter, FontId::proportional(18.0), Color32::WHITE);
+    p.text(pos2(rect.left() + 64.0, rect.top() + 14.0), Align2::LEFT_TOP, title, FontId::proportional(16.0), ink());
+    if !sub.is_empty() {
+        p.text(pos2(rect.left() + 64.0, rect.top() + 36.0), Align2::LEFT_TOP, sub, FontId::proportional(12.0), muted());
+    }
+    if !note.is_empty() {
+        p.text(pos2(rect.right() - 14.0, rect.top() + 16.0), Align2::RIGHT_TOP, note, FontId::proportional(11.0), muted());
+    }
+    ui.add_space(8.0);
+    resp
+}
+
+/// Pulse button: accent pill (primary) or glass pill.
+fn p_button(ui: &mut Ui, text: &str, primary: bool, size: egui::Vec2) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    let p = ui.painter();
+    if primary {
+        pill(p, rect, if resp.is_pointer_button_down_on() { p_accent().linear_multiply(0.8) } else { p_accent() });
+    } else {
+        glass(p, rect, rect.height() * 0.5);
+    }
+    p.text(rect.center(), Align2::CENTER_CENTER, text, FontId::proportional(15.0), if primary { on_accent() } else { ink() });
+    resp
+}
+
+fn segmented(ui: &mut Ui, id_salt: &str, items: &[&str]) -> usize {
+    let id = egui::Id::new(id_salt);
+    let mut sel: usize = ui.data(|d| d.get_temp(id)).unwrap_or(0).min(items.len().saturating_sub(1));
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+        for (i, name) in items.iter().enumerate() {
+            let w = 22.0 + name.chars().count() as f32 * 8.0;
+            if p_button(ui, name, sel == i, vec2(w, 34.0)).clicked() {
+                sel = i;
+            }
+        }
+    });
+    ui.data_mut(|d| d.insert_temp(id, sel));
+    ui.add_space(8.0);
+    sel
+}
+
+/// egui widgets (sliders, text fields, drag values) restyled to match the glass look.
+fn pulse_visuals(ui: &mut Ui) {
+    let v = ui.visuals_mut();
+    v.override_text_color = Some(ink());
+    v.extreme_bg_color = glass_bottom();
+    v.selection.bg_fill = p_accent().linear_multiply(0.6);
+    v.selection.stroke = Stroke::new(1.0, p_accent());
+    for w in [&mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active] {
+        w.bg_fill = glass_top();
+        w.weak_bg_fill = glass_top();
+        w.bg_stroke = Stroke::new(1.0, glass_edge());
+        w.rounding = egui::Rounding::same(12.0);
+        w.fg_stroke = Stroke::new(1.5, ink());
+    }
+    v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, ink());
+    v.slider_trailing_fill = true;
+}
+
+const PROJECT_SECTIONS: [(&str, Icon); 4] = [("Projects", Icon::Folder), ("Recent", Icon::Clock), ("Templates", Icon::Layout), ("Sounds", Icon::Wave)];
+const STUDIO_SECTIONS: [(&str, Icon); 5] = [("Steps", Icon::Steps), ("Piano", Icon::Keys), ("Playlist", Icon::Timeline), ("Mixer", Icon::Mixer), ("Tracks", Icon::Tracks)];
+
+impl VinteriaApp {
+    pub(super) fn is_mobile(&self) -> bool {
+        cfg!(target_os = "android") || std::env::var_os("SYNTHESIA_MOBILE").is_some()
+    }
+
+    pub(super) fn mobile_ui(&mut self, ctx: &egui::Context) {
+        doodle_background(ctx);
+        self.mobile_dock(ctx);
+        let sections: &[(&str, Icon)] = match self.m_tab {
+            0 => &PROJECT_SECTIONS,
+            1 => &STUDIO_SECTIONS,
+            _ => &[],
+        };
+        if !sections.is_empty() {
+            self.mobile_rail(ctx, sections);
+        }
+        self.mobile_header(ctx);
+        egui::CentralPanel::default().frame(Frame::none().inner_margin(Margin { left: 14.0, right: 14.0, top: 10.0, bottom: 6.0 })).show(ctx, |ui| {
+            pulse_visuals(ui);
+            match self.m_tab {
+                0 => self.m_projects(ui),
+                1 => self.m_studio(ui),
+                2 => self.m_settings(ui, ctx),
+                _ => self.m_profile(ui),
+            }
+        });
+        let repaint = if self.playing() { 33 } else { 250 };
+        ctx.request_repaint_after(std::time::Duration::from_millis(repaint));
+    }
+
+    // ───────────────────── shell: header, rail, dock ─────────────────────
+
+    fn mobile_header(&mut self, ctx: &egui::Context) {
+        let resp = egui::TopBottomPanel::top("m_header").show_separator_line(false).frame(Frame::none().fill(bar_fill()).inner_margin(Margin::symmetric(14.0, 10.0))).show(ctx, |ui| {
+            pulse_visuals(ui);
+            ui.horizontal(|ui| {
+                ui.set_min_height(TOUCH);
+                match self.m_tab {
+                    1 => {
+                        ui.vertical(|ui| {
+                            let name: String = self.project.name.chars().take(18).collect();
+                            ui.label(RichText::new(name).size(18.0).strong().color(ink()));
+                            let pat = self.project.patterns.get(self.project.current_pattern).map(|p| p.name.clone()).unwrap_or_default();
+                            ui.label(RichText::new(format!("{}  ·  {} tracks", pat, self.project.arrangement.tracks.len())).size(12.0).color(muted()));
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let playing = self.playing();
+                            let (r, resp) = ui.allocate_exact_size(vec2(TOUCH, TOUCH), Sense::click());
+                            pill(ui.painter(), r, p_accent());
+                            icon(ui.painter(), if playing { Icon::Stop } else { Icon::Play }, r.center() + vec2(if playing { 0.0 } else { 1.5 }, 0.0), on_accent());
+                            if resp.clicked() {
+                                self.m_toggle_play();
+                            }
+                            ui.add_space(4.0);
+                            ui.add_sized([92.0, 36.0], egui::DragValue::new(&mut self.project.bpm).range(40.0..=300.0).speed(0.5).suffix(" BPM").max_decimals(1));
+                        });
+                    }
+                    t => {
+                        let (title, sub) = match t {
+                            0 => ("Winteria", format!("v{}  ·  your projects", env!("CARGO_PKG_VERSION"))),
+                            2 => ("Settings", "theme, sync and about".to_string()),
+                            _ => ("Profile", "Winteria Studio".to_string()),
+                        };
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new(title).size(22.0).strong().color(ink()));
+                            ui.label(RichText::new(sub).size(12.0).color(muted()));
+                        });
+                        if t == 0 {
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let (r, resp) = ui.allocate_exact_size(vec2(TOUCH, TOUCH), Sense::click());
+                                pill(ui.painter(), r, p_accent());
+                                icon(ui.painter(), Icon::Plus, r.center(), on_accent());
+                                if resp.clicked() {
+                                    self.new_project();
+                                    self.m_open_studio(0);
+                                }
+                            });
+                        }
+                    }
+                }
+            });
+        });
+        let r = resp.response.rect;
+        ctx.layer_painter(egui::LayerId::background()).line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(1.0, outline()));
+    }
+
+    /// Row of round icon buttons above the dock (the section rail of Pulse).
+    fn mobile_rail(&mut self, ctx: &egui::Context, sections: &[(&str, Icon)]) {
+        egui::TopBottomPanel::bottom("m_rail").show_separator_line(false).frame(Frame::none().inner_margin(Margin { left: 10.0, right: 10.0, top: 4.0, bottom: 6.0 })).show(ctx, |ui| {
+            let w = ui.available_width();
+            let (rect, _) = ui.allocate_exact_size(vec2(w, 66.0), Sense::hover());
+            glass(ui.painter(), rect, 18.0);
+            let n = sections.len() as f32;
+            let slot = rect.width() / n;
+            for (i, (name, ic)) in sections.iter().enumerate() {
+                let cell = Rect::from_min_size(pos2(rect.left() + i as f32 * slot, rect.top()), vec2(slot, rect.height()));
+                let resp = ui.interact(cell, ui.id().with(("rail", i)), Sense::click());
+                let on = self.m_sec == i;
+                let c = pos2(cell.center().x, cell.top() + 25.0);
+                let p = ui.painter();
+                if on {
+                    p.circle_filled(c, 19.0, p_accent());
+                }
+                icon(p, *ic, c, if on { on_accent() } else { ink() });
+                p.text(pos2(cell.center().x, cell.bottom() - 9.0), Align2::CENTER_CENTER, *name, FontId::proportional(10.5), if on { ink() } else { muted() });
+                if resp.clicked() {
+                    self.m_sec = i;
+                }
+            }
+        });
+    }
+
+    /// Bottom dock: profile avatar, then text tabs; the active tab is an accent pill, the others glass.
+    fn mobile_dock(&mut self, ctx: &egui::Context) {
+        let resp = egui::TopBottomPanel::bottom("m_dock").show_separator_line(false).frame(Frame::none().fill(bar_fill()).inner_margin(Margin::symmetric(8.0, 6.0))).show(ctx, |ui| {
+            let w = ui.available_width();
+            let (rect, _) = ui.allocate_exact_size(vec2(w, TOUCH), Sense::hover());
+            let tabs = ["Projects", "Studio", "Settings"];
+            let slot = rect.width() / (tabs.len() as f32 + 1.0);
+            // avatar = Profile
+            let cell = Rect::from_min_size(rect.min, vec2(slot, rect.height())).shrink2(vec2(2.0, 0.0));
+            let resp = ui.interact(cell, ui.id().with("dock_profile"), Sense::click());
+            let p = ui.painter();
+            if self.m_tab == 3 {
+                glass(p, cell, 22.0);
+            }
+            let c = cell.center();
+            p.circle_filled(c, 18.0, lane_col(2).linear_multiply(0.9));
+            p.circle_stroke(c, 18.0, Stroke::new(2.0, glass_edge()));
+            p.text(c, Align2::CENTER_CENTER, "W", FontId::proportional(17.0), Color32::WHITE);
+            if resp.clicked() {
+                self.m_tab = 3;
+                self.m_sec = 0;
+            }
+            for (i, name) in tabs.iter().enumerate() {
+                let cell = Rect::from_min_size(pos2(rect.left() + (i + 1) as f32 * slot, rect.top()), vec2(slot, rect.height())).shrink2(vec2(2.0, 0.0));
+                let resp = ui.interact(cell, ui.id().with(("dock", i)), Sense::click());
+                let on = self.m_tab == i;
+                let p = ui.painter();
+                if on {
+                    pill(p, cell, p_accent());
+                } else {
+                    glass(p, cell, 22.0);
+                }
+                p.text(cell.center(), Align2::CENTER_CENTER, *name, FontId::proportional(13.5), if on { on_accent() } else { ink() });
+                if resp.clicked() && !on {
+                    self.m_tab = i;
+                    self.m_sec = 0;
+                    if i == 0 {
+                        self.hub_cache = None;
+                    }
+                }
+            }
+        });
+        let r = resp.response.rect;
+        ctx.layer_painter(egui::LayerId::background()).line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, outline()));
+    }
+
+    fn m_open_studio(&mut self, section: usize) {
+        self.m_tab = 1;
+        self.m_sec = section;
+    }
+
+    fn m_toggle_play(&mut self) {
+        if self.playing() {
+            self.shared.send(Cmd::Stop);
+        } else {
+            // the Playlist plays the song, every other screen loops the current pattern
+            self.project.song_mode = self.m_sec == 2;
+            self.shared.send(Cmd::Play);
+        }
+    }
+
+    // ───────────────────── Projects ─────────────────────
+
+    fn m_projects(&mut self, ui: &mut Ui) {
+        if self.hub_cache.is_none() {
+            self.hub_cache = Some(hub_projects(&self.recent));
+        }
+        let list = self.hub_cache.clone().unwrap_or_default();
+        let mut open = None;
+        let mut tpl = None;
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            // the project in memory
+            let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 128.0), Sense::hover());
+            glass(ui.painter(), rect, 16.0);
+            let p = ui.painter();
+            p.text(rect.left_top() + vec2(16.0, 14.0), Align2::LEFT_TOP, "Current project", FontId::proportional(12.0), muted());
+            p.text(rect.left_top() + vec2(16.0, 32.0), Align2::LEFT_TOP, &self.project.name, FontId::proportional(20.0), ink());
+            p.text(
+                rect.left_top() + vec2(16.0, 58.0),
+                Align2::LEFT_TOP,
+                format!("{:.0} BPM  ·  {} tracks  ·  {} clips", self.project.bpm, self.project.arrangement.tracks.len(), self.project.arrangement.clips.len()),
+                FontId::proportional(12.0),
+                muted(),
+            );
+            let br = Rect::from_min_size(rect.left_bottom() + vec2(16.0, -48.0), vec2(150.0, 38.0));
+            pill(p, br, p_accent());
+            p.text(br.center(), Align2::CENTER_CENTER, "Open in Studio", FontId::proportional(14.0), on_accent());
+            if ui.interact(br, ui.id().with("open_studio"), Sense::click()).clicked() {
+                self.m_open_studio(0);
+            }
+            ui.add_space(12.0);
+
+            match self.m_sec {
+                3 => {
+                    heading(ui, "Sounds");
+                    self.m_sounds(ui);
+                }
+                2 => {
+                    heading(ui, "Templates");
+                    for (i, (name, _)) in crate::templates::TEMPLATES.iter().enumerate() {
+                        if name.starts_with("Empty") {
+                            continue;
+                        }
+                        let letter = name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
+                        if list_row(ui, lane_col(i), &letter, name, "Template", "", false).clicked() {
+                            tpl = Some(i);
+                        }
+                    }
+                }
+                s => {
+                    let recent = s == 1;
+                    heading(ui, if recent { "Recently opened" } else { "All projects" });
+                    let items: Vec<(PathBuf, u64)> = if recent {
+                        self.recent.iter().filter_map(|p| std::fs::metadata(p).ok().map(|m| (p.clone(), m.len()))).collect()
+                    } else {
+                        list.iter().map(|(p, _, s)| (p.clone(), *s)).collect()
+                    };
+                    if items.is_empty() {
+                        ui.label(RichText::new(if recent { "No recently opened projects." } else { "No saved projects yet. Tap + or start from a template." }).color(muted()));
+                    }
+                    for (i, (path, size)) in items.iter().enumerate() {
+                        let name = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+                        let letter = name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
+                        if list_row(ui, lane_col(i), &letter, &name, &format!("{} KB", size / 1024), "", false).clicked() {
+                            open = Some(path.clone());
+                        }
+                    }
+                }
+            }
+        });
+        if let Some(i) = tpl {
+            self.load_template(i);
+            self.m_open_studio(0);
+        }
+        if let Some(path) = open {
+            self.open_path(path);
+            self.m_open_studio(0);
+        }
+    }
+
+    fn m_sounds(&mut self, ui: &mut Ui) {
+        fn walk(dir: &std::path::Path, out: &mut Vec<(String, String)>, depth: usize) {
+            let Ok(rd) = std::fs::read_dir(dir) else { return };
+            let mut items: Vec<_> = rd.flatten().collect();
+            items.sort_by_key(|e| e.file_name());
+            for e in items {
+                let p = e.path();
+                if p.is_dir() && depth < 4 {
+                    walk(&p, out, depth + 1);
+                } else if p.extension().map_or(false, |x| x.eq_ignore_ascii_case("wav")) && out.len() < 600 {
+                    let kit = p.parent().and_then(|d| d.file_name()).map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+                    out.push((kit, p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()));
+                }
+            }
+        }
+        let id = egui::Id::new("m_sounds_cache");
+        let list: Vec<(String, String)> = match ui.data(|d| d.get_temp::<Vec<(String, String)>>(id)) {
+            Some(l) => l,
+            None => {
+                let mut l = Vec::new();
+                walk(std::path::Path::new("samples"), &mut l, 0);
+                ui.data_mut(|d| d.insert_temp(id, l.clone()));
+                l
+            }
+        };
+        if list.is_empty() {
+            ui.label(RichText::new("No sounds found yet.").color(muted()));
+        }
+        for (i, (kit, name)) in list.iter().enumerate() {
+            let letter = name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
+            list_row(ui, lane_col(i), &letter, name, kit, "WAV", false);
+        }
+    }
+
+    // ───────────────────── Studio ─────────────────────
+
+    fn m_studio(&mut self, ui: &mut Ui) {
+        match self.m_sec {
+            0 => self.m_steps(ui),
+            1 => self.m_piano(ui),
+            2 => self.m_playlist(ui),
+            3 => self.m_mixer(ui),
+            _ => self.m_tracks(ui),
+        }
+    }
+
+    /// Pattern chips: tap to switch the pattern that the Steps and Piano screens edit.
+    fn m_pattern_chips(&mut self, ui: &mut Ui) {
+        let pats: Vec<(usize, String)> = self.project.patterns.iter().enumerate().filter(|(_, p)| !p.clip_only).map(|(i, p)| (i, p.name.clone())).collect();
+        egui::ScrollArea::horizontal().id_salt("m_pat_chips").auto_shrink([false, true]).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                for (i, name) in &pats {
+                    let short: String = name.chars().take(14).collect();
+                    let w = 24.0 + short.chars().count() as f32 * 8.0;
+                    if p_button(ui, &short, self.project.current_pattern == *i, vec2(w, 34.0)).clicked() {
+                        self.project.current_pattern = *i;
+                    }
+                }
+            });
+        });
+        ui.add_space(8.0);
+    }
+
+    /// Drum step sequencer: one glass card per drum, two rows of 8 big steps per 16-step page.
+    fn m_steps(&mut self, ui: &mut Ui) {
+        self.m_pattern_chips(ui);
+        let pi = self.project.current_pattern;
+        if pi >= self.project.patterns.len() {
+            ui.label(RichText::new("No pattern yet. Start from a template in Projects.").color(muted()));
+            return;
+        }
+        let len = self.project.patterns[pi].length_steps.max(16) as usize;
+        let pages = (len + 15) / 16;
+        let page_id = egui::Id::new("m_steps_page");
+        let mut page: usize = ui.data(|d| d.get_temp(page_id)).unwrap_or(0).min(pages - 1);
+        if pages > 1 {
+            let names: Vec<String> = (0..pages).map(|p| format!("{}-{}", p * 16 + 1, p * 16 + 16)).collect();
+            ui.horizontal(|ui| {
+                for (i, n) in names.iter().enumerate() {
+                    if p_button(ui, n, page == i, vec2(70.0, 32.0)).clicked() {
+                        page = i;
+                    }
+                }
+            });
+            ui.data_mut(|d| d.insert_temp(page_id, page));
+            ui.add_space(6.0);
+        }
+        let playing = self.playing() && !self.project.song_mode;
+        let play_step = (self.shared.position.load(Ordering::Relaxed) / TICKS_PER_STEP) as usize % len;
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            for lane in 0..NUM_DRUMS {
+                let w = ui.available_width();
+                let cell = ((w - 24.0 - 7.0 * 6.0 - 6.0) / 8.0).clamp(28.0, 64.0);
+                let h = 34.0 + 2.0 * cell + 8.0 + 14.0;
+                let (rect, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
+                panel(ui.painter(), rect, 16.0);
+                let col = lane_col(lane);
+                ui.painter().circle_filled(rect.left_top() + vec2(20.0, 18.0), 5.0, col);
+                ui.painter().text(rect.left_top() + vec2(32.0, 18.0), Align2::LEFT_CENTER, DRUM_NAMES[lane], FontId::proportional(15.0), ink());
+                for k in 0..16 {
+                    let s = page * 16 + k;
+                    if s >= len {
+                        break;
+                    }
+                    let (row, colm) = (k / 8, k % 8);
+                    let x = rect.left() + 12.0 + colm as f32 * (cell + 6.0) + if colm >= 4 { 6.0 } else { 0.0 };
+                    let y = rect.top() + 34.0 + row as f32 * (cell + 8.0);
+                    let r = Rect::from_min_size(pos2(x, y), vec2(cell, cell));
+                    let resp = ui.interact(r, ui.id().with(("step", lane, s)), Sense::click());
+                    let on = self.project.patterns[pi].drums[lane][s].on;
+                    let p = ui.painter();
+                    if on {
+                        p.rect_filled(r, 10.0, col);
+                    } else {
+                        glass(p, r, 10.0);
+                    }
+                    if playing && play_step == s {
+                        p.rect_stroke(r.expand(2.0), 12.0, Stroke::new(2.0, p_accent()));
+                    }
+                    if resp.clicked() {
+                        let st = &mut self.project.patterns[pi].drums[lane][s];
+                        st.on = !st.on;
+                        if st.on && st.vel == 0 {
+                            st.vel = 100;
+                        }
+                    }
+                }
+                ui.add_space(10.0);
+            }
+        });
+    }
+
+    /// Piano roll for phones: time runs down the screen (portrait), keys run across. Tap an empty cell to add a
+    /// 1/16 note, tap a note to remove it.
+    fn m_piano(&mut self, ui: &mut Ui) {
+        self.m_pattern_chips(ui);
+        let pi = self.project.current_pattern;
+        if pi >= self.project.patterns.len() {
+            ui.label(RichText::new("No pattern yet.").color(muted()));
+            return;
+        }
+        let oct_id = egui::Id::new("m_piano_oct");
+        let mut oct: u8 = ui.data(|d| d.get_temp(oct_id)).unwrap_or(4);
+        ui.horizontal(|ui| {
+            if p_button(ui, "Oct -", false, vec2(70.0, 34.0)).clicked() && oct > 1 {
+                oct -= 1;
+            }
+            ui.label(RichText::new(format!("C{oct} – B{}", oct + 1)).size(14.0).color(ink()));
+            if p_button(ui, "Oct +", false, vec2(70.0, 34.0)).clicked() && oct < 7 {
+                oct += 1;
+            }
+        });
+        ui.data_mut(|d| d.insert_temp(oct_id, oct));
+        ui.add_space(6.0);
+        let base = (oct + 1) * 12;
+        let keys = 24usize;
+        let steps = self.project.patterns[pi].length_steps.max(16) as usize;
+        let track = self.project.patterns[pi].notes.first().map(|n| n.track).unwrap_or(crate::piano_roll::Track::Synth);
+        let w = ui.available_width();
+        let label_w = 30.0;
+        let kw = (w - label_w) / keys as f32;
+        let row_h = 26.0;
+        // keyboard across the top: white keys full height, black keys short and dark
+        let (hdr, _) = ui.allocate_exact_size(vec2(w, 34.0), Sense::hover());
+        let keys_r = Rect::from_min_max(pos2(hdr.left() + label_w, hdr.top()), hdr.right_bottom());
+        ui.painter().rect_filled(keys_r, 6.0, pick(0xFFE9EDF1, 0xFFFFFFFF));
+        for k in 0..keys {
+            let pitch = base + k as u8;
+            let x = keys_r.left() + k as f32 * kw;
+            if matches!(pitch % 12, 1 | 3 | 6 | 8 | 10) {
+                ui.painter().rect_filled(Rect::from_min_size(pos2(x + 1.0, keys_r.top()), vec2(kw - 2.0, 21.0)), 2.0, pick(0xFF14171B, 0xFF2A3038));
+            } else if matches!(pitch % 12, 0 | 5) && k > 0 {
+                ui.painter().line_segment([pos2(x, keys_r.top()), pos2(x, keys_r.bottom())], Stroke::new(1.0, Color32::from_gray(150)));
+            }
+            if pitch % 12 == 0 {
+                ui.painter().text(pos2(x + kw * 0.5, keys_r.bottom() - 6.0), Align2::CENTER_CENTER, format!("C{}", pitch / 12 - 1), FontId::proportional(8.5), Color32::from_gray(70));
+            }
+        }
+        ui.add_space(4.0);
+        let playing = self.playing() && !self.project.song_mode;
+        let play_step = (self.shared.position.load(Ordering::Relaxed) / TICKS_PER_STEP) as usize % steps;
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            let (rect, resp) = ui.allocate_exact_size(vec2(w, steps as f32 * row_h), Sense::click());
+            let p = ui.painter_at(rect);
+            panel(&p, rect, 12.0);
+            for s in 0..steps {
+                let y = rect.top() + s as f32 * row_h;
+                if s % 4 == 0 {
+                    p.text(pos2(rect.left() + 6.0, y + row_h * 0.5), Align2::LEFT_CENTER, format!("{}", s / 4 + 1), FontId::proportional(11.0), muted());
+                }
+                let stroke = if s % 16 == 0 { Stroke::new(1.0, outline()) } else if s % 4 == 0 { Stroke::new(0.7, glass_edge()) } else { Stroke::new(0.4, glass_edge().linear_multiply(0.5)) };
+                p.line_segment([pos2(rect.left() + label_w, y), pos2(rect.right(), y)], stroke);
+                if playing && play_step == s {
+                    p.rect_filled(Rect::from_min_size(pos2(rect.left() + label_w, y), vec2(rect.width() - label_w, row_h)), 0.0, p_accent().linear_multiply(0.15));
+                }
+            }
+            for k in 0..keys {
+                let pitch = base + k as u8;
+                if matches!(pitch % 12, 1 | 3 | 6 | 8 | 10) {
+                    let x = rect.left() + label_w + k as f32 * kw;
+                    p.rect_filled(Rect::from_min_size(pos2(x, rect.top()), vec2(kw, rect.height())), 0.0, pick(0x22000000, 0x14000000));
+                }
+            }
+            let notes = &self.project.patterns[pi].notes;
+            for n in notes {
+                if n.pitch < base || n.pitch >= base + keys as u8 {
+                    continue;
+                }
+                let x = rect.left() + label_w + (n.pitch - base) as f32 * kw;
+                let y = rect.top() + n.start as f32 / TICKS_PER_STEP as f32 * row_h;
+                let h = (n.len as f32 / TICKS_PER_STEP as f32 * row_h).max(6.0);
+                let r = Rect::from_min_size(pos2(x + 1.0, y + 1.0), vec2(kw - 2.0, h - 2.0));
+                p.rect_filled(r, 4.0, lane_col(3));
+            }
+            if resp.clicked() {
+                if let Some(pos) = resp.interact_pointer_pos() {
+                    if pos.x > rect.left() + label_w {
+                        let k = ((pos.x - rect.left() - label_w) / kw) as usize;
+                        let s = ((pos.y - rect.top()) / row_h) as u32;
+                        let pitch = base + k.min(keys - 1) as u8;
+                        let tick = s * TICKS_PER_STEP;
+                        let notes = &mut self.project.patterns[pi].notes;
+                        if let Some(i) = notes.iter().position(|n| n.pitch == pitch && n.start <= tick && tick < n.start + n.len.max(1)) {
+                            notes.remove(i);
+                        } else {
+                            notes.push(crate::piano_roll::Note { start: tick, len: TICKS_PER_STEP, pitch, vel: 100, track, slide: false, chance: 100, pan: 0, mute: false });
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    fn m_playlist(&mut self, ui: &mut Ui) {
+        let (bar_w, lane_h, hdr, ruler) = (52.0f32, 50.0f32, 96.0f32, 26.0f32);
+        let tracks = self.project.arrangement.tracks.len();
+        if tracks == 0 {
+            ui.label(RichText::new("No tracks yet. Open a template in Projects.").color(muted()));
+            return;
+        }
+        let bars = (self.project.arrangement.song_end_bar() + 8).max(16);
+        let pos = self.shared.position.load(Ordering::Relaxed);
+        let playing = self.playing() && self.project.song_mode;
+        egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
+            let (rect, _) = ui.allocate_exact_size(vec2(hdr + bars as f32 * bar_w, ruler + tracks as f32 * lane_h), Sense::hover());
+            let p = ui.painter_at(rect);
+            let gx = rect.left() + hdr;
+            let gy = rect.top() + ruler;
+            panel(&p, rect, 12.0);
+            for l in 0..tracks {
+                let r = Rect::from_min_size(pos2(rect.left(), gy + l as f32 * lane_h), vec2(rect.width(), lane_h));
+                p.line_segment([r.left_top(), r.right_top()], Stroke::new(0.6, glass_edge()));
+                let t = &self.project.arrangement.tracks[l];
+                p.circle_filled(pos2(r.left() + 14.0, r.center().y), 5.0, lane_col(l));
+                let name: String = t.name.chars().take(10).collect();
+                p.text(pos2(r.left() + 26.0, r.center().y), Align2::LEFT_CENTER, name, FontId::proportional(13.0), if t.mute { muted() } else { ink() });
+            }
+            for b in 0..=bars {
+                let x = gx + b as f32 * bar_w;
+                p.line_segment([pos2(x, rect.top() + ruler - 4.0), pos2(x, rect.bottom())], Stroke::new(if b % 4 == 0 { 0.9 } else { 0.4 }, glass_edge()));
+                if b < bars {
+                    p.text(pos2(x + 4.0, rect.top() + 6.0), Align2::LEFT_TOP, format!("{}", b + 1), FontId::proportional(11.0), muted());
+                }
+            }
+            for c in &self.project.arrangement.clips {
+                let x0 = gx + c.start as f32 / TICKS_PER_BAR as f32 * bar_w;
+                let w = (c.len as f32 / TICKS_PER_BAR as f32 * bar_w).max(6.0);
+                let r = Rect::from_min_size(pos2(x0, gy + c.lane as f32 * lane_h), vec2(w, lane_h)).shrink2(vec2(1.5, 6.0));
+                let col = lane_col(c.lane);
+                p.rect_filled(r, 8.0, col.linear_multiply(0.75));
+                if r.width() > 40.0 {
+                    let name = if c.audio { self.project.audio_pool.get(c.pattern).map(|s| s.name.clone()).unwrap_or_default() } else { self.project.patterns.get(c.pattern).map(|p| p.name.clone()).unwrap_or_default() };
+                    let text: String = name.chars().take(((r.width() - 10.0) / 6.5) as usize).collect();
+                    p.text(r.left_center() + vec2(6.0, 0.0), Align2::LEFT_CENTER, text, FontId::proportional(11.0), Color32::WHITE);
+                }
+            }
+            if playing {
+                let x = gx + pos as f32 / TICKS_PER_BAR as f32 * bar_w;
+                p.line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], Stroke::new(2.0, p_accent()));
+            }
+        });
+    }
+
+    fn m_tracks(&mut self, ui: &mut Ui) {
+        let n = self.project.arrangement.tracks.len();
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let w = (ui.available_width() - 8.0) / 2.0;
+                if p_button(ui, "+ MIDI track", true, vec2(w, 40.0)).clicked() {
+                    self.project.arrangement.add_track(crate::arrangement::TrackKind::Midi);
+                }
+                if p_button(ui, "+ Audio track", false, vec2(w, 40.0)).clicked() {
+                    self.project.arrangement.add_track(crate::arrangement::TrackKind::Audio);
+                }
+            });
+            ui.add_space(10.0);
+            for l in 0..n {
+                let col = lane_col(l);
+                let audio = self.project.arrangement.tracks[l].kind == crate::arrangement::TrackKind::Audio;
+                // the glass goes under the card's widgets: reserve its slot first, fill it once the size is known
+                let slot = ui.painter().add(Shape::Noop);
+                let inner = Frame::none().inner_margin(12.0).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        let (r, _) = ui.allocate_exact_size(vec2(10.0, 30.0), Sense::hover());
+                        ui.painter().circle_filled(r.center(), 5.0, col);
+                        let t = &mut self.project.arrangement.tracks[l];
+                        ui.label(RichText::new(if audio { "AUDIO" } else { "MIDI" }).size(10.0).strong().color(muted()));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            for flag in [1u8, 0] {
+                                let label = if flag == 0 { "M" } else { "S" };
+                                let v = if flag == 0 { &mut t.mute } else { &mut t.solo };
+                                let (r, resp) = ui.allocate_exact_size(vec2(42.0, 34.0), Sense::click());
+                                if *v {
+                                    pill(ui.painter(), r, if flag == 0 { AMBER } else { p_accent() });
+                                } else {
+                                    glass(ui.painter(), r, 17.0);
+                                }
+                                ui.painter().text(r.center(), Align2::CENTER_CENTER, label, FontId::proportional(14.0), if *v { on_accent() } else { ink() });
+                                if resp.clicked() {
+                                    *v = !*v;
+                                }
+                            }
+                            ui.add(egui::TextEdit::singleline(&mut t.name).desired_width(ui.available_width()).font(FontId::proportional(15.0)));
+                        });
+                    });
+                    let t = &mut self.project.arrangement.tracks[l];
+                    ui.spacing_mut().slider_width = (ui.available_width() - 70.0).max(80.0);
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Slider::new(&mut t.volume, 0.0..=1.5).show_value(false));
+                        ui.label(RichText::new(format!("{:+.1} dB", db(t.volume))).size(11.0).color(muted()));
+                    });
+                    if let Some(inst) = t.instrument {
+                        ui.label(RichText::new(instruments_ui::Inst::from_track(inst).title()).size(11.0).color(muted()));
+                    }
+                });
+                let r = inner.response.rect;
+                let pts = rounded_points(r, 16.0);
+                let (top, bottom) = (glass_top(), glass_bottom());
+                let col = |y: f32| lerp_c(top, bottom, ((y - r.top()) / r.height().max(1.0)).clamp(0.0, 1.0));
+                let mut mesh = egui::Mesh::default();
+                mesh.colored_vertex(r.center(), col(r.center().y));
+                for q in &pts {
+                    mesh.colored_vertex(*q, col(q.y));
+                }
+                let k = pts.len() as u32;
+                for i in 0..k {
+                    mesh.add_triangle(0, 1 + i, 1 + (i + 1) % k);
+                }
+                ui.painter().set(slot, Shape::Vec(vec![Shape::mesh(mesh), Shape::closed_line(pts, Stroke::new(1.0, glass_edge()))]));
+                ui.add_space(8.0);
+            }
+        });
+    }
+
+    fn m_mixer(&mut self, ui: &mut Ui) {
+        let h = (ui.available_height() - 20.0).clamp(220.0, 520.0);
+        egui::ScrollArea::horizontal().auto_shrink([false, false]).show(ui, |ui| {
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                self.m_strip(ui, None, h);
+                for i in 0..NUM_INSERTS {
+                    self.m_strip(ui, Some(i), h);
+                }
+            });
+        });
+    }
+
+    fn m_strip(&mut self, ui: &mut Ui, insert: Option<usize>, h: f32) {
+        let w = 72.0;
+        let (rect, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
+        if insert.is_none() {
+            ui.painter().rect_filled(rect, 16.0, p_bg());
+            glass_tinted(ui.painter(), rect, 16.0, Some(p_accent().linear_multiply(0.10)));
+        } else {
+            panel(ui.painter(), rect, 16.0);
+        }
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(8.0)).layout(egui::Layout::top_down(egui::Align::Center)));
+        pulse_visuals(&mut child);
+        child.spacing_mut().slider_width = (h - 130.0).max(80.0);
+        match insert {
+            None => {
+                child.label(RichText::new("MASTER").size(11.0).strong().color(ink()));
+                child.add_space(6.0);
+                child.add(egui::Slider::new(&mut self.project.master_volume, 0.0..=1.2).vertical().show_value(false));
+                child.label(RichText::new(format!("{:+.1}", db(self.project.master_volume))).size(11.0).color(muted()));
+                let pk = self.shared.peak(0);
+                meter(&child, pk);
+            }
+            Some(i) => {
+                let ch = &mut self.project.channels[NUM_CH + i];
+                child.label(RichText::new(format!("{}", i + 1)).size(14.0).strong().color(ink()));
+                child.add(egui::TextEdit::singleline(&mut ch.name).desired_width(56.0).font(FontId::proportional(10.0)));
+                child.add(egui::Slider::new(&mut ch.volume, 0.0..=1.5).vertical().show_value(false));
+                child.label(RichText::new(format!("{:+.1}", db(ch.volume))).size(11.0).color(muted()));
+                let (r, resp) = child.allocate_exact_size(vec2(48.0, 32.0), Sense::click());
+                if ch.mute {
+                    pill(child.painter(), r, AMBER);
+                } else {
+                    glass(child.painter(), r, 16.0);
+                }
+                child.painter().text(r.center(), Align2::CENTER_CENTER, "M", FontId::proportional(13.0), if ch.mute { on_accent() } else { ink() });
+                if resp.clicked() {
+                    ch.mute = !ch.mute;
+                }
+            }
+        }
+    }
+
+    // ───────────────────── Settings / Profile ─────────────────────
+
+    fn m_settings(&mut self, ui: &mut Ui, ctx: &egui::Context) {
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            heading(ui, "Theme");
+            ui.horizontal(|ui| {
+                let w = (ui.available_width() - 8.0) / 2.0;
+                if p_button(ui, "Night", is_dark(), vec2(w, 42.0)).clicked() {
+                    set_dark(true);
+                    save_prefs();
+                    apply_visuals(ctx);
+                }
+                if p_button(ui, "Day", !is_dark(), vec2(w, 42.0)).clicked() {
+                    set_dark(false);
+                    save_prefs();
+                    apply_visuals(ctx);
+                }
+            });
+            ui.add_space(10.0);
+            heading(ui, "Sound");
+            let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 64.0), Sense::hover());
+            glass(ui.painter(), rect, 14.0);
+            let status = match &self.audio.error {
+                Some(e) => e.clone(),
+                None if self.audio.has_stream() => format!("{} Hz  ·  output is running", self.audio.sample_rate),
+                None => "No output".to_string(),
+            };
+            ui.painter().text(rect.left_top() + vec2(16.0, 14.0), Align2::LEFT_TOP, "Audio output", FontId::proportional(15.0), ink());
+            ui.painter().text(rect.left_top() + vec2(16.0, 36.0), Align2::LEFT_TOP, status, FontId::proportional(12.0), muted());
+            ui.add_space(10.0);
+            heading(ui, "Sync with PC");
+            ui.label(RichText::new(format!("Projects folder: {}", hub_dir().display())).size(12.0).color(ink()));
+            ui.label(RichText::new("On the PC choose the same cloud folder in the Hub: a project saved on one device shows up on the other.").size(11.0).color(muted()));
+            ui.add_space(10.0);
+            heading(ui, "About");
+            ui.label(RichText::new(format!("Winteria  v{}", env!("CARGO_PKG_VERSION"))).color(ink()));
+            ui.label(RichText::new("Winteria Studio  ·  own audio engine, synths, sequencer, mixer").size(12.0).color(muted()));
+        });
+    }
+
+    fn m_profile(&mut self, ui: &mut Ui) {
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 180.0), Sense::hover());
+            glass(ui.painter(), rect, 18.0);
+            let c = pos2(rect.center().x, rect.top() + 64.0);
+            let p = ui.painter();
+            p.circle_filled(c, 40.0, lane_col(2).linear_multiply(0.9));
+            p.circle_stroke(c, 43.0, Stroke::new(3.0, p_accent()));
+            p.text(c, Align2::CENTER_CENTER, "W", FontId::proportional(34.0), Color32::WHITE);
+            p.text(pos2(c.x, rect.top() + 124.0), Align2::CENTER_CENTER, "Winteria Studio", FontId::proportional(19.0), ink());
+            p.text(pos2(c.x, rect.top() + 150.0), Align2::CENTER_CENTER, "Guest", FontId::proportional(12.0), muted());
+            ui.add_space(12.0);
+            let projects = self.hub_cache.as_ref().map(|l| l.len()).unwrap_or(0);
+            list_row(ui, lane_col(0), "P", "Projects", &format!("{projects} saved"), "", false);
+            list_row(ui, lane_col(4), "R", "Recent", &format!("{} opened", self.recent.len()), "", false);
+        });
+    }
+}
+
+fn meter(ui: &Ui, pk: [f32; 2]) {
+    let r = ui.max_rect();
+    let p = ui.painter();
+    for (k, v) in pk.iter().enumerate() {
+        let x = r.right() - 4.0 - k as f32 * 5.0;
+        let h = (v.clamp(0.0, 1.2) / 1.2) * (r.height() - 60.0);
+        let bottom = r.bottom() - 30.0;
+        p.line_segment([pos2(x, bottom), pos2(x, bottom - h)], Stroke::new(3.0, p_accent()));
+    }
+}

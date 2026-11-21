@@ -16,6 +16,7 @@ pub mod session_ui;
 pub mod theme;
 pub mod track_ui;
 pub mod widgets;
+mod mobile;
 mod navigation;
 mod account_ui;
 mod transport_ui;
@@ -272,6 +273,9 @@ pub struct VinteriaApp {
     last_autosave: std::time::Instant,
     /// start of the logo splash shown when the program opens
     splash: std::time::Instant,
+    /// phone layout: dock tab (0 Projects, 1 Studio, 2 Settings, 3 Profile) and the section picked in the icon rail
+    m_tab: usize,
+    m_sec: usize,
     /// waveform of the whole arrangement (signature it was rendered for, peaks), the render in flight and the one waiting
     song_wave: Option<(u64, Vec<f32>)>,
     song_rx: Option<Receiver<(u64, Vec<f32>)>>,
@@ -379,6 +383,8 @@ impl VinteriaApp {
             show_projects: false,
             hub_open: false,
             splash: std::time::Instant::now(),
+            m_tab: 0,
+            m_sec: 0,
             song_wave: None,
             song_rx: None,
             song_pending: None,
@@ -606,6 +612,26 @@ impl VinteriaApp {
             }
         }
         Some(path)
+    }
+
+    /// Hand edits to the audio thread (lock-free snapshot swap) and keep the undo history.
+    fn publish_edits(&mut self) {
+        if self.project != *self.published {
+            if !self.undo_skip && self.last_undo.elapsed() > std::time::Duration::from_millis(400) {
+                self.undo.push(Arc::clone(&self.published));
+                if self.undo.len() > 100 {
+                    self.undo.remove(0);
+                }
+                self.redo.clear();
+            }
+            if !self.undo_skip {
+                self.last_undo = std::time::Instant::now();
+            }
+            self.undo_skip = false;
+            let snap = Arc::new(self.project.clone());
+            self.shared.project.store(Arc::clone(&snap));
+            self.published = snap;
+        }
     }
 
     fn playing(&self) -> bool {
@@ -2128,6 +2154,13 @@ impl eframe::App for VinteriaApp {
         }
         // every track with a built-in synth plays its own copy of the plugin's settings
         self.project.adopt_track_params();
+        // phones get their own layout (Pulse style); the PC keeps the AOS desktop
+        if self.is_mobile() {
+            self.hub_open = false;
+            self.mobile_ui(ctx);
+            self.publish_edits();
+            return;
+        }
         // the selected Playlist track is the one whose sampler plays live notes
         if self.arr.sel_lane != self.sent_lane {
             self.sent_lane = self.arr.sel_lane;
@@ -2895,23 +2928,7 @@ impl eframe::App for VinteriaApp {
         }
         self.project.stamp_warp();
         self.audio_recording();
-        // publish edits to the audio thread (lock-free snapshot swap)
-        if self.project != *self.published {
-            if !self.undo_skip && self.last_undo.elapsed() > std::time::Duration::from_millis(400) {
-                self.undo.push(Arc::clone(&self.published));
-                if self.undo.len() > 100 {
-                    self.undo.remove(0);
-                }
-                self.redo.clear();
-            }
-            if !self.undo_skip {
-                self.last_undo = std::time::Instant::now();
-            }
-            self.undo_skip = false;
-            let snap = Arc::new(self.project.clone());
-            self.shared.project.store(Arc::clone(&snap));
-            self.published = snap;
-        }
+        self.publish_edits();
         // floating label under the cursor while an item is dragged out of the Browser
         if let Some(item) = egui::DragAndDrop::payload::<browser::DragItem>(ctx) {
             if let Some(pos) = ctx.pointer_hover_pos() {

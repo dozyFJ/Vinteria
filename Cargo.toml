@@ -1,6 +1,6 @@
 [package]
 name = "vinteria_daw"
-version = "1.0.2"
+version = "1.0.3"
 edition = "2021"
 description = "Winteria DAW - a from-scratch DAW (audio engine, synths, sequencer, piano roll, arrangement, mixer)"
 
@@ -51,7 +51,7 @@ label = "Winteria"
 theme = "@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
 
 [package.metadata.android.application.activity]
-orientation = "sensorLandscape"
+orientation = "sensorPortrait"
 config_changes = "orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|density"
 
 [profile.dev]
