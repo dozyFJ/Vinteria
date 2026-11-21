@@ -1,0 +1,79 @@
+name: Android APK
+
+on:
+  push:
+    branches: [winteria-mobile-pulse]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    env:
+      NDK_VERSION: 26.3.11579264
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Android SDK packages
+        run: sdkmanager --install "platforms;android-34" "build-tools;34.0.0" "ndk;${NDK_VERSION}" > /dev/null
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-apk
+        run: cargo install cargo-apk --locked
+
+      - name: Build APK
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          export ANDROID_HOME="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
+          export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
+          # a fixed key from the secrets keeps updates installable over each other; without it a one-off key is made
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            export CARGO_APK_RELEASE_KEYSTORE_PASSWORD="$KEYSTORE_PASSWORD"
+          else
+            echo "::warning::no signing secret - using a one-off key"
+            keytool -genkeypair -keystore "$RUNNER_TEMP/release.keystore" -storetype PKCS12 -storepass android -keypass android \
+              -alias winteria -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Winteria"
+            export CARGO_APK_RELEASE_KEYSTORE_PASSWORD=android
+          fi
+          export CARGO_APK_RELEASE_KEYSTORE="$RUNNER_TEMP/release.keystore"
+          ./tools/build-android.sh --release
+          version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          mkdir -p out && cp target/release/apk/Winteria.apk "out/Winteria-$version.apk"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Winteria-apk
+          path: out/*.apk
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="android-v$VERSION"
+          gh release delete "$tag" --yes --cleanup-tag || true
+          gh release create "$tag" out/*.apk --target "$GITHUB_SHA" --prerelease \
+            --title "Winteria $VERSION (Android)" --notes "Build of ${GITHUB_SHA::7}."
