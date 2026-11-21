@@ -1,6 +1,6 @@
 [package]
 name = "vinteria_daw"
-version = "1.0.29"
+version = "1.0.30"
 edition = "2021"
 description = "Winteria DAW - a from-scratch DAW (audio engine, synths, sequencer, piano roll, arrangement, mixer)"
 
@@ -53,6 +53,9 @@ target_sdk_version = 34
 
 [package.metadata.android.application]
 label = "Winteria"
+# the launcher activity is Java (android/java/.../WinteriaActivity.java, packed into classes.dex): without
+# hasCode=true Android never loads classes.dex and the app dies at start with ClassNotFoundException
+has_code = true
 icon = "@mipmap/ic_launcher"
 theme = "@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
 

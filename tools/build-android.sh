@@ -75,6 +75,11 @@ if [[ -z "$previous_signer" || "$previous_signer" != "$current_signer" ]]; then
     exit 1
 fi
 mv "$assembly/Winteria.apk" "$apk"
+# the manifest must let Android load classes.dex, or the Java launcher activity is missing at start
+if ! "$build_tools/aapt" dump xmltree "$apk" AndroidManifest.xml | grep -q 'android:hasCode(0x0101000c)=(type 0x12)0xffffffff'; then
+    printf 'AndroidManifest.xml has hasCode=false: the app would crash at start (ClassNotFoundException).\n' >&2
+    exit 1
+fi
 # the .so must not need C++ symbols that nothing provides (that is the "cannot locate symbol __cxa_pure_virtual" start-up crash)
 so="$target_dir/aarch64-linux-android/$profile/libvinteria_daw.so"
 nm_tool=$(ls "$ANDROID_NDK_HOME"/toolchains/llvm/prebuilt/*/bin/llvm-nm 2>/dev/null | head -n1)
