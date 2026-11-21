@@ -57,6 +57,7 @@ icon = "@mipmap/ic_launcher"
 theme = "@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
 
 [package.metadata.android.application.activity]
+name = "com.winteria.daw.WinteriaActivity"
 orientation = "sensorPortrait"
 config_changes = "orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|density"
 

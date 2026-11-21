@@ -579,6 +579,20 @@ impl VinteriaApp {
                 crate::boot_log(s);
             }
         };
+        #[cfg(target_os = "android")]
+        {
+            let pending = egui::Id::new("m_sound_import_pending");
+            if ctx.data(|d| d.get_temp::<bool>(pending)).unwrap_or(false) {
+                if let Some(status) = self.android_updater.as_ref().and_then(|android| android.take_sound_import_status()) {
+                    self.lib.rescan();
+                    ctx.data_mut(|d| {
+                        d.remove::<bool>(pending);
+                        d.remove::<Vec<(String, String)>>(egui::Id::new("m_sounds_cache"));
+                        d.insert_temp(egui::Id::new("m_sound_import_status"), status);
+                    });
+                }
+            }
+        }
         step("background");
         if self.m_tab == 0 {
             ctx.layer_painter(egui::LayerId::background()).rect_filled(ctx.screen_rect(), 0.0, p_bg());
@@ -2195,20 +2209,67 @@ impl VinteriaApp {
             ui.selectable_value(&mut plugins, false, "Sounds");
             ui.selectable_value(&mut plugins, true, "Plugins");
         });
+        #[cfg(target_os = "android")]
+        if !plugins {
+            let pending = egui::Id::new("m_sound_import_pending");
+            let status = egui::Id::new("m_sound_import_status");
+            let busy = ui.data(|d| d.get_temp::<bool>(pending)).unwrap_or(false);
+            let button = egui::Button::new("Import WAV").min_size(vec2(ui.available_width(), TOUCH));
+            if ui.add_enabled(!busy, button).clicked() {
+                let result = self.android_updater.as_ref()
+                    .ok_or_else(|| "Android file picker is unavailable.".to_owned())
+                    .and_then(|android| android.choose_sounds());
+                ui.data_mut(|d| match result {
+                    Ok(()) => {
+                        d.insert_temp(pending, true);
+                        d.insert_temp(status, "Select one or more WAV files.".to_owned());
+                    }
+                    Err(error) => d.insert_temp(status, error),
+                });
+            }
+            if let Some(status) = ui.data(|d| d.get_temp::<String>(status)) {
+                ui.label(RichText::new(status).size(11.0).color(muted()));
+            }
+        }
         ui.add(egui::TextEdit::singleline(&mut query).hint_text("Search").desired_width(ui.available_width()));
         let filter = query.trim().to_lowercase();
         ui.data_mut(|d| {
             d.insert_temp(tab_id, plugins);
             d.insert_temp(query_id, query);
         });
+        let drum_id = egui::Id::new("m_browser_drum_destination");
+        let mut drum_destination = ui.data(|d| d.get_temp::<usize>(drum_id))
+            .filter(|&lane| lane < DRUM_NAMES.len());
+        let picking_clip = ui.data(|d| d.get_temp::<(usize, u32)>(egui::Id::new("m_audio_clip_target"))).is_some();
+        if !plugins && !picking_clip {
+            let destination = drum_destination.map_or("Audio clip", |lane| DRUM_NAMES[lane]);
+            ui.menu_button(destination, |ui| {
+                if ui.selectable_value(&mut drum_destination, None, "Audio clip").clicked() {
+                    ui.close_menu();
+                }
+                for (lane, label) in DRUM_NAMES.iter().enumerate() {
+                    if ui.selectable_value(&mut drum_destination, Some(lane), *label).clicked() {
+                        ui.close_menu();
+                    }
+                }
+            }).response.on_hover_text("Tap a sample to assign it here");
+            ui.data_mut(|d| {
+                if let Some(lane) = drum_destination {
+                    d.insert_temp(drum_id, lane);
+                } else {
+                    d.remove::<usize>(drum_id);
+                }
+            });
+        }
         let mut sound = None;
+        let mut drum = None;
         let mut instrument = None;
         let mut effect = None;
         mobile_scroll(egui::ScrollArea::vertical()).id_salt(("m_browser_list", plugins)).show(ui, |ui| {
             if plugins {
                 for track in Track::ALL {
                     if track.name().to_lowercase().contains(&filter)
-                        && browser_drag_row(ui, track.name(), browser::DragItem::Instrument(track))
+                        && browser_drag_row(ui, track.name(), browser::DragItem::Instrument(track)).clicked()
                     {
                         instrument = Some(track);
                     }
@@ -2216,7 +2277,7 @@ impl VinteriaApp {
                 ui.separator();
                 for kind in crate::fx::ALL {
                     if kind.name().to_lowercase().contains(&filter)
-                        && browser_drag_row(ui, kind.name(), kind)
+                        && browser_drag_row(ui, kind.name(), kind).clicked()
                     {
                         effect = Some(kind);
                     }
@@ -2227,14 +2288,33 @@ impl VinteriaApp {
                 }
                 for path in &self.lib.files {
                     let name = path.file_stem().unwrap_or_default().to_string_lossy();
-                    if name.to_lowercase().contains(&filter)
-                        && browser_drag_row(ui, &name, browser::DragItem::Sample(path.clone()))
-                    {
-                        sound = Some(path.clone());
+                    if name.to_lowercase().contains(&filter) {
+                        let response = browser_drag_row(ui, &name, browser::DragItem::Sample(path.clone()))
+                            .on_hover_text("Hold to assign to a drum pad");
+                        response.context_menu(|ui| {
+                            ui.label("Assign to drum pad");
+                            for (lane, label) in DRUM_NAMES.iter().enumerate() {
+                                if ui.button(*label).clicked() {
+                                    drum = Some((lane, path.clone()));
+                                    ui.close_menu();
+                                }
+                            }
+                        });
+                        if response.clicked() {
+                            if let Some(lane) = drum_destination.filter(|_| !picking_clip) {
+                                drum = Some((lane, path.clone()));
+                            } else {
+                                sound = Some(path.clone());
+                            }
+                        }
                     }
                 }
             }
         });
+        if let Some((lane, path)) = drum {
+            self.lib.assign(&mut self.project, lane, &path);
+            self.arr.msg.clone_from(&self.lib.message);
+        }
         if let Some(path) = sound {
             let target_id = egui::Id::new("m_audio_clip_target");
             if let Some((lane, tick)) = ui.data(|d| d.get_temp::<(usize, u32)>(target_id)) {
@@ -2874,12 +2954,12 @@ fn mobile_editor_sheet(ctx: &egui::Context, id: &'static str, title: &str, body:
     done || ctx.input(|input| input.key_pressed(egui::Key::Escape))
 }
 
-fn browser_drag_row<T: std::any::Any + Send + Sync>(ui: &mut Ui, label: &str, item: T) -> bool {
+fn browser_drag_row<T: std::any::Any + Send + Sync>(ui: &mut Ui, label: &str, item: T) -> Response {
     ui.horizontal(|ui| {
         let (rect, grip) = ui.allocate_exact_size(vec2(24.0, 38.0), Sense::drag());
         grip.dnd_set_drag_payload(item);
         ui.painter().text(rect.center(), Align2::CENTER_CENTER, "⋮⋮", FontId::proportional(13.0), muted());
-        ui.add_sized([ui.available_width(), 38.0], egui::Button::new(label).truncate()).clicked()
+        ui.add_sized([ui.available_width(), 38.0], egui::Button::new(label).truncate())
     }).inner
 }
 

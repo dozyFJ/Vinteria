@@ -41,7 +41,7 @@ The APK is at `target/debug/apk/Winteria.apk` and targets 64-bit ARM devices
 running Android 8.0 or later. For a release build, set
 `CARGO_APK_RELEASE_KEYSTORE` and `CARGO_APK_RELEASE_KEYSTORE_PASSWORD`, then
 run `./tools/build-android.sh --release`. The release APK is at
-`target/release/apk/Winteria.apk`. Use a JDK with `java` and `keytool` on your PATH.
+`target/release/apk/Winteria.apk`. Use a JDK with `java`, `javac`, and `keytool` on your PATH. The build script includes the Android file-picker activity and verifies the final APK signature.
 
 The Android app uses package ID `com.winteria.daw`. Keep the same signing
 key for every release so Android can install updates over the existing app.

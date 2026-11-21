@@ -32,9 +32,49 @@ if [[ ! -x "$apksigner" || ! -f "$ANDROID_HOME/platforms/android-34/android.jar"
 fi
 
 target_dir="${CARGO_TARGET_DIR:-$PWD/target}"
+mkdir -p "$target_dir"
+target_dir=$(realpath "$target_dir")
+build_tools="$ANDROID_HOME/build-tools/34.0.0"
+assembly=$(mktemp -d "$target_dir/.winteria-apk.XXXXXX")
+trap 'rm -rf -- "$assembly"' EXIT
+platform="$ANDROID_HOME/platforms/android-34/android.jar"
+activity=android/java/com/winteria/daw/WinteriaActivity.java
+mkdir "$assembly/classes"
+if [[ -n "${WINTERIA_ECJ_JAR:-}" ]]; then
+    java -jar "$WINTERIA_ECJ_JAR" -8 -proc:none -classpath "$platform" -d "$assembly/classes" "$activity"
+else
+    javac --release 8 -classpath "$platform" -d "$assembly/classes" "$activity"
+fi
+"$build_tools/d8" --min-api 26 --lib "$platform" --output "$assembly" "$assembly/classes/com/winteria/daw/WinteriaActivity.class"
+
 cargo apk build "${build_args[@]}" --target-dir "$target_dir"
 apk="$target_dir/$profile/apk/Winteria.apk"
-"$apksigner" verify "$apk"
+if [[ "$profile" == release ]]; then
+    signing_key="$CARGO_APK_RELEASE_KEYSTORE"
+    export WINTERIA_PACKAGING_PASSWORD="$CARGO_APK_RELEASE_KEYSTORE_PASSWORD"
+else
+    if [[ -n "${ANDROID_SDK_HOME:-}" ]]; then
+        dev_home="$ANDROID_SDK_HOME/.android"
+    else
+        dev_home="${ANDROID_USER_HOME:-$HOME/.android}"
+    fi
+    signing_key="${CARGO_APK_DEV_KEYSTORE:-$dev_home/debug.keystore}"
+    export WINTERIA_PACKAGING_PASSWORD="${CARGO_APK_DEV_KEYSTORE_PASSWORD:-android}"
+fi
+previous_signer=$("$apksigner" verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+cp "$apk" "$assembly/unaligned.apk"
+(
+    cd "$assembly"
+    "$build_tools/aapt" add unaligned.apk classes.dex
+)
+"$build_tools/zipalign" -f -p 4 "$assembly/unaligned.apk" "$assembly/aligned.apk"
+"$apksigner" sign --ks "$signing_key" --ks-pass env:WINTERIA_PACKAGING_PASSWORD     --out "$assembly/Winteria.apk" "$assembly/aligned.apk"
+current_signer=$("$apksigner" verify --print-certs "$assembly/Winteria.apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+if [[ -z "$previous_signer" || "$previous_signer" != "$current_signer" ]]; then
+    printf 'APK packaging changed the signing certificate.\n' >&2
+    exit 1
+fi
+mv "$assembly/Winteria.apk" "$apk"
 # the .so must not need C++ symbols that nothing provides (that is the "cannot locate symbol __cxa_pure_virtual" start-up crash)
 so="$target_dir/aarch64-linux-android/$profile/libvinteria_daw.so"
 nm_tool=$(ls "$ANDROID_NDK_HOME"/toolchains/llvm/prebuilt/*/bin/llvm-nm 2>/dev/null | head -n1)

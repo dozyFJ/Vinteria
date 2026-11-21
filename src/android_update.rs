@@ -93,6 +93,25 @@ impl Updater {
         });
     }
 
+    pub(crate) fn choose_sounds(&self) -> Result<(), String> {
+        with_activity(&self.app, |env, activity| {
+            env.call_method(activity, "chooseSounds", "()V", &[])?;
+            Ok(())
+        }).map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn take_sound_import_status(&self) -> Option<String> {
+        with_activity(&self.app, |env, activity| {
+            let value = env.call_method(activity, "takeSoundImportStatus", "()Ljava/lang/String;", &[])?.l()?;
+            if value.is_null() {
+                return Ok(None);
+            }
+            let value = jni::objects::JString::from(value);
+            let status = env.get_string(&value)?.into();
+            Ok(Some(status))
+        }).ok().flatten()
+    }
+
     /// Hand a file to Android's share sheet (Telegram, TikTok, Drive, ...).
     pub(crate) fn share_file(&self, path: &str, mime: &str) -> Result<(), String> {
         with_activity(&self.app, |env, activity| {
