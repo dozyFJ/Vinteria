@@ -1310,7 +1310,7 @@ impl VinteriaApp {
             d.insert_temp(loop_id, looping);
         });
         ui.add_space(3.0);
-        ui.add(egui::Label::new(RichText::new("Tap to add · Drag note end · Hold to delete")
+        ui.add(egui::Label::new(RichText::new("Drag note to move · Drag edge to resize")
             .size(11.0).color(muted())).truncate());
         let (key_root, key_scale) = (self.project.key_root, self.project.key_scale);
         let base = oct * 12;
@@ -1372,21 +1372,22 @@ impl VinteriaApp {
             }
             let mut remove = None;
             let mut audition = None;
-            let mut resize = None;
+            let mut edit = None;
             let pattern_end = steps as u32 * TICKS_PER_STEP;
             for (index, note) in self.project.patterns[pi].notes.iter().enumerate() {
                 if note.pitch > high_pitch || note.start >= pattern_end {
                     continue;
                 }
                 let x = rect.left() + note.start as f32 / TICKS_PER_STEP as f32 * step_w;
-                let y = rect.top() + (high_pitch - note.pitch) as f32 * row_h;
-                let body = |len: u32| {
+                let body = |len: u32, pitch: u8| {
+                    let y = rect.top() + (high_pitch - pitch) as f32 * row_h;
                     let width = (len as f32 / TICKS_PER_STEP as f32 * step_w).max(6.0);
                     Rect::from_min_size(pos2(x + 1.0, y + 1.0), vec2(width - 2.0, row_h - 2.0))
                 };
-                let original = body(note.len);
+                let original = body(note.len, note.pitch);
                 let id = resp.id.with(("note", index));
-                let note_response = ui.interact(original, id, Sense::click());
+                let note_response = ui.interact(original, id, Sense::click_and_drag())
+                    .on_hover_cursor(egui::CursorIcon::Grab);
                 let edge = Rect::from_min_max(
                     pos2(original.right() - original.width().min(14.0), original.top()),
                     original.right_bottom());
@@ -1394,28 +1395,41 @@ impl VinteriaApp {
                     .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
                 let max_len = pattern_end - note.start;
                 let mut len = note.len;
+                let mut pitch = note.pitch;
                 let grab_id = id.with("grab");
-                if handle.drag_started() {
-                    if let Some(origin) = ui.input(|input| input.pointer.press_origin()) {
-                        ui.data_mut(|d| d.insert_temp(grab_id, origin.x));
+                if handle.drag_started() || note_response.drag_started() {
+                    if let (Some(origin), Some(pointer)) = (
+                        ui.input(|input| input.pointer.press_origin()),
+                        handle.interact_pointer_pos().or(note_response.interact_pointer_pos()),
+                    ) {
+                        let delta = pointer - origin;
+                        let resize = handle.drag_started() && delta.x.abs() >= delta.y.abs();
+                        ui.data_mut(|d| d.insert_temp(grab_id, (origin, resize)));
                     }
                 }
-                if handle.dragged() || handle.drag_stopped() {
-                    if let (Some(origin), Some(pointer)) = (
-                        ui.data(|d| d.get_temp::<f32>(grab_id)), handle.interact_pointer_pos()
+                let stopped = handle.drag_stopped() || note_response.drag_stopped();
+                if handle.dragged() || note_response.dragged() || stopped {
+                    if let (Some((origin, resize)), Some(pointer)) = (
+                        ui.data(|d| d.get_temp::<(egui::Pos2, bool)>(grab_id)),
+                        handle.interact_pointer_pos().or(note_response.interact_pointer_pos()),
                     ) {
-                        let delta = ((pointer.x - origin) / step_w).round() as i64 * i64::from(TICKS_PER_STEP);
-                        len = (i64::from(note.len) + delta)
-                            .clamp(i64::from(TICKS_PER_STEP.min(max_len)), i64::from(max_len)) as u32;
+                        if resize {
+                            let delta = ((pointer.x - origin.x) / step_w).round() as i64 * i64::from(TICKS_PER_STEP);
+                            len = (i64::from(note.len) + delta)
+                                .clamp(i64::from(TICKS_PER_STEP.min(max_len)), i64::from(max_len)) as u32;
+                        } else {
+                            let semitones = ((origin.y - pointer.y) / row_h).round() as i32;
+                            pitch = (i32::from(note.pitch) + semitones).clamp(0, i32::from(high_pitch)) as u8;
+                        }
                     }
-                    if handle.drag_stopped() {
-                        ui.data_mut(|d| d.remove::<f32>(grab_id));
-                        if len != note.len {
-                            resize = Some((index, len));
+                    if stopped {
+                        ui.data_mut(|d| d.remove::<(egui::Pos2, bool)>(grab_id));
+                        if len != note.len || pitch != note.pitch {
+                            edit = Some((index, len, pitch));
                         }
                     }
                 }
-                let visual = body(len);
+                let visual = body(len, pitch);
                 let tint = lane_col(3);
                 p.rect_filled(visual, 5.0, tint);
                 let grip = Rect::from_center_size(visual.right_center() - vec2(3.0, 0.0), vec2(2.0, 10.0));
@@ -1423,7 +1437,7 @@ impl VinteriaApp {
                 if visual.width() >= 24.0 {
                     p.with_clip_rect(visual.intersect(ui.clip_rect())).text(
                         visual.left_center() + vec2(3.0, 0.0), Align2::LEFT_CENTER,
-                        format!("{}{}", names[usize::from(note.pitch % 12)], i16::from(note.pitch) / 12 - 1),
+                        format!("{}{}", names[usize::from(pitch % 12)], i16::from(pitch) / 12 - 1),
                         FontId::proportional(10.0), Color32::from_gray(18));
                 }
                 if note_response.secondary_clicked() || handle.secondary_clicked() {
@@ -1432,8 +1446,15 @@ impl VinteriaApp {
                     audition = Some((note.track, note.pitch));
                 }
             }
-            if let Some((index, len)) = resize {
-                self.project.patterns[pi].notes[index].len = len;
+            if let Some((index, len, pitch)) = edit {
+                let note = &mut self.project.patterns[pi].notes[index];
+                let moved = note.pitch != pitch;
+                let track = note.track;
+                note.len = len;
+                note.pitch = pitch;
+                if moved {
+                    self.m_preview_piano_notes(ui.ctx(), track, vec![pitch]);
+                }
             } else if let Some(index) = remove {
                 self.project.patterns[pi].notes.remove(index);
             } else if let Some((track, pitch)) = audition {
