@@ -34,13 +34,14 @@ Install Android SDK Platform 34, Build Tools 34.0.0, NDK r26d, and JDK. Set
 ```sh
 rustup target add aarch64-linux-android
 cargo install cargo-apk --version 0.10.0 --locked
-cargo apk build --lib
+./tools/build-android.sh
 ```
 
 The APK is at `target/debug/apk/Winteria.apk` and targets 64-bit ARM devices
 running Android 8.0 or later. For a release build, set
-`CARGO_APK_RELEASE_KEYSTORE` and `CARGO_APK_RELEASE_KEYSTORE_PASSWORD` and add
-`--release`.
+`CARGO_APK_RELEASE_KEYSTORE` and `CARGO_APK_RELEASE_KEYSTORE_PASSWORD`, then
+run `./tools/build-android.sh --release`. The release APK is at
+`target/release/apk/Winteria.apk`. Use a JDK with `java` and `keytool` on your PATH.
 
 The Android app uses package ID `com.winteria.daw`. Keep the same signing
 key for every release so Android can install updates over the existing app.
