@@ -794,7 +794,7 @@ impl VinteriaApp {
     }
 
     /// Save into the hub folder: a new project gets a free name there, a project that already lives there keeps its file.
-    fn save_to_hub(&mut self) {
+    fn save_to_hub(&mut self) -> bool {
         let dir = hub_dir();
         let stem: String = self.project.name.chars().map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' { c } else { '_' }).collect();
         let stem = if stem.trim().is_empty() { "Project".to_string() } else { stem };
@@ -809,6 +809,7 @@ impl VinteriaApp {
                 }
             }
         }
+        let original_name = self.project.name.clone();
         if let Some(st) = path.file_stem() {
             self.project.name = st.to_string_lossy().to_string();
         }
@@ -818,8 +819,14 @@ impl VinteriaApp {
                 self.push_recent(&path);
                 self.path = Some(path);
                 self.hub_cache = None;
+                self.mark_clean();
+                true
             }
-            Err(e) => self.status = format!("Save failed: {e}"),
+            Err(e) => {
+                self.project.name = original_name;
+                self.status = format!("Save failed: {e}");
+                false
+            }
         }
     }
 
@@ -961,7 +968,7 @@ impl VinteriaApp {
         self.open_path(path);
     }
 
-    fn open_path(&mut self, path: PathBuf) {
+    fn open_path(&mut self, path: PathBuf) -> bool {
         match Project::load(&path) {
             Ok((p, warns)) => {
                 self.shared.send(Cmd::Stop);
@@ -975,8 +982,12 @@ impl VinteriaApp {
                 self.status = if warns.is_empty() { format!("Opened {}", path.display()) } else { format!("Opened with warnings: {}", warns.join("; ")) };
                 self.push_recent(&path);
                 self.path = Some(path);
+                true
             }
-            Err(e) => self.status = format!("Open failed: {e}"),
+            Err(e) => {
+                self.status = format!("Open failed: {e}");
+                false
+            }
         }
     }
 

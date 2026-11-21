@@ -453,7 +453,6 @@ fn pulse_visuals(ui: &mut Ui) {
     v.slider_trailing_fill = true;
 }
 
-const PROJECT_SECTIONS: [(&str, Icon); 4] = [("Projects", Icon::Folder), ("Recent", Icon::Clock), ("Templates", Icon::Layout), ("Sounds", Icon::Wave)];
 const STUDIO_SECTIONS: [(&str, Icon); 6] = [
     ("Playlist", Icon::Timeline), ("Steps", Icon::Steps), ("Piano", Icon::Keys),
     ("Session", Icon::Session), ("Mixer", Icon::Mixer), ("Tracks", Icon::Tracks),
@@ -581,7 +580,11 @@ impl VinteriaApp {
             }
         };
         step("background");
-        doodle_background(ctx);
+        if self.m_tab == 0 {
+            ctx.layer_painter(egui::LayerId::background()).rect_filled(ctx.screen_rect(), 0.0, p_bg());
+        } else {
+            doodle_background(ctx);
+        }
         step("header");
         let screen = ctx.screen_rect();
         let portrait = screen.width() < screen.height();
@@ -609,10 +612,6 @@ impl VinteriaApp {
             }
         } else {
             self.mobile_header(ctx);
-        }
-        step("rail");
-        if self.m_tab == 0 {
-            self.mobile_rail(ctx, &PROJECT_SECTIONS);
         }
         if self.m_tab == 1 && self.m_sec == SEC_PLAYLIST {
             if !full_view {
@@ -711,25 +710,35 @@ impl VinteriaApp {
                     self.m_tab = 0;
                     self.m_sec = 0;
                 }
-                let (title, sub) = match t {
-                    0 => ("Winteria", format!("v{}  ·  your projects", env!("CARGO_PKG_VERSION"))),
-                    2 => ("Settings", "theme, sync and about".to_string()),
-                    _ => ("Profile", "Winteria Studio".to_string()),
+                let title = match (t, self.m_sec) {
+                    (0, 1) => "Recent",
+                    (0, 2) => "Templates",
+                    (0, 3) => "Sounds",
+                    (0, 4) => "Backups",
+                    (0, _) => "Projects",
+                    (2, _) => "Settings",
+                    _ => "Profile",
                 };
-                ui.vertical(|ui| {
-                    ui.label(RichText::new(title).size(22.0).strong().color(ink()));
-                    ui.label(RichText::new(sub).size(12.0).color(muted()));
-                });
+                ui.label(RichText::new(title).size(22.0).strong().color(ink()));
                 if t == 0 {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let (r, resp) = ui.allocate_exact_size(vec2(TOUCH, TOUCH), Sense::click());
                         pill(ui.painter(), r, p_accent());
                         icon(ui.painter(), Icon::Plus, r.center(), on_accent());
-                        if resp.clicked() {
+                        if resp.on_hover_text("New project").clicked() && self.m_save_pending_project(ctx) {
                             self.new_project();
-                            self.m_open_studio(0);
+                            if self.m_save_project_to_list(ctx) {
+                                self.m_open_studio(0);
+                            }
                         }
-                        ui.menu_button("⋯", |ui| {
+                        ui.menu_button("More", |ui| {
+                            for (section, label) in ["Projects", "Recent", "Templates", "Sounds", "Backups"].into_iter().enumerate() {
+                                if ui.button(label).clicked() {
+                                    self.m_sec = section;
+                                    ui.close_menu();
+                                }
+                            }
+                            ui.separator();
                             for (tab, label) in [(3, "Profile"), (2, "Settings")] {
                                 if ui.button(label).clicked() {
                                     self.m_tab = tab;
@@ -826,6 +835,10 @@ impl VinteriaApp {
                             self.m_toggle_studio_record(ctx);
                             ui.close_menu();
                         }
+                        if ui.button("Save project").clicked() {
+                            self.m_save_project_to_list(ctx);
+                            ui.close_menu();
+                        }
                         if ui.button("Export or share").clicked() {
                             self.m_export.open = true;
                             self.m_export.song = self.m_sec == SEC_PLAYLIST;
@@ -900,6 +913,7 @@ impl VinteriaApp {
 
     fn m_leave_studio(&mut self, ctx: &egui::Context) {
         self.return_to_start(ctx, false);
+        self.m_save_pending_project(ctx);
         self.m_tab = 0;
         self.m_sec = 0;
         self.hub_cache = None;
@@ -1009,30 +1023,26 @@ impl VinteriaApp {
         }
     }
 
-    /// Section navigation immediately below the header.
-    fn mobile_rail(&mut self, ctx: &egui::Context, sections: &[(&str, Icon)]) {
-        egui::TopBottomPanel::top("m_rail").show_separator_line(false).frame(Frame::none().inner_margin(Margin { left: 10.0, right: 10.0, top: 4.0, bottom: 6.0 })).show(ctx, |ui| {
-            let w = ui.available_width();
-            let (rect, _) = ui.allocate_exact_size(vec2(w, 56.0), Sense::hover());
-            glass(ui.painter(), rect, 18.0);
-            let n = sections.len() as f32;
-            let slot = rect.width() / n;
-            for (i, (name, ic)) in sections.iter().enumerate() {
-                let cell = Rect::from_min_size(pos2(rect.left() + i as f32 * slot, rect.top()), vec2(slot, rect.height()));
-                let resp = ui.interact(cell, ui.id().with(("rail", i)), Sense::click());
-                let on = self.m_sec == i;
-                let c = pos2(cell.center().x, cell.top() + 21.0);
-                let p = ui.painter();
-                if on {
-                    p.circle_filled(c, 16.0, p_accent());
-                }
-                icon(p, *ic, c, if on { on_accent() } else { ink() });
-                p.text(pos2(cell.center().x, cell.bottom() - 9.0), Align2::CENTER_CENTER, *name, FontId::proportional(10.5), if on { ink() } else { muted() });
-                if resp.clicked() {
-                    self.m_sec = i;
-                }
+    fn m_needs_project_save(&self) -> bool {
+        self.dirty() || (self.path.is_none()
+            && (!self.project.arrangement.clips.is_empty()
+                || self.project.patterns.iter().any(|pattern| !pattern.notes.is_empty())))
+    }
+
+    fn m_save_project_to_list(&mut self, ctx: &egui::Context) -> bool {
+        let saved = self.save_to_hub();
+        let id = egui::Id::new("m_project_save_error");
+        ctx.data_mut(|d| {
+            d.remove::<String>(id);
+            if !saved {
+                d.insert_temp(id, self.status.clone());
             }
         });
+        saved
+    }
+
+    fn m_save_pending_project(&mut self, ctx: &egui::Context) -> bool {
+        !self.m_needs_project_save() || self.m_save_project_to_list(ctx)
     }
 
     fn m_open_studio(&mut self, section: usize) {
@@ -1057,80 +1067,100 @@ impl VinteriaApp {
     // ───────────────────── Projects ─────────────────────
 
     fn m_projects(&mut self, ui: &mut Ui) {
-        if self.hub_cache.is_none() {
-            self.hub_cache = Some(hub_projects(&self.recent));
-        }
-        let list = self.hub_cache.clone().unwrap_or_default();
         let mut open = None;
-        let mut tpl = None;
+        let mut template = None;
+        let backups = self.m_sec == 4;
         mobile_scroll(egui::ScrollArea::vertical()).auto_shrink([false, false]).show(ui, |ui| {
-            // the project in memory
-            let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 128.0), Sense::hover());
-            glass(ui.painter(), rect, 16.0);
-            let p = ui.painter();
-            p.text(rect.left_top() + vec2(16.0, 14.0), Align2::LEFT_TOP, "Current project", FontId::proportional(12.0), muted());
-            p.text(rect.left_top() + vec2(16.0, 32.0), Align2::LEFT_TOP, &self.project.name, FontId::proportional(20.0), ink());
-            p.text(
-                rect.left_top() + vec2(16.0, 58.0),
-                Align2::LEFT_TOP,
-                format!("{:.0} BPM  ·  {} tracks  ·  {} clips", self.project.bpm, self.project.arrangement.tracks.len(), self.project.arrangement.clips.len()),
-                FontId::proportional(12.0),
-                muted(),
-            );
-            let br = Rect::from_min_size(rect.left_bottom() + vec2(16.0, -48.0), vec2(150.0, 38.0));
-            pill(p, br, p_accent());
-            p.text(br.center(), Align2::CENTER_CENTER, "Open in Studio", FontId::proportional(14.0), on_accent());
-            if ui.interact(br, ui.id().with("open_studio"), Sense::click()).clicked() {
-                self.m_open_studio(0);
+            let error_id = egui::Id::new("m_project_save_error");
+            let project_error = ui.data(|d| d.get_temp::<String>(error_id));
+            if let Some(error) = &project_error {
+                ui.colored_label(RED, error);
             }
-            ui.add_space(12.0);
-
             match self.m_sec {
-                3 => {
-                    heading(ui, "Sounds");
-                    self.m_sounds(ui);
-                }
+                3 => self.m_sounds(ui),
                 2 => {
-                    heading(ui, "Templates");
                     for (i, (name, _)) in crate::templates::TEMPLATES.iter().enumerate() {
-                        if name.starts_with("Empty") {
-                            continue;
-                        }
-                        let letter = name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
-                        if list_row(ui, lane_col(i), &letter, name, "Template", "", false).clicked() {
-                            tpl = Some(i);
+                        if !name.starts_with("Empty") && ui.add_sized([ui.available_width(), TOUCH], egui::Button::new(*name)).clicked() {
+                            template = Some(i);
                         }
                     }
                 }
-                s => {
-                    let recent = s == 1;
-                    heading(ui, if recent { "Recently opened" } else { "All projects" });
-                    let items: Vec<(PathBuf, u64)> = if recent {
-                        self.recent.iter().filter_map(|p| std::fs::metadata(p).ok().map(|m| (p.clone(), m.len()))).collect()
+                section => {
+                    if section == 0 && (self.m_needs_project_save() || project_error.is_some()) {
+                        ui.add(egui::Label::new(RichText::new(&self.project.name).strong()).truncate());
+                        let w = ui.available_width();
+                        ui.horizontal(|ui| {
+                            if p_button(ui, "Continue", true, vec2((w - 84.0).max(80.0), TOUCH)).clicked() {
+                                self.m_open_studio(0);
+                            }
+                            if p_button(ui, "Save", false, vec2(72.0, TOUCH)).clicked() {
+                                self.m_save_project_to_list(ui.ctx());
+                            }
+                        });
+                        ui.add_space(8.0);
+                    }
+                    if self.hub_cache.is_none() {
+                        self.hub_cache = Some(hub_projects(&self.recent));
+                    }
+                    let items: Vec<PathBuf> = if backups {
+                        let mut files: Vec<_> = std::fs::read_dir(backup_dir()).into_iter().flatten().flatten()
+                            .filter_map(|entry| {
+                                let path = entry.path();
+                                let modified = entry.metadata().ok()?.modified().ok()?;
+                                (path.extension().and_then(|ext| ext.to_str()) == Some("wd")).then_some((path, modified))
+                            }).collect();
+                        files.sort_by_key(|(_, modified)| std::cmp::Reverse(*modified));
+                        files.into_iter().map(|(path, _)| path).collect()
+                    } else if section == 1 {
+                        self.recent.iter().filter(|path| path.is_file()).cloned().collect()
                     } else {
-                        list.iter().map(|(p, _, s)| (p.clone(), *s)).collect()
+                        self.hub_cache.as_deref().unwrap_or_default().iter().map(|(path, _, _)| path.clone()).collect()
                     };
                     if items.is_empty() {
-                        ui.label(RichText::new(if recent { "No recently opened projects." } else { "No saved projects yet. Tap + or start from a template." }).color(muted()));
+                        let blank = if backups { "No backups yet." } else { "No projects yet." };
+                        ui.label(RichText::new(blank).color(muted()));
                     }
-                    for (i, (path, size)) in items.iter().enumerate() {
-                        let name = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-                        let letter = name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
-                        if list_row(ui, lane_col(i), &letter, &name, &format!("{} KB", size / 1024), "", false).clicked() {
-                            open = Some(path.clone());
+                    for path in items {
+                        let name = path.file_stem().and_then(|name| name.to_str()).unwrap_or("Project");
+                        let name = if backups && name == "_autosave" { "Autosave" } else { name };
+                        let button = egui::Button::new(name).truncate();
+                        if ui.add_sized([ui.available_width(), TOUCH], button).clicked() {
+                            open = Some(path);
                         }
                     }
                 }
             }
         });
-        if let Some(i) = tpl {
+        if (template.is_some() || open.is_some()) && !self.m_save_pending_project(ui.ctx()) {
+            return;
+        }
+        if let Some(i) = template {
             self.load_template(i);
-            self.m_open_studio(0);
+            if self.m_save_project_to_list(ui.ctx()) {
+                self.m_open_studio(0);
+            }
         }
         if let Some(path) = open {
-            self.open_path(path);
-            self.m_open_studio(0);
+            let recovering = backups;
+            if self.m_open_project_file(ui.ctx(), path, recovering) {
+                self.m_open_studio(0);
+            }
         }
+    }
+
+    fn m_open_project_file(&mut self, ctx: &egui::Context, path: PathBuf, recovering: bool) -> bool {
+        if !self.open_path(path.clone()) {
+            ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_project_save_error"), self.status.clone()));
+            return false;
+        }
+        if recovering {
+            self.recent.retain(|recent| recent != &path);
+            self.path = None;
+            return self.m_save_project_to_list(ctx);
+        }
+        self.hub_cache = None;
+        ctx.data_mut(|d| d.remove::<String>(egui::Id::new("m_project_save_error")));
+        true
     }
 
     fn m_sounds(&mut self, ui: &mut Ui) {
