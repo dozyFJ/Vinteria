@@ -577,6 +577,8 @@ impl VinteriaApp {
                             ctx.data_mut(|d| d.remove::<bool>(egui::Id::new("m_studio_full_view")));
                         }
                     });
+            } else if ctx.screen_rect().width() < ctx.screen_rect().height() {
+                self.m_studio_dock(ctx);
             } else {
                 self.m_studio_sidebar(ctx);
             }
@@ -702,90 +704,133 @@ impl VinteriaApp {
             .show(ctx, |ui| {
                 pulse_visuals(ui);
                 let width = ui.available_width();
-                if studio_icon(ui, width, Icon::Exit, false, "Leave project").clicked() {
-                    self.return_to_start(ctx, false);
-                    self.m_tab = 0;
-                    self.m_sec = 0;
-                    self.hub_cache = None;
-                    ctx.data_mut(|d| {
-                        d.remove::<usize>(egui::Id::new("m_clip_sheet_selection"));
-                        d.remove::<bool>(egui::Id::new("m_track_sheet_open"));
-                        d.remove::<bool>(egui::Id::new("m_studio_full_view"));
-                    });
+                if self.m_studio_exit(ui, ctx, width) {
                     return;
                 }
-                if studio_icon(ui, width, Icon::FullView, false, "Full view").clicked() {
-                    ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_studio_full_view"), true));
-                }
-                #[cfg(target_os = "android")]
-                {
-                    let id = egui::Id::new("m_studio_landscape");
-                    let landscape = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
-                    let label = if landscape { "Switch to portrait" } else { "Switch to landscape" };
-                    if studio_icon(ui, width, Icon::Orientation, landscape, label).clicked() {
-                        ctx.data_mut(|d| d.insert_temp(id, !landscape));
-                    }
-                }
+                self.m_studio_full_view_button(ui, ctx, width);
+                self.m_studio_orientation_button(ui, ctx, width);
                 ui.separator();
-                mobile_scroll(egui::ScrollArea::vertical()).id_salt("m_studio_controls").auto_shrink([false, false]).show(ui, |ui| {
-                    let playing = self.playing();
-                    if studio_icon(ui, width, Icon::Rewind, false, "Return to start").clicked() {
-                        self.return_to_start(ctx, playing);
+                mobile_scroll(egui::ScrollArea::vertical()).id_salt("m_studio_controls")
+                    .auto_shrink([false, false]).show(ui, |ui| self.m_studio_controls(ui, ctx, width));
+            });
+    }
+
+    fn m_studio_dock(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::bottom("m_studio_port_dock")
+            .show_separator_line(false)
+            .frame(Frame::none().fill(bar_fill()).inner_margin(Margin { left: 7.0, right: 7.0, top: 6.0, bottom: 12.0 }))
+            .show(ctx, |ui| {
+                pulse_visuals(ui);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 5.0;
+                    let width = 38.0;
+                    if self.m_studio_exit(ui, ctx, width) {
+                        return;
                     }
-                    let play = if playing {
-                        studio_icon(ui, width, Icon::Pause, true, "Pause")
-                    } else {
-                        studio_icon(ui, width, Icon::Play, true, "Play")
-                    };
-                    if play.clicked() {
-                        self.m_toggle_play();
-                    }
-                    if studio_icon(ui, width, Icon::Stop, false, "Stop").clicked() {
-                        self.return_to_start(ctx, false);
-                    }
-                    if studio_icon(ui, width, Icon::Record, self.record, "Arm recording").clicked() {
-                        self.record = !self.record;
-                        if self.record && !playing {
-                            self.m_toggle_play();
-                        }
-                    }
-                    let tempo = egui::Button::new(RichText::new(format!("{:.0}", self.project.bpm)).size(12.0))
-                        .wrap_mode(egui::TextWrapMode::Extend).min_size(vec2(width, 28.0));
-                    ui.scope(|ui| {
-                        ui.spacing_mut().button_padding.x = 3.0;
-                        egui::menu::menu_custom_button(ui, tempo, |ui| {
-                            ui.add(egui::DragValue::new(&mut self.project.bpm)
-                                .range(40.0..=300.0).speed(0.5).suffix(" BPM").max_decimals(1));
-                        }).response.on_hover_text(format!("Tempo in BPM · {}", self.project.name));
-                    });
-                    if studio_icon(ui, width, Icon::Share, false, "Export or share").clicked() {
-                        self.m_export.open = !self.m_export.open;
-                        self.m_export.song = self.m_sec == SEC_PLAYLIST;
-                    }
+                    self.m_studio_orientation_button(ui, ctx, width);
                     ui.separator();
-                    for (index, (title, icon)) in STUDIO_SECTIONS.into_iter().enumerate() {
-                        if studio_icon(ui, width, icon, self.m_sec == index, title).clicked() && self.m_sec != index {
-                            self.m_sec = index;
-                            ctx.data_mut(|d| {
-                                d.remove::<usize>(egui::Id::new("m_clip_sheet_selection"));
-                                d.remove::<bool>(egui::Id::new("m_track_sheet_open"));
+                    mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_studio_port_controls")
+                        .auto_shrink([false, true]).show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                self.m_studio_full_view_button(ui, ctx, width);
+                                self.m_studio_controls(ui, ctx, width);
                             });
-                        }
-                    }
-                    if self.m_sec == SEC_PLAYLIST {
-                        let id = egui::Id::new("m_browser_open");
-                        let open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
-                        if studio_icon(ui, width, Icon::Folder, open, "Toggle browser").clicked() {
-                            ctx.data_mut(|d| {
-                                d.insert_temp(id, !open);
-                                if open {
-                                    d.remove::<(usize, u32)>(egui::Id::new("m_audio_clip_target"));
-                                }
-                            });
-                        }
-                    }
+                        });
                 });
             });
+    }
+
+    fn m_studio_exit(&mut self, ui: &mut Ui, ctx: &egui::Context, width: f32) -> bool {
+        if !studio_icon(ui, width, Icon::Exit, false, "Leave project").clicked() {
+            return false;
+        }
+        self.return_to_start(ctx, false);
+        self.m_tab = 0;
+        self.m_sec = 0;
+        self.hub_cache = None;
+        ctx.data_mut(|d| {
+            d.remove::<usize>(egui::Id::new("m_clip_sheet_selection"));
+            d.remove::<bool>(egui::Id::new("m_track_sheet_open"));
+            d.remove::<bool>(egui::Id::new("m_studio_full_view"));
+        });
+        true
+    }
+
+    fn m_studio_full_view_button(&self, ui: &mut Ui, ctx: &egui::Context, width: f32) {
+        if studio_icon(ui, width, Icon::FullView, false, "Full view").clicked() {
+            ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_studio_full_view"), true));
+        }
+    }
+
+    fn m_studio_orientation_button(&self, _ui: &mut Ui, _ctx: &egui::Context, _width: f32) {
+        #[cfg(target_os = "android")]
+        {
+            let id = egui::Id::new("m_studio_landscape");
+            let landscape = _ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+            let label = if landscape { "Switch to portrait" } else { "Switch to landscape" };
+            if studio_icon(_ui, _width, Icon::Orientation, landscape, label).clicked() {
+                _ctx.data_mut(|d| d.insert_temp(id, !landscape));
+            }
+        }
+    }
+
+    fn m_studio_controls(&mut self, ui: &mut Ui, ctx: &egui::Context, width: f32) {
+        let playing = self.playing();
+        if studio_icon(ui, width, Icon::Rewind, false, "Return to start").clicked() {
+            self.return_to_start(ctx, playing);
+        }
+        let play = if playing {
+            studio_icon(ui, width, Icon::Pause, true, "Pause")
+        } else {
+            studio_icon(ui, width, Icon::Play, true, "Play")
+        };
+        if play.clicked() {
+            self.m_toggle_play();
+        }
+        if studio_icon(ui, width, Icon::Stop, false, "Stop").clicked() {
+            self.return_to_start(ctx, false);
+        }
+        if studio_icon(ui, width, Icon::Record, self.record, "Arm recording").clicked() {
+            self.record = !self.record;
+            if self.record && !playing {
+                self.m_toggle_play();
+            }
+        }
+        let tempo = egui::Button::new(RichText::new(format!("{:.0}", self.project.bpm)).size(12.0))
+            .wrap_mode(egui::TextWrapMode::Extend).min_size(vec2(width, 28.0));
+        ui.scope(|ui| {
+            ui.spacing_mut().button_padding.x = 3.0;
+            egui::menu::menu_custom_button(ui, tempo, |ui| {
+                ui.add(egui::DragValue::new(&mut self.project.bpm)
+                    .range(40.0..=300.0).speed(0.5).suffix(" BPM").max_decimals(1));
+            }).response.on_hover_text(format!("Tempo in BPM · {}", self.project.name));
+        });
+        if studio_icon(ui, width, Icon::Share, false, "Export or share").clicked() {
+            self.m_export.open = !self.m_export.open;
+            self.m_export.song = self.m_sec == SEC_PLAYLIST;
+        }
+        ui.separator();
+        for (index, (title, icon)) in STUDIO_SECTIONS.into_iter().enumerate() {
+            if studio_icon(ui, width, icon, self.m_sec == index, title).clicked() && self.m_sec != index {
+                self.m_sec = index;
+                ctx.data_mut(|d| {
+                    d.remove::<usize>(egui::Id::new("m_clip_sheet_selection"));
+                    d.remove::<bool>(egui::Id::new("m_track_sheet_open"));
+                });
+            }
+        }
+        if self.m_sec == SEC_PLAYLIST {
+            let id = egui::Id::new("m_browser_open");
+            let open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+            if studio_icon(ui, width, Icon::Folder, open, "Toggle browser").clicked() {
+                ctx.data_mut(|d| {
+                    d.insert_temp(id, !open);
+                    if open {
+                        d.remove::<(usize, u32)>(egui::Id::new("m_audio_clip_target"));
+                    }
+                });
+            }
+        }
     }
 
     /// Section navigation immediately below the header.
@@ -1577,7 +1622,7 @@ impl VinteriaApp {
             .show(ctx, |ui| {
                 if !open {
                     let (rect, response) = ui.allocate_exact_size(vec2(22.0, ui.available_height()), Sense::click_and_drag());
-                    ui.painter().text(rect.center(), Align2::CENTER_CENTER, "‹", FontId::proportional(22.0), ink());
+                    ui.painter().text(pos2(rect.center().x, rect.top() + 22.0), Align2::CENTER_CENTER, "‹", FontId::proportional(22.0), ink());
                     let response = response.on_hover_text("Browser");
                     if response.clicked() || response.drag_delta().x < -18.0 {
                         next = true;
