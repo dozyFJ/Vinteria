@@ -1940,7 +1940,7 @@ impl VinteriaApp {
         if !self.arr.msg.is_empty() {
             ui.colored_label(RED, &self.arr.msg);
         }
-        let (bar_w, hdr, ruler) = (64.0_f32, 106.0_f32, 24.0_f32);
+        let (bar_w, ruler) = (64.0_f32, 30.0_f32);
         let height_id = egui::Id::new("m_playlist_lane_height");
         let gesture = ui.input(|input| input.multi_touch());
         let viewport = ui.available_rect_before_wrap().intersect(ui.clip_rect());
@@ -1968,16 +1968,26 @@ impl VinteriaApp {
         let playing = self.playing() && self.project.song_mode;
         let add_lane = ui.data(|d| d.get_temp::<bool>(egui::Id::new("m_browser_open"))).unwrap_or(false);
         let full_h = ruler + (tracks + usize::from(add_lane)) as f32 * lane_h;
-        let grid_h = ui.available_height().max(1.0);
-        let grid_w = ui.available_width().max(1.0);
+        let panel_id = egui::Id::new("m_playlist_track_names");
+        let panel_open = ui.data(|d| d.get_temp::<bool>(panel_id)).unwrap_or(false);
+        let panel_width: f32 = if panel_open { 106.0 } else { 28.0 };
+        let (viewport, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
+        let mut grid = viewport;
+        grid.min.x += panel_width.min((viewport.width() - 1.0).max(0.0));
+        let mut grid_ui = ui.new_child(egui::UiBuilder::new().max_rect(grid));
+        grid_ui.set_clip_rect(grid.intersect(ui.clip_rect()));
         let mut selection = None;
         let mut delete_clip = None;
+        let mut move_clip = None;
         let mut dropped_item = None;
         let mut dropped_effect = None;
-        mobile_scroll(egui::ScrollArea::both()).id_salt("m_playlist").drag_to_scroll(gesture.is_none()).max_height(grid_h).auto_shrink([false, false]).show(ui, |ui| {
-            let (rect, resp) = ui.allocate_exact_size(vec2((hdr + bars as f32 * bar_w).max(grid_w), full_h.max(grid_h)), Sense::click());
+        let scroll = mobile_scroll(egui::ScrollArea::both()).id_salt("m_playlist")
+            .drag_to_scroll(gesture.is_none()).max_height(grid.height()).auto_shrink([false, false])
+            .show(&mut grid_ui, |ui| {
+            let (rect, resp) = ui.allocate_exact_size(
+                vec2((bars as f32 * bar_w).max(grid.width()), full_h.max(grid.height())), Sense::click());
             let p = ui.painter_at(rect);
-            let gx = rect.left() + hdr;
+            let gx = rect.left();
             let gy = rect.top() + ruler;
             p.rect_filled(rect, 0.0, pick(0xFF191E25, 0xFFE5EBF2));
             let time_header = Rect::from_min_size(rect.min, vec2(rect.width(), ruler));
@@ -1994,20 +2004,10 @@ impl VinteriaApp {
                     pick(0xFF232A36, 0xFFDCE4EF)
                 };
                 p.rect_filled(r, 0.0, row_fill);
-                let label = Rect::from_min_size(r.min, vec2(hdr, lane_h));
-                p.rect_filled(label, 0.0, if audio { pick(0xFF263238, 0xFFCADDDF) } else { pick(0xFF2A3340, 0xFFCEDAE9) });
-                let color = lane_col(lane);
                 if lane == self.arr.sel_lane {
-                    p.rect_filled(Rect::from_min_size(r.min, vec2(3.0, r.height())), 0.0, color);
+                    p.rect_filled(Rect::from_min_size(r.min, vec2(3.0, r.height())), 0.0, lane_col(lane));
                 }
                 p.line_segment([r.left_top(), r.right_top()], Stroke::new(0.6, glass_edge()));
-                p.circle_filled(label.left_top() + vec2(13.0, 18.0), 4.0, color);
-                let name: String = track.name.chars().take(12).collect();
-                let labels = p.with_clip_rect(label.intersect(ui.clip_rect()));
-                labels.text(label.left_top() + vec2(23.0, 17.0), Align2::LEFT_CENTER, name,
-                    FontId::proportional(13.0), if track.mute { muted() } else { ink() });
-                labels.text(label.left_top() + vec2(23.0, 36.0), Align2::LEFT_CENTER,
-                    if audio { "AUDIO" } else { "MIDI" }, FontId::proportional(9.0), muted());
             }
             if add_lane {
                 let y = gy + tracks as f32 * lane_h;
@@ -2025,17 +2025,76 @@ impl VinteriaApp {
             for (i, c) in self.project.arrangement.clips.iter().enumerate() {
                 let x0 = gx + c.start as f32 / TICKS_PER_BAR as f32 * bar_w;
                 let w = (c.len as f32 / TICKS_PER_BAR as f32 * bar_w).max(6.0);
-                let r = Rect::from_min_size(pos2(x0, gy + c.lane as f32 * lane_h), vec2(w, lane_h)).shrink2(vec2(1.5, 5.0));
+                let hit = Rect::from_min_size(pos2(x0, gy + c.lane as f32 * lane_h), vec2(w, lane_h));
+                let r = hit.shrink2(vec2(1.5, 5.0));
+                let clip = ui.interact(hit, resp.id.with(("clip", i)), Sense::click_and_drag())
+                    .on_hover_cursor(egui::CursorIcon::Grab);
                 let col = lane_col(c.lane);
                 p.rect_filled(r, 3.0, col.linear_multiply(0.75));
                 if self.arr.sel_clip == Some(i) {
                     p.rect_stroke(r.expand(1.0), 9.0, Stroke::new(2.0, p_accent()));
                 }
-                if r.width() > 40.0 {
-                    let name = if c.audio { self.project.audio_pool.get(c.pattern).map(|s| s.name.clone()).unwrap_or_default() } else { self.project.patterns.get(c.pattern).map(|p| p.name.clone()).unwrap_or_default() };
-                    let text: String = name.chars().take(((r.width() - 10.0) / 6.5) as usize).collect();
-                    p.text(r.left_center() + vec2(6.0, 0.0), Align2::LEFT_CENTER, text, FontId::proportional(11.0), Color32::WHITE);
+                let name = if c.audio {
+                    self.project.audio_pool.get(c.pattern).map(|sample| sample.name.as_str())
+                } else {
+                    self.project.patterns.get(c.pattern).map(|pattern| pattern.name.as_str())
+                };
+                if let Some(name) = name.filter(|_| r.width() > 24.0) {
+                    p.with_clip_rect(r.intersect(ui.clip_rect())).text(
+                        r.left_center() + vec2(6.0, 0.0), Align2::LEFT_CENTER, name,
+                        FontId::proportional(11.0), Color32::WHITE);
                 }
+                if gesture.is_some() {
+                    continue;
+                }
+
+                if clip.clicked() {
+                    let edit = clip.double_clicked() || self.arr.sel_clip == Some(i);
+                    selection = Some((c.lane, Some(i), Some(c.start), edit));
+                }
+                clip.context_menu(|ui| {
+                    if ui.button("Open clip").clicked() {
+                        selection = Some((c.lane, Some(i), Some(c.start), true));
+                        ui.close_menu();
+                    }
+                    if ui.button("Delete clip").clicked() {
+                        delete_clip = Some(i);
+                        ui.close_menu();
+                    }
+                });
+
+                let grab_id = clip.id.with("grab_x");
+                if clip.drag_started() {
+                    if let Some(origin) = ui.input(|input| input.pointer.press_origin()) {
+                        ui.data_mut(|d| d.insert_temp(grab_id, origin.x - x0));
+                    }
+                }
+                if clip.dragged() || clip.drag_stopped() {
+                    let grab = ui.data(|d| d.get_temp::<f32>(grab_id));
+                    let point = clip.interact_pointer_pos().filter(|pt| grid.contains(*pt) && pt.y >= gy);
+                    if let (Some(grab), Some(point)) = (grab, point) {
+                        let lane = ((point.y - gy) / lane_h) as usize;
+                        let snap = self.arr.snap.max(1);
+                        let tick = (point.x - gx - grab).max(0.0) / bar_w * TICKS_PER_BAR as f32;
+                        let start = (tick / snap as f32).round() as u32 * snap;
+                        let candidate = crate::arrangement::Clip { lane, start, ..*c };
+                        let valid = lane < tracks
+                            && self.project.arrangement.tracks[lane].kind == self.project.arrangement.tracks[c.lane].kind
+                            && !self.project.arrangement.clips.iter().enumerate()
+                                .any(|(j, other)| i != j && candidate.overlaps(other));
+                        let preview = Rect::from_min_size(
+                            pos2(gx + start as f32 / TICKS_PER_BAR as f32 * bar_w, gy + lane as f32 * lane_h),
+                            vec2(w, lane_h)).shrink2(vec2(1.5, 5.0));
+                        p.rect_stroke(preview, 4.0, Stroke::new(2.0, if valid { p_accent() } else { RED }));
+                        if valid && clip.drag_stopped() {
+                            move_clip = Some((i, candidate));
+                        }
+                    }
+                    if clip.drag_stopped() {
+                        ui.data_mut(|d| d.remove::<f32>(grab_id));
+                    }
+                }
+
             }
             if playing {
                 let x = gx + pos as f32 / TICKS_PER_BAR as f32 * bar_w;
@@ -2060,43 +2119,59 @@ impl VinteriaApp {
                     }
                 }
             }
-            let edit = resp.double_clicked();
-            let menu = resp.secondary_clicked();
-            let menu_id = resp.id.with("clip_actions");
-            if gesture.is_none() && (resp.clicked() || edit || menu) {
-                let mut hit_clip = None;
+            if gesture.is_none() && resp.clicked() {
                 if let Some(pt) = resp.interact_pointer_pos().filter(|pt| pt.y >= gy) {
                     let lane = ((pt.y - gy) / lane_h) as usize;
                     if lane < tracks {
-                        let tick = (pt.x >= gx).then(|| ((pt.x - gx) / bar_w * TICKS_PER_BAR as f32) as u32);
-                        let clip = tick.and_then(|tick| self.project.arrangement.clips.iter().rposition(|clip|
-                            clip.lane == lane && (clip.start..clip.end_tick()).contains(&tick)));
-                        hit_clip = clip;
-                        if !menu || clip.is_some() {
-                            selection = Some((lane, clip, tick, edit && !menu));
-                        }
+                        let tick = ((pt.x - gx).max(0.0) / bar_w * TICKS_PER_BAR as f32) as u32;
+                        selection = Some((lane, None, Some(tick), false));
                     }
                 }
-                if menu {
-                    ui.data_mut(|d| {
-                        d.remove::<usize>(menu_id);
-                        if let Some(index) = hit_clip {
-                            d.insert_temp(menu_id, index);
-                        }
-                    });
-                }
-            }
-            let menu_clip = ui.data(|d| d.get_temp::<usize>(menu_id))
-                .filter(|index| *index < self.project.arrangement.clips.len());
-            if let Some(index) = menu_clip {
-                resp.context_menu(|ui| {
-                    if ui.button("Delete clip").clicked() {
-                        delete_clip = Some(index);
-                        ui.close_menu();
-                    }
-                });
             }
         });
+        let panel = Rect::from_min_max(viewport.min, pos2(grid.left(), viewport.bottom()));
+        let painter = ui.painter_at(panel);
+        painter.rect_filled(panel, 0.0, pick(0xFF252D37, 0xFFD6E0EA));
+        let track_y = scroll.inner_rect.top() + ruler - scroll.state.offset.y;
+        let names = Rect::from_min_max(pos2(panel.left(), panel.top() + ruler), panel.max);
+        if panel_open {
+            let labels = painter.with_clip_rect(names.intersect(ui.clip_rect()));
+            for (lane, track) in self.project.arrangement.tracks.iter().enumerate() {
+                let top = track_y + lane as f32 * lane_h;
+                let row = Rect::from_min_size(pos2(panel.left(), top), vec2(panel.width(), lane_h));
+                if !row.intersects(names) {
+                    continue;
+                }
+                let selected = lane == self.arr.sel_lane;
+                if selected {
+                    labels.rect_filled(row, 0.0, pick(0xFF323D4C, 0xFFC9D9E7));
+                }
+                labels.line_segment([row.left_top(), row.right_top()], Stroke::new(0.6, glass_edge()));
+                labels.circle_filled(row.left_center() + vec2(12.0, 0.0), 4.0, lane_col(lane));
+                labels.with_clip_rect(row.intersect(names).intersect(ui.clip_rect())).text(
+                    row.left_center() + vec2(23.0, 0.0), Align2::LEFT_CENTER, &track.name,
+                    FontId::proportional(13.0), if track.mute { muted() } else { ink() });
+                if ui.interact(row.intersect(names), panel_id.with(lane), Sense::click()).clicked() {
+                    selection = Some((lane, None, None, false));
+                }
+            }
+        }
+        let toggle = Rect::from_min_size(panel.min, vec2(panel.width(), ruler));
+        let toggle_response = ui.interact(toggle, panel_id, Sense::click())
+            .on_hover_text(if panel_open { "Hide track names" } else { "Show track names" });
+        painter.text(toggle.center(), Align2::CENTER_CENTER, if panel_open { "‹  Tracks" } else { "›" },
+            FontId::proportional(if panel_open { 13.0 } else { 24.0 }), ink());
+        if toggle_response.clicked() {
+            ui.data_mut(|d| d.insert_temp(panel_id, !panel_open));
+        }
+        if let Some((index, moved)) = move_clip {
+            self.project.arrangement.clips[index] = moved;
+            self.arr.sel_lane = moved.lane;
+            self.arr.sel_clip = Some(index);
+            self.arr.sel.clear();
+            self.arr.msg.clear();
+            return;
+        }
         if let Some(index) = delete_clip {
             self.project.arrangement.clips.remove(index);
             self.arr.sel_clip = None;
