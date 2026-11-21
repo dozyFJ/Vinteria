@@ -2,7 +2,7 @@ name: Android APK
 
 on:
   push:
-    branches: [winteria-mobile-pulse, winteria]
+    branches: [winteria]
   workflow_dispatch:
 
 permissions:
@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       NDK_VERSION: 26.3.11579264
+      RELEASE_CERT_SHA256: f8dd8eaed875b0aa5896e1d23cbec407fd7b4e38da634e866ca139a408d18523
     steps:
       - uses: actions/checkout@v5
 
@@ -50,18 +51,18 @@ jobs:
           export ANDROID_HOME="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
           export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
-          # a fixed key from the secrets keeps updates installable over each other; without it a one-off key is made
-          if [ -n "$KEYSTORE_B64" ]; then
-            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
-            export CARGO_APK_RELEASE_KEYSTORE_PASSWORD="$KEYSTORE_PASSWORD"
-          else
-            echo "::warning::no signing secret - using a one-off key"
-            keytool -genkeypair -keystore "$RUNNER_TEMP/release.keystore" -storetype PKCS12 -storepass android -keypass android \
-              -alias winteria -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Winteria"
-            export CARGO_APK_RELEASE_KEYSTORE_PASSWORD=android
-          fi
+          : "${KEYSTORE_B64:?Configure the existing Winteria release keystore}"
+          : "${KEYSTORE_PASSWORD:?Configure the password for the release keystore}"
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
           export CARGO_APK_RELEASE_KEYSTORE="$RUNNER_TEMP/release.keystore"
+          export CARGO_APK_RELEASE_KEYSTORE_PASSWORD="$KEYSTORE_PASSWORD"
           ./tools/build-android.sh --release
+          signer=$("$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --print-certs target/release/apk/Winteria.apk)
+          digest=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<< "$signer")
+          if [ "$digest" != "$RELEASE_CERT_SHA256" ]; then
+            echo "::error::APK signature is incompatible with the Winteria OTA channel."
+            exit 1
+          fi
           version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
           mkdir -p out && cp target/release/apk/Winteria.apk "out/Winteria-$version.apk"
           echo "VERSION=$version" >> "$GITHUB_ENV"
@@ -77,6 +78,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="android-v$VERSION"
-          gh release delete "$tag" --yes --cleanup-tag || true
           gh release create "$tag" out/*.apk --target "$GITHUB_SHA" --prerelease \
             --title "Winteria $VERSION (Android)" --notes "Build of ${GITHUB_SHA::7}."
