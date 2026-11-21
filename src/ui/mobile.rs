@@ -19,39 +19,39 @@ fn pick(dark: u32, light: u32) -> Color32 {
 }
 /// main text
 fn ink() -> Color32 {
-    pick(0xFFF1F3F5, 0xFF222A32)
+    pick(0xFFF1F3F5, 0xFF202A30)
 }
 /// secondary text
 fn muted() -> Color32 {
-    pick(0xFFBFC5CC, 0xFF4F5B68)
+    pick(0xFFBFC5CC, 0xFF35454D)
 }
 /// Pulse accent: a calm near-white (night) / slate (day) pill
 fn p_accent() -> Color32 {
-    pick(0xFFDCE5EE, 0xFF35424F)
+    pick(0xFFDCE5EE, 0xFF334953)
 }
 fn on_accent() -> Color32 {
-    pick(0xFF1A1B1D, 0xFFFFFFFF)
+    pick(0xFF1A1B1D, 0xFFE4EAEB)
 }
 fn p_bg() -> Color32 {
-    pick(0xFF1A1E23, 0xFFD9E1E9)
+    pick(0xFF1A1E23, 0xFFB8C2C7)
 }
 fn doodle() -> Color32 {
-    pick(0x10FFFFFF, 0x18404855)
+    pick(0x10FFFFFF, 0x10505C62)
 }
 fn bar_fill() -> Color32 {
-    pick(0xA022262B, 0xA0F1F5F9)
+    pick(0xA022262B, 0xECC2CBCE)
 }
 fn outline() -> Color32 {
-    pick(0xFF555F69, 0x826C7A89)
+    pick(0xFF555F69, 0xFF74858D)
 }
 fn glass_top() -> Color32 {
-    pick(0x80404750, 0xA6FCFDFF)
+    pick(0x80404750, 0xB4D0D6D7)
 }
 fn glass_bottom() -> Color32 {
-    pick(0x60272C32, 0x66EFF4F9)
+    pick(0x60272C32, 0xAABAC5C9)
 }
 fn glass_edge() -> Color32 {
-    pick(0x48AAB7C4, 0xB3FFFFFF)
+    pick(0x48AAB7C4, 0x887B8D94)
 }
 fn lerp_c(a: Color32, b: Color32, t: f32) -> Color32 {
     let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
@@ -365,7 +365,7 @@ fn list_row(ui: &mut Ui, badge: Color32, letter: &str, title: &str, sub: &str, n
     }
     let b = Rect::from_center_size(pos2(rect.left() + 32.0, rect.center().y), vec2(42.0, 42.0));
     p.circle_filled(b.center(), 21.0, badge.linear_multiply(0.85));
-    p.text(b.center(), Align2::CENTER_CENTER, letter, FontId::proportional(18.0), Color32::WHITE);
+    p.text(b.center(), Align2::CENTER_CENTER, letter, FontId::proportional(18.0), pick(0xFFFFFFFF, 0xFF172227));
     p.text(pos2(rect.left() + 64.0, rect.top() + 14.0), Align2::LEFT_TOP, title, FontId::proportional(16.0), ink());
     if !sub.is_empty() {
         p.text(pos2(rect.left() + 64.0, rect.top() + 36.0), Align2::LEFT_TOP, sub, FontId::proportional(12.0), muted());
@@ -431,6 +431,23 @@ fn pulse_visuals(ui: &mut Ui) {
         w.bg_stroke = Stroke::new(1.0, glass_edge());
         w.rounding = egui::Rounding::same(12.0);
         w.fg_stroke = Stroke::new(1.5, ink());
+    }
+    if !is_dark() {
+        v.window_fill = argb(0xFFCBD2D4);
+        v.panel_fill = p_bg();
+        v.extreme_bg_color = argb(0xFFACB9BF);
+        v.selection.bg_fill = argb(0xFF8EA9B5);
+        for (widget, fill) in [
+            (&mut v.widgets.inactive, 0xFFC7D0D3),
+            (&mut v.widgets.hovered, 0xFFD0D8DA),
+            (&mut v.widgets.active, 0xFFA4B8C0),
+            (&mut v.widgets.open, 0xFFB3C3C9),
+        ] {
+            widget.bg_fill = argb(fill);
+            widget.weak_bg_fill = argb(fill);
+            widget.bg_stroke = Stroke::new(1.0, outline());
+            widget.fg_stroke = Stroke::new(1.5, ink());
+        }
     }
     v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, ink());
     v.slider_trailing_fill = true;
@@ -1556,7 +1573,7 @@ impl VinteriaApp {
         for (key, semitone) in whites.into_iter().enumerate() {
             let pitch = base + semitone;
             let rect = Rect::from_min_size(pos2(keyboard.left() + key as f32 * kw, keyboard.top()), vec2(kw, kb_h));
-            p.rect_filled(rect.shrink(0.5), 3.0, if pressed == Some(pitch) { lane_col(3) } else { Color32::from_gray(242) });
+            p.rect_filled(rect.shrink(0.5), 3.0, if pressed == Some(pitch) { lane_col(3) } else { pick(0xFFF2F2F2, 0xFFD2D8D8) });
             if semitone == 0 {
                 p.text(rect.center_bottom() - vec2(0.0, 5.0), Align2::CENTER_BOTTOM, format!("C{}", i16::from(oct) - 1),
                     FontId::proportional(11.0), Color32::from_gray(60));
@@ -2216,19 +2233,19 @@ impl VinteriaApp {
             let p = ui.painter_at(rect);
             let gx = rect.left();
             let gy = rect.top() + ruler;
-            p.rect_filled(rect, 0.0, pick(0xFF191E25, 0xFFE5EBF2));
+            p.rect_filled(rect, 0.0, pick(0xFF191E25, 0xFFB1BDC3));
             let time_header = Rect::from_min_size(rect.min, vec2(rect.width(), ruler));
-            p.rect_filled(time_header, 0.0, pick(0xFF252D37, 0xFFD6E0EA));
+            p.rect_filled(time_header, 0.0, pick(0xFF252D37, 0xFFB9C5CA));
             for (lane, track) in self.project.arrangement.tracks.iter().enumerate() {
                 let y = gy + lane as f32 * lane_h;
                 let r = Rect::from_min_size(pos2(rect.left(), y), vec2(rect.width(), lane_h));
                 let audio = track.kind == crate::arrangement::TrackKind::Audio;
                 let row_fill = if lane == self.arr.sel_lane {
-                    pick(0xFF323D4C, 0xFFC9D9E7)
+                    pick(0xFF323D4C, 0xFFA2B5BE)
                 } else if audio {
-                    pick(0xFF202A30, 0xFFD9E9EB)
+                    pick(0xFF202A30, 0xFFBCCBCB)
                 } else {
-                    pick(0xFF232A36, 0xFFDCE4EF)
+                    pick(0xFF232A36, 0xFFC3CCD1)
                 };
                 p.rect_filled(r, 0.0, row_fill);
                 if lane == self.arr.sel_lane {
@@ -2257,7 +2274,8 @@ impl VinteriaApp {
                 let clip = ui.interact(hit, resp.id.with(("clip", i)), Sense::click_and_drag())
                     .on_hover_cursor(egui::CursorIcon::Grab);
                 let col = lane_col(c.lane);
-                p.rect_filled(r, 3.0, col.linear_multiply(0.75));
+                let fill = if is_dark() { col.linear_multiply(0.75) } else { lerp_c(col, p_bg(), 0.30) };
+                p.rect_filled(r, 3.0, fill);
                 if self.arr.sel_clip == Some(i) {
                     p.rect_stroke(r.expand(1.0), 9.0, Stroke::new(2.0, p_accent()));
                 }
@@ -2269,7 +2287,7 @@ impl VinteriaApp {
                 if let Some(name) = name.filter(|_| r.width() > 24.0) {
                     p.with_clip_rect(r.intersect(ui.clip_rect())).text(
                         r.left_center() + vec2(6.0, 0.0), Align2::LEFT_CENTER, name,
-                        FontId::proportional(11.0), Color32::WHITE);
+                        FontId::proportional(11.0), pick(0xFFFFFFFF, 0xFF172227));
                 }
                 if gesture.is_some() {
                     continue;
@@ -2359,7 +2377,7 @@ impl VinteriaApp {
         if !portrait {
             let panel = Rect::from_min_max(viewport.min, pos2(grid.left(), viewport.bottom()));
             let painter = ui.painter_at(panel);
-            painter.rect_filled(panel, 0.0, pick(0xFF252D37, 0xFFD6E0EA));
+            painter.rect_filled(panel, 0.0, pick(0xFF252D37, 0xFFB9C5CA));
             let track_y = scroll.inner_rect.top() + ruler - scroll.state.offset.y;
             let names = Rect::from_min_max(pos2(panel.left(), panel.top() + ruler), panel.max);
             if panel_open {
@@ -2372,7 +2390,7 @@ impl VinteriaApp {
                     }
                     let selected = lane == self.arr.sel_lane;
                     if selected {
-                        labels.rect_filled(row, 0.0, pick(0xFF323D4C, 0xFFC9D9E7));
+                        labels.rect_filled(row, 0.0, pick(0xFF323D4C, 0xFFA2B5BE));
                     }
                     labels.line_segment([row.left_top(), row.right_top()], Stroke::new(0.6, glass_edge()));
                     labels.circle_filled(row.left_center() + vec2(12.0, 0.0), 4.0, lane_col(lane));

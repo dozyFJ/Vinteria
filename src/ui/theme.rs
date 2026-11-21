@@ -172,6 +172,14 @@ fn pk(light: u32, dark: u32) -> Color32 {
     rgb(if is_dark() { dark } else { light })
 }
 
+fn mobile_day() -> bool {
+    cfg!(target_os = "android") && !is_dark()
+}
+
+fn surface(mobile: u32, light: u32, dark: u32) -> Color32 {
+    if mobile_day() { rgb(mobile) } else { pk(light, dark) }
+}
+
 /// Base surface colour of the chosen AOS theme in the current mode (night scene when dark, day scene when light).
 fn aos_base() -> Option<Color32> {
     let t = aos()?;
@@ -184,22 +192,23 @@ fn aos_base() -> Option<Color32> {
 }
 /// A token of the AOS theme: the base mixed towards white (t > 0) or black (t < 0), one amount per mode.
 fn aos_tok(dark_t: f32, light_t: f32) -> Option<Color32> {
+    if mobile_day() { return None; }
     let b = aos_base()?;
     let t = if is_dark() { dark_t } else { light_t };
     Some(if t >= 0.0 { lerp_rgb(b, Color32::WHITE, t) } else { lerp_rgb(b, Color32::BLACK, -t) })
 }
 
 /// work area behind everything
-pub fn BG() -> Color32 { aos_tok(-0.50, -0.05).unwrap_or_else(|| pk(0xE9EEF2, 0x14181C)) }
+pub fn BG() -> Color32 { aos_tok(-0.50, -0.05).unwrap_or_else(|| surface(0xB8C2C7, 0xE9EEF2, 0x14181C)) }
 /// side panels, header, bars
-pub fn SIDE() -> Color32 { aos_tok(-0.30, 0.30).unwrap_or_else(|| pk(0xF4F7FA, 0x1B2025)) }
+pub fn SIDE() -> Color32 { aos_tok(-0.30, 0.30).unwrap_or_else(|| surface(0xC2CBCE, 0xF4F7FA, 0x1B2025)) }
 pub fn PANEL() -> Color32 { SIDE() }
 /// cards, inputs, raised surfaces
-pub fn PANEL2() -> Color32 { aos_tok(0.07, 0.65).unwrap_or_else(|| pk(0xFFFFFF, 0x222830)) }
+pub fn PANEL2() -> Color32 { aos_tok(0.07, 0.65).unwrap_or_else(|| surface(0xCBD2D4, 0xFFFFFF, 0x222830)) }
 /// neutral controls (buttons, tracks of sliders)
-pub fn PANEL3() -> Color32 { aos_tok(0.15, -0.07).unwrap_or_else(|| pk(0xDDE4EA, 0x2B323A)) }
+pub fn PANEL3() -> Color32 { aos_tok(0.15, -0.07).unwrap_or_else(|| surface(0xB7C3C9, 0xDDE4EA, 0x2B323A)) }
 /// the standard thin outline
-pub fn border() -> Color32 { aos_tok(0.24, -0.17).unwrap_or_else(|| pk(0xC5CED7, 0x343C45)) }
+pub fn border() -> Color32 { aos_tok(0.24, -0.17).unwrap_or_else(|| surface(0x74858D, 0xC5CED7, 0x343C45)) }
 /// stronger line (disabled, off-state, grid beats)
 pub fn MID() -> Color32 { aos_tok(0.40, -0.40).unwrap_or_else(|| pk(0x8B97A3, 0x56606B)) }
 /// faint text, icons, hairlines on top of surfaces
@@ -244,10 +253,10 @@ pub fn PURPLE() -> Color32 { TEAL_HI() }
 pub fn CYAN() -> Color32 { acc(2) }
 
 /// piano-roll surfaces
-pub fn ROLL_WHITE() -> Color32 { aos_tok(-0.12, 0.45).unwrap_or_else(|| pk(0xF1F5F8, 0x191E23)) }
-pub fn ROLL_BLACK() -> Color32 { aos_tok(-0.40, 0.25).unwrap_or_else(|| pk(0xE3E9EE, 0x12161A)) }
+pub fn ROLL_WHITE() -> Color32 { aos_tok(-0.12, 0.45).unwrap_or_else(|| surface(0xC3CDD1, 0xF1F5F8, 0x191E23)) }
+pub fn ROLL_BLACK() -> Color32 { aos_tok(-0.40, 0.25).unwrap_or_else(|| surface(0xB2BFC5, 0xE3E9EE, 0x12161A)) }
 pub fn ROLL_LINE() -> Color32 { aos_tok(0.10, -0.12).unwrap_or_else(|| pk(0xCBD4DC, 0x2A3139)) }
-pub fn KEY_WHITE() -> Color32 { pk(0xF4F7FA, 0xDDE4EA) }
+pub fn KEY_WHITE() -> Color32 { surface(0xD2D8D8, 0xF4F7FA, 0xDDE4EA) }
 pub fn KEY_BLACK() -> Color32 { pk(0x1B2127, 0x0C0F12) }
 
 /// bar / panel gradients (kept almost flat on purpose)
@@ -325,7 +334,13 @@ pub fn paint_glass_background(ctx: &Context) {
 
 pub fn glass_frame() -> egui::Frame {
     let surface = SIDE();
-    let line = if is_dark() { Color32::from_white_alpha(50) } else { Color32::from_white_alpha(170) };
+    let line = if is_dark() {
+        Color32::from_white_alpha(50)
+    } else if mobile_day() {
+        border()
+    } else {
+        Color32::from_white_alpha(170)
+    };
     egui::Frame::none()
         .fill(Color32::from_rgba_unmultiplied(surface.r(), surface.g(), surface.b(), 192))
         .stroke(Stroke::new(1.0, line))
@@ -342,7 +357,7 @@ pub fn apply_visuals(ctx: &Context) {
     v.window_stroke = Stroke::new(border_w(), border());
     v.window_rounding = Rounding::same(card() + 2.0);
     v.menu_rounding = Rounding::same(corner() + 2.0);
-    v.extreme_bg_color = aos_tok(-0.65, -0.12).unwrap_or_else(|| pk(0xDCE3E9, 0x0F1316));
+    v.extreme_bg_color = aos_tok(-0.65, -0.12).unwrap_or_else(|| surface(0xACB9BF, 0xDCE3E9, 0x0F1316));
     v.faint_bg_color = PANEL3().linear_multiply(0.5);
     v.override_text_color = Some(TEXT());
     v.selection.bg_fill = if dark { TEAL() } else { lerp_rgb(TEAL(), Color32::BLACK, 0.12) };
