@@ -2250,15 +2250,37 @@ impl VinteriaApp {
             let pending = egui::Id::new("m_sound_import_pending");
             let status = egui::Id::new("m_sound_import_status");
             let busy = ui.data(|d| d.get_temp::<bool>(pending)).unwrap_or(false);
-            let button = egui::Button::new("Import WAV").min_size(vec2(ui.available_width(), TOUCH));
-            if ui.add_enabled(!busy, button).clicked() {
+            // 0 = single WAVs, 1 = pack from a ZIP, 2 = pack from a folder
+            let mut pick = None;
+            ui.add_enabled_ui(!busy, |ui| {
+                if ui.add(egui::Button::new("Import WAV").min_size(vec2(ui.available_width(), TOUCH))).clicked() {
+                    pick = Some(0);
+                }
+                ui.horizontal(|ui| {
+                    let half = (ui.available_width() - ui.spacing().item_spacing.x) * 0.5;
+                    if ui.add(egui::Button::new("Pack .zip").min_size(vec2(half, TOUCH)))
+                        .on_hover_text("Import a sample pack from a ZIP file").clicked() {
+                        pick = Some(1);
+                    }
+                    if ui.add(egui::Button::new("Pack folder").min_size(vec2(half, TOUCH)))
+                        .on_hover_text("Import every WAV of a folder as a pack").clicked() {
+                        pick = Some(2);
+                    }
+                });
+            });
+            if let Some(kind) = pick {
                 let result = self.android_updater.as_ref()
                     .ok_or_else(|| "Android file picker is unavailable.".to_owned())
-                    .and_then(|android| android.choose_sounds());
+                    .and_then(|android| if kind == 0 { android.choose_sounds() } else { android.choose_pack(kind == 2) });
+                let hint = match kind {
+                    0 => "Select one or more WAV files.",
+                    1 => "Select a ZIP with WAV files.",
+                    _ => "Select a folder with WAV files.",
+                };
                 ui.data_mut(|d| match result {
                     Ok(()) => {
                         d.insert_temp(pending, true);
-                        d.insert_temp(status, "Select one or more WAV files.".to_owned());
+                        d.insert_temp(status, hint.to_owned());
                     }
                     Err(error) => d.insert_temp(status, error),
                 });
@@ -2322,27 +2344,62 @@ impl VinteriaApp {
                 if self.lib.files.is_empty() {
                     ui.label("No WAV files in the sample library.");
                 }
+                // samples grouped by pack (the first folder under a library root); a search shows a flat list
+                let mut groups: Vec<(String, Vec<PathBuf>)> = vec![];
                 for path in &self.lib.files {
+                    let name = path.file_stem().unwrap_or_default().to_string_lossy().to_lowercase();
+                    if !filter.is_empty() && !name.contains(&filter) {
+                        continue;
+                    }
+                    let pack = if filter.is_empty() {
+                        self.lib.dirs.iter().find_map(|root| path.strip_prefix(root).ok())
+                            .filter(|rel| rel.components().count() > 1)
+                            .and_then(|rel| rel.components().next())
+                            .map(|c| c.as_os_str().to_string_lossy().to_string())
+                            .unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+                    match groups.iter_mut().find(|(g, _)| *g == pack) {
+                        Some((_, files)) => files.push(path.clone()),
+                        None => groups.push((pack, vec![path.clone()])),
+                    }
+                }
+                groups.sort_by_key(|(g, _)| (g.is_empty(), g.to_lowercase()));
+                let mut row = |ui: &mut Ui, path: &PathBuf| {
                     let name = path.file_stem().unwrap_or_default().to_string_lossy();
-                    if name.to_lowercase().contains(&filter) {
-                        let response = browser_drag_row(ui, &name, browser::DragItem::Sample(path.clone()))
-                            .on_hover_text("Hold to assign to a drum pad");
-                        response.context_menu(|ui| {
-                            ui.label("Assign to drum pad");
-                            for (lane, label) in DRUM_NAMES.iter().enumerate() {
-                                if ui.button(*label).clicked() {
-                                    drum = Some((lane, path.clone()));
-                                    ui.close_menu();
-                                }
-                            }
-                        });
-                        if response.clicked() {
-                            if let Some(lane) = drum_destination.filter(|_| !picking_clip) {
+                    let response = browser_drag_row(ui, &name, browser::DragItem::Sample(path.clone()))
+                        .on_hover_text("Hold to assign to a drum pad");
+                    response.context_menu(|ui| {
+                        ui.label("Assign to drum pad");
+                        for (lane, label) in DRUM_NAMES.iter().enumerate() {
+                            if ui.button(*label).clicked() {
                                 drum = Some((lane, path.clone()));
-                            } else {
-                                sound = Some(path.clone());
+                                ui.close_menu();
                             }
                         }
+                    });
+                    if response.clicked() {
+                        if let Some(lane) = drum_destination.filter(|_| !picking_clip) {
+                            drum = Some((lane, path.clone()));
+                        } else {
+                            sound = Some(path.clone());
+                        }
+                    }
+                };
+                for (pack, files) in &groups {
+                    if pack.is_empty() {
+                        for path in files {
+                            row(ui, path);
+                        }
+                    } else {
+                        egui::CollapsingHeader::new(RichText::new(format!("{pack}  ({})", files.len())).strong())
+                            .id_salt(("m_pack", pack)).default_open(false)
+                            .show(ui, |ui| {
+                                for path in files {
+                                    row(ui, path);
+                                }
+                            });
                     }
                 }
             }

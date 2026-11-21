@@ -100,6 +100,14 @@ impl Updater {
         }).map_err(|error| error.to_string())
     }
 
+    /// sample pack import: a ZIP or a whole folder, unpacked into samples/<pack name>
+    pub(crate) fn choose_pack(&self, folder: bool) -> Result<(), String> {
+        with_activity(&self.app, |env, activity| {
+            env.call_method(activity, "choosePack", "(Z)V", &[JValue::Bool(folder as u8)])?;
+            Ok(())
+        }).map_err(|error| error.to_string())
+    }
+
     pub(crate) fn take_sound_import_status(&self) -> Option<String> {
         with_activity(&self.app, |env, activity| {
             let value = env.call_method(activity, "takeSoundImportStatus", "()Ljava/lang/String;", &[])?.l()?;

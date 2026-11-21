@@ -5,6 +5,7 @@ import android.content.ClipData;
 import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
+import android.provider.DocumentsContract;
 import android.provider.OpenableColumns;
 
 import java.io.File;
@@ -13,10 +14,17 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
+import java.util.Locale;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 public final class WinteriaActivity extends NativeActivity {
     private static final int PICK_SOUNDS = 4501;
+    private static final int PICK_PACK_ZIP = 4502;
+    private static final int PICK_PACK_DIR = 4503;
     private static final long MAX_WAV_SIZE = 64L * 1024 * 1024;
+    private static final long MAX_PACK_SIZE = 2L * 1024 * 1024 * 1024;
+    private static final int MAX_PACK_FILES = 5000;
     private volatile String importStatus;
     private boolean importPending;
 
@@ -39,6 +47,32 @@ public final class WinteriaActivity extends NativeActivity {
         });
     }
 
+    /** sample pack: a ZIP (folder = false) or a whole folder (folder = true), WAVs land in samples/<pack name> */
+    public void choosePack(boolean folder) {
+        runOnUiThread(() -> {
+            if (importPending) {
+                return;
+            }
+            importStatus = null;
+            Intent picker;
+            if (folder) {
+                picker = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+            } else {
+                picker = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                picker.setType("*/*");
+                picker.addCategory(Intent.CATEGORY_OPENABLE);
+                picker.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
+                    "application/zip", "application/x-zip-compressed", "application/x-zip", "application/octet-stream"});
+            }
+            try {
+                startActivityForResult(picker, folder ? PICK_PACK_DIR : PICK_PACK_ZIP);
+                importPending = true;
+            } catch (RuntimeException failure) {
+                importStatus = "Could not open the Android file picker.";
+            }
+        });
+    }
+
     public String takeSoundImportStatus() {
         String status = importStatus;
         if (status != null) {
@@ -50,6 +84,10 @@ public final class WinteriaActivity extends NativeActivity {
     @Override
     protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
+        if (request == PICK_PACK_ZIP || request == PICK_PACK_DIR) {
+            onPackPicked(request == PICK_PACK_DIR, result, data);
+            return;
+        }
         if (request != PICK_SOUNDS) {
             return;
         }
@@ -139,6 +177,230 @@ public final class WinteriaActivity extends NativeActivity {
         } finally {
             temporary.delete();
         }
+    }
+
+    private final class PackCounter {
+        int files;
+        int skipped;
+        long bytes;
+    }
+
+    private void onPackPicked(boolean folder, int result, Intent data) {
+        Uri uri = data == null ? null : data.getData();
+        if (result != RESULT_OK || uri == null) {
+            importPending = false;
+            importStatus = "Pack import canceled.";
+            return;
+        }
+        new Thread(() -> {
+            String text;
+            File staging = null;
+            try {
+                File samples = new File(getFilesDir(), "samples");
+                if (!samples.isDirectory() && !samples.mkdirs()) {
+                    throw new IOException("Could not create the library folder");
+                }
+                String name = folder ? treeName(uri) : displayName(uri);
+                if (name.toLowerCase(Locale.ROOT).endsWith(".zip")) {
+                    name = name.substring(0, name.length() - 4);
+                }
+                name = safeName(name, "Pack");
+                staging = new File(samples, ".import-" + System.nanoTime());
+                if (!staging.mkdirs()) {
+                    throw new IOException("Could not create a temporary folder");
+                }
+                PackCounter count = new PackCounter();
+                if (folder) {
+                    copyTree(uri, DocumentsContract.getTreeDocumentId(uri), staging, 0, count);
+                } else {
+                    unzip(uri, staging, count);
+                }
+                if (count.files == 0) {
+                    text = "No WAV files found in the pack.";
+                } else {
+                    File destination = new File(samples, name);
+                    for (int suffix = 2; destination.exists(); suffix++) {
+                        destination = new File(samples, name + " " + suffix);
+                    }
+                    if (!staging.renameTo(destination)) {
+                        throw new IOException("Could not move the pack into the library");
+                    }
+                    staging = null;
+                    text = "Pack \"" + destination.getName() + "\": " + count.files + " WAV file(s)"
+                        + (count.skipped == 0 ? "." : ", skipped " + count.skipped + " other or oversized file(s).");
+                }
+            } catch (IOException | RuntimeException failure) {
+                text = "Pack import failed: " + failure.getMessage();
+            } finally {
+                if (staging != null) {
+                    deleteRecursively(staging);
+                }
+            }
+            final String resultText = text;
+            runOnUiThread(() -> {
+                importPending = false;
+                importStatus = resultText;
+            });
+        }, "winteria-pack-import").start();
+    }
+
+    private void unzip(Uri uri, File root, PackCounter count) throws IOException {
+        try (InputStream raw = getContentResolver().openInputStream(uri)) {
+            if (raw == null) {
+                throw new IOException("Could not read the ZIP");
+            }
+            try (ZipInputStream zip = new ZipInputStream(raw)) {
+                ZipEntry entry;
+                boolean any = false;
+                while ((entry = zip.getNextEntry()) != null) {
+                    any = true;
+                    if (entry.isDirectory()) {
+                        continue;
+                    }
+                    String relative = safeRelative(entry.getName());
+                    if (relative == null || !relative.toLowerCase(Locale.ROOT).endsWith(".wav")) {
+                        count.skipped++;
+                        continue;
+                    }
+                    writeWav(zip, new File(root, relative), count);
+                }
+                if (!any) {
+                    throw new IOException("not a ZIP file");
+                }
+            }
+        }
+    }
+
+    private void copyTree(Uri tree, String documentId, File target, int depth, PackCounter count) throws IOException {
+        if (depth > 8) {
+            return;
+        }
+        Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, documentId);
+        String[] columns = {DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE};
+        try (Cursor cursor = getContentResolver().query(children, columns, null, null, null)) {
+            while (cursor != null && cursor.moveToNext()) {
+                String id = cursor.getString(0);
+                String name = cursor.isNull(1) ? "" : cursor.getString(1);
+                String mime = cursor.isNull(2) ? "" : cursor.getString(2);
+                if (name.startsWith(".")) {
+                    continue;
+                }
+                if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
+                    copyTree(tree, id, new File(target, safeName(name, "Folder")), depth + 1, count);
+                } else if (name.toLowerCase(Locale.ROOT).endsWith(".wav")) {
+                    try (InputStream source = getContentResolver().openInputStream(DocumentsContract.buildDocumentUriUsingTree(tree, id))) {
+                        if (source == null) {
+                            count.skipped++;
+                            continue;
+                        }
+                        writeWav(source, new File(target, safeName(name, "Sound.wav")), count);
+                    }
+                } else {
+                    count.skipped++;
+                }
+            }
+        }
+    }
+
+    /** copies one WAV (checks the RIFF/WAVE header and the size limits); a bad file is skipped, not fatal */
+    private void writeWav(InputStream source, File destination, PackCounter count) throws IOException {
+        if (count.files >= MAX_PACK_FILES) {
+            count.skipped++;
+            return;
+        }
+        File parent = destination.getParentFile();
+        if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
+            throw new IOException("Could not create a pack folder");
+        }
+        boolean ok = false;
+        long written = 0;
+        try (FileOutputStream out = new FileOutputStream(destination)) {
+            byte[] buffer = new byte[32768];
+            int header = 0;
+            while (header < 12) {
+                int length = source.read(buffer, header, 12 - header);
+                if (length <= 0) {
+                    break;
+                }
+                header += length;
+            }
+            if (header == 12 && buffer[0] == 'R' && buffer[1] == 'I' && buffer[2] == 'F' && buffer[3] == 'F'
+                && buffer[8] == 'W' && buffer[9] == 'A' && buffer[10] == 'V' && buffer[11] == 'E') {
+                out.write(buffer, 0, header);
+                written = header;
+                ok = true;
+                int length;
+                while ((length = source.read(buffer)) != -1) {
+                    written += length;
+                    if (written > MAX_WAV_SIZE || count.bytes + written > MAX_PACK_SIZE) {
+                        ok = false;
+                        break;
+                    }
+                    out.write(buffer, 0, length);
+                }
+            }
+        }
+        if (ok) {
+            count.files++;
+            count.bytes += written;
+        } else {
+            destination.delete();
+            count.skipped++;
+        }
+    }
+
+    /** a ZIP entry path inside the pack folder: no absolute paths, no "..", no hidden or macOS metadata entries */
+    private static String safeRelative(String entry) {
+        StringBuilder out = new StringBuilder();
+        String[] parts = entry.replace('\\', '/').split("/");
+        for (int i = 0; i < parts.length; i++) {
+            String part = parts[i].trim();
+            if (part.isEmpty() || part.equals(".")) {
+                continue;
+            }
+            if (part.equals("..") || part.startsWith(".") || part.equals("__MACOSX")) {
+                return null;
+            }
+            if (out.length() > 0) {
+                out.append('/');
+            }
+            out.append(safeName(part, "_"));
+        }
+        return out.length() == 0 ? null : out.toString();
+    }
+
+    private static String safeName(String name, String fallback) {
+        String clean = name.replaceAll("[\\x00-\\x1f/\\\\:]", "_").trim();
+        if (clean.length() > 100) {
+            clean = clean.substring(0, 100);
+        }
+        return clean.isEmpty() || clean.startsWith(".") ? fallback : clean;
+    }
+
+    private String treeName(Uri tree) {
+        String id = DocumentsContract.getTreeDocumentId(tree);
+        try (Cursor cursor = getContentResolver().query(DocumentsContract.buildDocumentUriUsingTree(tree, id),
+            new String[]{DocumentsContract.Document.COLUMN_DISPLAY_NAME}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst() && !cursor.isNull(0)) {
+                return cursor.getString(0);
+            }
+        } catch (RuntimeException ignored) {
+        }
+        int colon = id.lastIndexOf(':');
+        String tail = colon >= 0 ? id.substring(colon + 1) : id;
+        int slash = tail.lastIndexOf('/');
+        return slash >= 0 ? tail.substring(slash + 1) : tail;
+    }
+
+    private static void deleteRecursively(File file) {
+        File[] children = file.listFiles();
+        if (children != null) {
+            for (File child : children) {
+                deleteRecursively(child);
+            }
+        }
+        file.delete();
     }
 
     private String displayName(Uri uri) {
