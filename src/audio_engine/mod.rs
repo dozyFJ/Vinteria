@@ -21,6 +21,7 @@ use std::sync::Arc;
 
 pub enum Cmd {
     Play,
+    PatternLoop(bool),
     /// halt without rewinding: the next Play goes on from the same place
     Pause,
     /// move the playhead: while playing the song jumps there, when stopped the next Play starts from there
@@ -262,6 +263,7 @@ pub struct Engine {
     duck_env: f32,
     /// the live player: a song that reaches its end starts again until the user presses Stop (export and tests stop at the end)
     pub live_loop: bool,
+    pattern_loop: bool,
     /// velocity multiplier of the MIDI clip being fired (its fade in / out)
     clip_fade: f32,
     fx_run: Vec<crate::fx::FxChain>,
@@ -309,6 +311,7 @@ impl Engine {
             master_auto: 1.0,
             duck_env: 0.0,
             live_loop: false,
+            pattern_loop: true,
             clip_fade: 1.0,
             fx_run: (0..NUM_INSERTS).map(|_| crate::fx::FxChain::new()).collect(),
             master_run: crate::fx::FxChain::new(),
@@ -345,6 +348,7 @@ impl Engine {
     pub fn apply(&mut self, c: Cmd) {
         match c {
             Cmd::Play => self.play(),
+            Cmd::PatternLoop(looping) => self.pattern_loop = looping,
             Cmd::Stop => self.stop(),
             Cmd::Pause => {
                 if self.playing {
@@ -666,6 +670,9 @@ impl Engine {
             self.fire(0, None, pat, local, abs, u64::MAX, swing, None, 0);
             self.position = local;
             self.song_tick = self.song_tick.wrapping_add(1);
+            if !self.pattern_loop && local + 1 >= pat.len_ticks() {
+                self.stop();
+            }
         }
         self.abs_tick += 1;
     }
