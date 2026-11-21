@@ -1,6 +1,5 @@
 //! Phone layout in the style of the Pulse messenger (the PC keeps its own AOS look).
-//! Portrait: translucent header, glass cards over a grey doodle background, an icon rail above the bottom dock,
-//! and the dock itself: profile avatar + Projects · Studio · Settings.
+//! Portrait UI with a translucent header, glass cards, and navigation above the content.
 use super::*;
 use crate::mixer::{NUM_CH, NUM_INSERTS};
 use crate::sequencer::{DRUM_NAMES, NUM_DRUMS, TICKS_PER_STEP};
@@ -387,8 +386,9 @@ fn pulse_visuals(ui: &mut Ui) {
 }
 
 const PROJECT_SECTIONS: [(&str, Icon); 4] = [("Projects", Icon::Folder), ("Recent", Icon::Clock), ("Templates", Icon::Layout), ("Sounds", Icon::Wave)];
-const STUDIO_SECTIONS: [(&str, Icon); 6] = [("Steps", Icon::Steps), ("Piano", Icon::Keys), ("Session", Icon::Session), ("Playlist", Icon::Timeline), ("Mixer", Icon::Mixer), ("Tracks", Icon::Tracks)];
-const SEC_PLAYLIST: usize = 3;
+const STUDIO_SECTIONS: [(&str, Icon); 6] = [("Playlist", Icon::Timeline), ("Steps", Icon::Steps), ("Piano", Icon::Keys), ("Session", Icon::Session), ("Mixer", Icon::Mixer), ("Tracks", Icon::Tracks)];
+const SEC_PLAYLIST: usize = 0;
+const SEC_PIANO: usize = 2;
 
 /// Export & Share sheet of the phone layout: renders on a worker thread, then hands the WAV to Android's share sheet.
 #[derive(Default)]
@@ -511,8 +511,9 @@ impl VinteriaApp {
         };
         step("background");
         doodle_background(ctx);
-        step("dock");
-        self.mobile_dock(ctx);
+        step("header");
+        self.mobile_navigation(ctx);
+        self.mobile_header(ctx);
         step("rail");
         let sections: &[(&str, Icon)] = match self.m_tab {
             0 => &PROJECT_SECTIONS,
@@ -522,8 +523,11 @@ impl VinteriaApp {
         if !sections.is_empty() {
             self.mobile_rail(ctx, sections);
         }
-        step("header");
-        self.mobile_header(ctx);
+        if self.m_tab == 1 && self.m_sec == SEC_PLAYLIST {
+            self.m_browser_sidebar(ctx);
+        } else {
+            ctx.data_mut(|d| d.remove::<bool>(egui::Id::new("m_browser_open")));
+        }
         step("page");
         egui::CentralPanel::default().frame(Frame::none().inner_margin(Margin { left: 14.0, right: 14.0, top: 10.0, bottom: 6.0 })).show(ctx, |ui| {
             pulse_visuals(ui);
@@ -534,6 +538,19 @@ impl VinteriaApp {
                 _ => self.m_profile(ui),
             }
         });
+        if self.m_tab == 1 && self.m_sec == SEC_PLAYLIST {
+            let dragging = egui::DragAndDrop::payload::<browser::DragItem>(ctx)
+                .map(|item| item.label(&self.project))
+                .or_else(|| egui::DragAndDrop::payload::<crate::fx::FxKind>(ctx).map(|kind| kind.name().to_owned()));
+            if let (Some(label), Some(point)) = (dragging, ctx.pointer_interact_pos()) {
+                let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("m_browser_drag")));
+                let pos = (point + vec2(12.0, -22.0)).clamp(ctx.screen_rect().min, ctx.screen_rect().max);
+                let rect = Rect::from_min_size(pos, vec2(118.0, 28.0));
+                glass(&painter, rect, 9.0);
+                let short: String = label.chars().take(15).collect();
+                painter.text(rect.center(), Align2::CENTER_CENTER, short, FontId::proportional(12.0), ink());
+            }
+        }
         step("page done");
         let repaint = if self.playing() { 33 } else { 250 };
         ctx.request_repaint_after(std::time::Duration::from_millis(repaint));
@@ -548,30 +565,28 @@ impl VinteriaApp {
                 ui.set_min_height(TOUCH);
                 match self.m_tab {
                     1 => {
+                        let name: String = self.project.name.chars().take(18).collect();
+                        let playing = self.playing();
+                        let (status, color) = match (playing, self.record) {
+                            (true, true) => ("● Playing · Rec armed", RED),
+                            (true, false) => ("● Playing", ink()),
+                            (false, true) => ("● Rec armed", RED),
+                            (false, false) => ("○ Idle", muted()),
+                        };
                         ui.vertical(|ui| {
-                            let name: String = self.project.name.chars().take(18).collect();
                             ui.label(RichText::new(name).size(18.0).strong().color(ink()));
-                            let pat = self.project.patterns.get(self.project.current_pattern).map(|p| p.name.clone()).unwrap_or_default();
-                            ui.label(RichText::new(format!("{}  ·  {} tracks", pat, self.project.arrangement.tracks.len())).size(12.0).color(muted()));
+                            ui.label(RichText::new(status).size(12.0).color(color));
                         });
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let playing = self.playing();
-                            let (r, resp) = ui.allocate_exact_size(vec2(TOUCH, TOUCH), Sense::click());
-                            pill(ui.painter(), r, p_accent());
-                            icon(ui.painter(), if playing { Icon::Stop } else { Icon::Play }, r.center() + vec2(if playing { 0.0 } else { 1.5 }, 0.0), on_accent());
-                            if resp.clicked() {
-                                self.m_toggle_play();
-                            }
-                            ui.add_space(4.0);
                             let (r, resp) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::click());
                             glass(ui.painter(), r, 20.0);
                             icon(ui.painter(), Icon::Share, r.center(), ink());
-                            if resp.clicked() {
+                            if resp.on_hover_text("Export or share").clicked() {
                                 self.m_export.open = !self.m_export.open;
                                 self.m_export.song = self.m_sec == SEC_PLAYLIST;
                             }
-                            ui.add_space(4.0);
-                            ui.add_sized([84.0, 36.0], egui::DragValue::new(&mut self.project.bpm).range(40.0..=300.0).speed(0.5).suffix(" BPM").max_decimals(1));
+                            ui.add_sized([78.0, 36.0], egui::DragValue::new(&mut self.project.bpm)
+                                .range(40.0..=300.0).speed(0.5).suffix(" BPM").max_decimals(1));
                         });
                     }
                     t => {
@@ -598,16 +613,41 @@ impl VinteriaApp {
                     }
                 }
             });
+            if self.m_tab == 1 {
+                ui.add_space(4.0);
+                let playing = self.playing();
+                ui.columns(4, |cols| {
+                    let w = cols[0].available_width();
+                    if p_button(&mut cols[0], "|◀", false, vec2(w, 38.0)).on_hover_text("Return to start").clicked() {
+                        self.return_to_start(ctx, playing);
+                    }
+                    let w = cols[1].available_width();
+                    if p_button(&mut cols[1], if playing { "Pause" } else { "Play" }, true, vec2(w, 38.0)).clicked() {
+                        self.m_toggle_play();
+                    }
+                    let w = cols[2].available_width();
+                    if p_button(&mut cols[2], "Stop", false, vec2(w, 38.0)).clicked() {
+                        self.return_to_start(ctx, false);
+                    }
+                    let w = cols[3].available_width();
+                    if p_button(&mut cols[3], "Rec", self.record, vec2(w, 38.0)).clicked() {
+                        self.record = !self.record;
+                        if self.record && !playing {
+                            self.m_toggle_play();
+                        }
+                    }
+                });
+            }
         });
         let r = resp.response.rect;
         ctx.layer_painter(egui::LayerId::background()).line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(1.0, outline()));
     }
 
-    /// Row of round icon buttons above the dock (the section rail of Pulse).
+    /// Section navigation immediately below the header.
     fn mobile_rail(&mut self, ctx: &egui::Context, sections: &[(&str, Icon)]) {
-        egui::TopBottomPanel::bottom("m_rail").show_separator_line(false).frame(Frame::none().inner_margin(Margin { left: 10.0, right: 10.0, top: 4.0, bottom: 6.0 })).show(ctx, |ui| {
+        egui::TopBottomPanel::top("m_rail").show_separator_line(false).frame(Frame::none().inner_margin(Margin { left: 10.0, right: 10.0, top: 4.0, bottom: 6.0 })).show(ctx, |ui| {
             let w = ui.available_width();
-            let (rect, _) = ui.allocate_exact_size(vec2(w, 66.0), Sense::hover());
+            let (rect, _) = ui.allocate_exact_size(vec2(w, 56.0), Sense::hover());
             glass(ui.painter(), rect, 18.0);
             let n = sections.len() as f32;
             let slot = rect.width() / n;
@@ -615,10 +655,10 @@ impl VinteriaApp {
                 let cell = Rect::from_min_size(pos2(rect.left() + i as f32 * slot, rect.top()), vec2(slot, rect.height()));
                 let resp = ui.interact(cell, ui.id().with(("rail", i)), Sense::click());
                 let on = self.m_sec == i;
-                let c = pos2(cell.center().x, cell.top() + 25.0);
+                let c = pos2(cell.center().x, cell.top() + 21.0);
                 let p = ui.painter();
                 if on {
-                    p.circle_filled(c, 19.0, p_accent());
+                    p.circle_filled(c, 16.0, p_accent());
                 }
                 icon(p, *ic, c, if on { on_accent() } else { ink() });
                 p.text(pos2(cell.center().x, cell.bottom() - 9.0), Align2::CENTER_CENTER, *name, FontId::proportional(10.5), if on { ink() } else { muted() });
@@ -629,9 +669,9 @@ impl VinteriaApp {
         });
     }
 
-    /// Bottom dock: profile avatar, then text tabs; the active tab is an accent pill, the others glass.
-    fn mobile_dock(&mut self, ctx: &egui::Context) {
-        let resp = egui::TopBottomPanel::bottom("m_dock").show_separator_line(false).frame(Frame::none().fill(bar_fill()).inner_margin(Margin::symmetric(8.0, 6.0))).show(ctx, |ui| {
+    /// Main navigation at the top of the screen.
+    fn mobile_navigation(&mut self, ctx: &egui::Context) {
+        let resp = egui::TopBottomPanel::top("m_primary_navigation").show_separator_line(false).frame(Frame::none().fill(bar_fill()).inner_margin(Margin::symmetric(8.0, 6.0))).show(ctx, |ui| {
             let w = ui.available_width();
             let (rect, _) = ui.allocate_exact_size(vec2(w, TOUCH), Sense::hover());
             let tabs = ["Projects", "Studio", "Settings"];
@@ -670,7 +710,7 @@ impl VinteriaApp {
             }
         });
         let r = resp.response.rect;
-        ctx.layer_painter(egui::LayerId::background()).line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, outline()));
+        ctx.layer_painter(egui::LayerId::background()).line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(1.0, outline()));
     }
 
     fn m_open_studio(&mut self, section: usize) {
@@ -680,10 +720,11 @@ impl VinteriaApp {
 
     fn m_toggle_play(&mut self) {
         if self.playing() {
-            self.shared.send(Cmd::Stop);
+            self.shared.send(Cmd::Pause);
         } else {
-            // the Playlist plays the song, every other screen loops the current pattern
+            // Playlist plays the arrangement. Editors play the selected pattern.
             self.project.song_mode = self.m_sec == SEC_PLAYLIST;
+            self.publish_edits();
             self.shared.send(Cmd::Play);
         }
     }
@@ -805,10 +846,10 @@ impl VinteriaApp {
 
     fn m_studio(&mut self, ui: &mut Ui) {
         match self.m_sec {
-            0 => self.m_steps(ui),
-            1 => self.m_piano(ui),
-            2 => self.m_session(ui),
-            3 => self.m_playlist(ui),
+            SEC_PLAYLIST => self.m_playlist(ui),
+            1 => self.m_steps(ui),
+            SEC_PIANO => self.m_piano(ui),
+            3 => self.m_session(ui),
             4 => self.m_mixer(ui),
             _ => self.m_tracks(ui),
         }
@@ -1322,10 +1363,161 @@ impl VinteriaApp {
         }
     }
 
+    fn m_browser_sidebar(&mut self, ctx: &egui::Context) {
+        let id = egui::Id::new("m_browser_open");
+        let open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+        let width = (ctx.screen_rect().width() * 0.44).min(300.0);
+        let mut next = open;
+        egui::SidePanel::left("m_sample_browser").resizable(false)
+            .exact_width(if open { width } else { 22.0 })
+            .frame(Frame::none().fill(bar_fill()))
+            .show(ctx, |ui| {
+                if !open {
+                    let (rect, response) = ui.allocate_exact_size(vec2(22.0, ui.available_height()), Sense::click_and_drag());
+                    ui.painter().text(rect.center(), Align2::CENTER_CENTER, "›", FontId::proportional(22.0), ink());
+                    let response = response.on_hover_text("Browser");
+                    if response.clicked() || response.drag_delta().x > 18.0 {
+                        next = true;
+                    }
+                    return;
+                }
+
+                pulse_visuals(ui);
+                Frame::none().inner_margin(8.0).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let response = ui.add(egui::Label::new(RichText::new("Browser").size(17.0).strong()).sense(Sense::drag()));
+                        if response.drag_delta().x < -18.0 {
+                            next = false;
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if p_button(ui, "×", false, vec2(28.0, 32.0)).on_hover_text("Close browser").clicked() {
+                                next = false;
+                            }
+                        });
+                    });
+                    self.m_browser_items(ui);
+                });
+            });
+        if next != open {
+            ctx.data_mut(|d| d.insert_temp(id, next));
+            ctx.request_repaint();
+        }
+    }
+
+    fn m_browser_items(&mut self, ui: &mut Ui) {
+        let tab_id = egui::Id::new("m_browser_plugins");
+        let query_id = egui::Id::new("m_browser_query");
+        let mut plugins = ui.data(|d| d.get_temp::<bool>(tab_id)).unwrap_or(false);
+        let mut query = ui.data(|d| d.get_temp::<String>(query_id)).unwrap_or_default();
+        ui.horizontal_wrapped(|ui| {
+            ui.selectable_value(&mut plugins, false, "Sounds");
+            ui.selectable_value(&mut plugins, true, "Plugins");
+        });
+        ui.add(egui::TextEdit::singleline(&mut query).hint_text("Search").desired_width(ui.available_width()));
+        let filter = query.trim().to_lowercase();
+        ui.data_mut(|d| {
+            d.insert_temp(tab_id, plugins);
+            d.insert_temp(query_id, query);
+        });
+        let mut sound = None;
+        let mut instrument = None;
+        let mut effect = None;
+        egui::ScrollArea::vertical().id_salt(("m_browser_list", plugins)).show(ui, |ui| {
+            if plugins {
+                for track in Track::ALL {
+                    if track.name().to_lowercase().contains(&filter)
+                        && browser_drag_row(ui, track.name(), browser::DragItem::Instrument(track))
+                    {
+                        instrument = Some(track);
+                    }
+                }
+                ui.separator();
+                for kind in crate::fx::ALL {
+                    if kind.name().to_lowercase().contains(&filter)
+                        && browser_drag_row(ui, kind.name(), kind)
+                    {
+                        effect = Some(kind);
+                    }
+                }
+            } else {
+                if self.lib.files.is_empty() {
+                    ui.label("No WAV files in the sample library.");
+                }
+                for path in &self.lib.files {
+                    let name = path.file_stem().unwrap_or_default().to_string_lossy();
+                    if name.to_lowercase().contains(&filter)
+                        && browser_drag_row(ui, &name, browser::DragItem::Sample(path.clone()))
+                    {
+                        sound = Some(path.clone());
+                    }
+                }
+            }
+        });
+        if let Some(path) = sound {
+            match self.lib.insert_audio_clip(&mut self.project, &path, Some(self.arr.sel_lane)) {
+                Ok(index) => {
+                    self.arr.sel_clip = Some(index);
+                    self.arr.sel_lane = self.project.arrangement.clips[index].lane;
+                    self.arr.msg.clear();
+                    ui.data_mut(|d| d.insert_temp(egui::Id::new("m_browser_open"), false));
+                }
+                Err(error) => self.arr.msg = error,
+            }
+        }
+        if let Some(track) = instrument {
+            self.m_drop_browser_item(&browser::DragItem::Instrument(track), self.arr.sel_lane, 0);
+        }
+        if let Some(kind) = effect {
+            self.m_drop_effect(kind, self.arr.sel_lane);
+        }
+    }
+
+    fn m_drop_browser_item(&mut self, item: &browser::DragItem, lane: usize, tick: u32) {
+        self.lib.message.clear();
+        let bpm = self.project.bpm;
+        let before = self.project.arrangement.clips.len();
+        if let Some(lane) = arrangement_ui::drop_item(&mut self.project, &mut self.lib, item, lane, tick, bpm) {
+            self.arr.sel_lane = lane;
+            self.arr.sel_clip = (self.project.arrangement.clips.len() > before).then_some(before);
+            self.arr.msg.clone_from(&self.lib.message);
+        } else {
+            self.arr.msg = "No available track for this item.".into();
+        }
+    }
+
+    fn m_drop_effect(&mut self, kind: crate::fx::FxKind, lane: usize) {
+        let slot = crate::fx::FxSlot::new(kind);
+        match plugins_ui::add_to_track(&mut self.project, lane, &slot) {
+            Ok(_) => {
+                self.arr.sel_lane = lane;
+                self.arr.msg.clear();
+            }
+            Err(error) => self.arr.msg = error.into(),
+        }
+    }
+
     /// Playlist on top, and under it the same device dock as the PC (track settings, instrument, effects, clip options)
     /// for the selected track: tap a track name or a clip to select it.
     fn m_playlist(&mut self, ui: &mut Ui) {
-        let (bar_w, lane_h, hdr, ruler) = (52.0f32, 46.0f32, 96.0f32, 26.0f32);
+        ui.horizontal_wrapped(|ui| {
+            if p_button(ui, "+ MIDI clip", true, vec2(104.0, 37.0)).clicked() {
+                arrangement_ui::new_midi_clip(&mut self.project, &mut self.arr);
+                let track = &mut self.project.arrangement.tracks[self.arr.sel_lane];
+                if track.blank {
+                    track.blank = false;
+                    track.instrument = Some(Track::Synth);
+                }
+                self.arr.msg.clear();
+            }
+            if p_button(ui, "+ Audio clip", false, vec2(108.0, 37.0)).clicked() {
+                ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("m_browser_open"), true));
+            }
+        });
+        if !self.arr.msg.is_empty() {
+            ui.colored_label(RED, &self.arr.msg);
+        }
+        ui.add_space(4.0);
+        let (bar_w, lane_h, hdr, ruler) = (52.0f32, 46.0f32, 76.0f32, 26.0f32);
         let tracks = self.project.arrangement.tracks.len();
         if tracks == 0 {
             ui.label(RichText::new("No tracks yet. Open a template in Projects.").color(muted()));
@@ -1337,9 +1529,12 @@ impl VinteriaApp {
         let bars = (self.project.arrangement.song_end_bar() + 8).max(16);
         let pos = self.shared.position.load(Ordering::Relaxed);
         let playing = self.playing() && self.project.song_mode;
-        let full_h = ruler + tracks as f32 * lane_h;
+        let add_lane = ui.data(|d| d.get_temp::<bool>(egui::Id::new("m_browser_open"))).unwrap_or(false);
+        let full_h = ruler + (tracks + usize::from(add_lane)) as f32 * lane_h;
         let grid_h = full_h.min((ui.available_height() * 0.42).max(160.0));
-        let mut pick: Option<(usize, Option<usize>)> = None;
+        let mut pick = None;
+        let mut dropped_item = None;
+        let mut dropped_effect = None;
         egui::ScrollArea::both().id_salt("m_playlist").max_height(grid_h).auto_shrink([false, true]).show(ui, |ui| {
             let (rect, resp) = ui.allocate_exact_size(vec2(hdr + bars as f32 * bar_w, full_h), Sense::click());
             let p = ui.painter_at(rect);
@@ -1357,6 +1552,12 @@ impl VinteriaApp {
                 p.circle_filled(pos2(r.left() + 14.0, r.center().y), 5.0, lane_col(l));
                 let name: String = t.name.chars().take(10).collect();
                 p.text(pos2(r.left() + 26.0, r.center().y), Align2::LEFT_CENTER, name, FontId::proportional(13.0), if t.mute { muted() } else { ink() });
+            }
+            if add_lane {
+                let y = gy + tracks as f32 * lane_h;
+                p.line_segment([pos2(rect.left(), y), pos2(rect.right(), y)], Stroke::new(0.6, glass_edge()));
+                p.text(pos2(rect.left() + 10.0, y + lane_h * 0.5), Align2::LEFT_CENTER,
+                    "+ New track", FontId::proportional(12.0), muted());
             }
             for b in 0..=bars {
                 let x = gx + b as f32 * bar_w;
@@ -1386,23 +1587,52 @@ impl VinteriaApp {
                 let x = gx + pos as f32 / TICKS_PER_BAR as f32 * bar_w;
                 p.line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], Stroke::new(2.0, p_accent()));
             }
-            if resp.clicked() {
+            if let Some(point) = ui.input(|input| input.pointer.interact_pos()).filter(|p| rect.contains(*p) && p.y >= gy) {
+                let lane = (((point.y - gy) / lane_h) as usize).min(tracks);
+                let tick = ((point.x - gx).max(0.0) / bar_w * TICKS_PER_BAR as f32) as u32;
+                let snap = self.arr.snap.max(1);
+                if resp.dnd_hover_payload::<browser::DragItem>().is_some()
+                    || (lane < tracks && resp.dnd_hover_payload::<crate::fx::FxKind>().is_some())
+                {
+                    let row = Rect::from_min_size(pos2(rect.left(), gy + lane as f32 * lane_h), vec2(rect.width(), lane_h));
+                    p.rect_stroke(row.shrink(1.0), 6.0, Stroke::new(1.5, p_accent()));
+                }
+                if let Some(item) = resp.dnd_release_payload::<browser::DragItem>() {
+                    dropped_item = Some((item, lane, tick / snap * snap));
+                }
+                if lane < tracks {
+                    if let Some(kind) = resp.dnd_release_payload::<crate::fx::FxKind>() {
+                        dropped_effect = Some((*kind, lane));
+                    }
+                }
+            }
+            if resp.clicked() || resp.double_clicked() {
                 if let Some(pt) = resp.interact_pointer_pos() {
                     if pt.y > gy {
                         let lane = (((pt.y - gy) / lane_h) as usize).min(tracks - 1);
                         let clip = clip_rects.iter().find(|(_, _, r)| r.contains(pt)).map(|(i, _, _)| *i);
-                        pick = Some((lane, clip));
+                        pick = Some((lane, clip, resp.double_clicked()));
                     }
                 }
             }
         });
-        if let Some((lane, clip)) = pick {
+        if let Some((item, lane, tick)) = dropped_item {
+            self.m_drop_browser_item(&item, lane, tick);
+        }
+        if let Some((kind, lane)) = dropped_effect {
+            self.m_drop_effect(kind, lane);
+            self.arr.sel_clip = None;
+        }
+        if let Some((lane, clip, edit)) = pick {
             self.arr.sel_lane = lane;
             self.arr.sel_clip = clip;
             if let Some(i) = clip {
                 if let Some(c) = self.project.arrangement.clips.get(i) {
-                    if !c.audio {
+                    if !c.audio && c.pattern < self.project.patterns.len() {
                         self.project.current_pattern = c.pattern;
+                        if edit {
+                            self.m_sec = SEC_PIANO;
+                        }
                     }
                 }
             }
@@ -1421,6 +1651,13 @@ impl VinteriaApp {
         let h = ui.available_height().max(200.0);
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::hover());
         panel(ui.painter(), rect, 14.0);
+        let drop_target = ui.interact(rect, ui.id().with("m_effect_drop"), Sense::hover());
+        if drop_target.dnd_hover_payload::<crate::fx::FxKind>().is_some() {
+            ui.painter().rect_stroke(rect, 14.0, Stroke::new(1.5, p_accent()));
+        }
+        if let Some(kind) = drop_target.dnd_release_payload::<crate::fx::FxKind>() {
+            self.m_drop_effect(*kind, lane);
+        }
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(10.0)));
         let inner_h = rect.height() - 20.0;
         egui::ScrollArea::horizontal().id_salt("m_dock").auto_shrink([false, false]).show(&mut child, |ui| {
@@ -1516,16 +1753,34 @@ impl VinteriaApp {
     }
 
     fn m_mixer(&mut self, ui: &mut Ui) {
-        let h = (ui.available_height() - 20.0).clamp(220.0, 520.0);
-        egui::ScrollArea::horizontal().auto_shrink([false, false]).show(ui, |ui| {
-            ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = 8.0;
-                self.m_strip(ui, None, h);
-                for i in 0..NUM_INSERTS {
-                    self.m_strip(ui, Some(i), h);
-                }
+        let id = egui::Id::new("m_mixer_channel");
+        let mut selected = ui.data(|d| d.get_temp::<usize>(id)).unwrap_or(0).min(NUM_INSERTS);
+        let height = ui.available_height().max(1.0);
+        let rail_width = (ui.available_width() * 0.54).clamp(72.0, 190.0);
+        let control_width = (ui.available_width() - rail_width - ui.spacing().item_spacing.x).max(1.0);
+        ui.horizontal_top(|ui| {
+            ui.allocate_ui_with_layout(vec2(control_width, height), egui::Layout::top_down(egui::Align::Center), |ui| {
+                self.m_strip(ui, selected.checked_sub(1), (height - 8.0).clamp(160.0, 520.0));
+            });
+            ui.allocate_ui_with_layout(vec2(rail_width, height), egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.set_width(rail_width);
+                Frame::none().fill(bar_fill()).rounding(14.0).inner_margin(7.0).show(ui, |ui| {
+                    egui::ScrollArea::vertical().id_salt("m_mixer_right").max_height((height - 14.0).max(1.0)).show(ui, |ui| {
+                        for channel in 0..=NUM_INSERTS {
+                            let label: String = if channel == 0 { "Master".into() } else {
+                                let name = &self.project.channels[NUM_CH + channel - 1].name;
+                                let short: String = name.chars().take(12).collect();
+                                format!("{channel}  {short}")
+                            };
+                            if p_button(ui, &label, channel == selected, vec2(ui.available_width(), 38.0)).clicked() {
+                                selected = channel;
+                            }
+                        }
+                    });
+                });
             });
         });
+        ui.data_mut(|d| d.insert_temp(id, selected));
     }
 
     fn m_strip(&mut self, ui: &mut Ui, insert: Option<usize>, h: f32) {
@@ -1632,6 +1887,15 @@ impl VinteriaApp {
             list_row(ui, lane_col(4), "R", "Recent", &format!("{} opened", self.recent.len()), "", false);
         });
     }
+}
+
+fn browser_drag_row<T: std::any::Any + Send + Sync>(ui: &mut Ui, label: &str, item: T) -> bool {
+    ui.horizontal(|ui| {
+        let (rect, grip) = ui.allocate_exact_size(vec2(24.0, 38.0), Sense::drag());
+        grip.dnd_set_drag_payload(item);
+        ui.painter().text(rect.center(), Align2::CENTER_CENTER, "⋮⋮", FontId::proportional(13.0), muted());
+        ui.add_sized([ui.available_width(), 38.0], egui::Button::new(label).truncate()).clicked()
+    }).inner
 }
 
 fn meter(ui: &Ui, pk: [f32; 2]) {

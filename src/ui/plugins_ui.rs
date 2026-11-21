@@ -65,7 +65,7 @@ pub fn add_to_insert(project: &mut Project, insert: usize, slot: &FxSlot) -> boo
 }
 
 /// add the plugin to the effects of a track: the track plays through an insert, a track without one gets a free insert
-fn add_to_track(project: &mut Project, lane: usize, slot: &FxSlot) -> Result<usize, &'static str> {
+pub(super) fn add_to_track(project: &mut Project, lane: usize, slot: &FxSlot) -> Result<usize, &'static str> {
     project.insert_fx.resize_with(NUM_INSERTS, Vec::new);
     let used: Vec<usize> = project.arrangement.tracks.iter().filter_map(|t| t.output).collect();
     let out = match project.arrangement.tracks.get(lane).ok_or("No such track")?.output {

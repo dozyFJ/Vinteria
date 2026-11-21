@@ -2558,7 +2558,7 @@ fn dashed_rect(p: &egui::Painter, r: Rect, vis: Rect, radius: f32, stroke: Strok
 }
 
 /// Put a browser item on the timeline; creates a new track when the hovered one does not fit.
-fn drop_item(project: &mut Project, lib: &mut Library, item: &DragItem, lane: usize, start: u32, bpm: f32) -> Option<usize> {
+pub(super) fn drop_item(project: &mut Project, lib: &mut Library, item: &DragItem, lane: usize, start: u32, bpm: f32) -> Option<usize> {
     let name = item.label(project);
     match item {
         DragItem::Pattern(i) if *i < project.patterns.len() => {
@@ -2573,6 +2573,7 @@ fn drop_item(project: &mut Project, lib: &mut Library, item: &DragItem, lane: us
         DragItem::Instrument(t) => {
             let lane = resolve_lane(project, lane, TrackKind::Midi, &name)?;
             project.arrangement.tracks[lane].instrument = Some(*t);
+            project.arrangement.tracks[lane].blank = false;
             Some(lane)
         }
         DragItem::Sample(path) => {

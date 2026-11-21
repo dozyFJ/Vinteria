@@ -513,13 +513,20 @@ impl Library {
 
     /// Put a sound on the Playlist: as a clip at the end of the first audio track, or on a new audio track of its own.
     fn send_to_playlist(&mut self, project: &mut Project, f: &Path, new_track: bool) {
+        let lane = if new_track { None } else {
+            project.arrangement.tracks.iter().position(|t| t.kind == crate::arrangement::TrackKind::Audio)
+        };
+        let _ = self.insert_audio_clip(project, f, lane);
+    }
+
+    pub(super) fn insert_audio_clip(&mut self, project: &mut Project, f: &Path, lane: Option<usize>) -> Result<usize, String> {
         use crate::arrangement::{Clip, TrackKind};
-        let Ok(data) = self.get(f) else { return };
+        let data = self.get(f)?;
         let secs = data.mono.len() as f32 / data.rate as f32;
         let name = f.file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
         let idx = project.pool_index(&name, &f.to_string_lossy(), data);
-        let lane = match project.arrangement.tracks.iter().position(|t| t.kind == TrackKind::Audio) {
-            Some(l) if !new_track => l,
+        let lane = match lane.filter(|&l| project.arrangement.tracks.get(l).is_some_and(|t| t.kind == TrackKind::Audio)) {
+            Some(l) => l,
             _ => {
                 project.arrangement.add_track(TrackKind::Audio);
                 let l = project.arrangement.tracks.len() - 1;
@@ -530,10 +537,12 @@ impl Library {
         let start = project.arrangement.clips.iter().filter(|c| c.lane == lane).map(|c| c.end_tick()).max().unwrap_or(0);
         let ticks = ((secs * project.bpm / 60.0 * crate::sequencer::PPQ as f32).round() as u32).max(24);
         let c = Clip::new(idx, lane, start, ticks, true);
-        if project.arrangement.can_place(&c, None) {
-            project.arrangement.clips.push(c);
-            project.song_mode = true;
+        if !project.arrangement.can_place(&c, None) {
+            return Err("Cannot place this audio clip on the track.".into());
         }
+        project.arrangement.clips.push(c);
+        project.song_mode = true;
+        Ok(project.arrangement.clips.len() - 1)
     }
 
     /// The sound player: Play / Stop, the waveform with a moving playhead (click it to start from that point) and the time.
