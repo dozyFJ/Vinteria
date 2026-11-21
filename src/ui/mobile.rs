@@ -629,6 +629,7 @@ impl VinteriaApp {
                 self.m_tab = 0;
                 self.m_sec = 0;
                 self.hub_cache = None;
+                ui.data_mut(|d| d.remove::<usize>(egui::Id::new("m_clip_sheet_selection")));
                 return;
             }
 
@@ -879,6 +880,7 @@ impl VinteriaApp {
         }
         self.m_step_sheet(ui.ctx());
         self.m_export_sheet(ui.ctx());
+        self.m_clip_sheet(ui.ctx());
     }
 
     /// Pattern chips: tap to switch the pattern that the Steps and Piano screens edit.
@@ -975,141 +977,191 @@ impl VinteriaApp {
         });
     }
 
-    /// Piano roll for phones: time runs down the screen (portrait), keys run across. Tap an empty cell to add a
-    /// 1/16 note, tap a note to remove it.
     fn m_piano(&mut self, ui: &mut Ui) {
         self.m_pattern_chips(ui);
-        let pi = self.project.current_pattern;
-        if pi >= self.project.patterns.len() {
-            ui.label(RichText::new("No pattern yet.").color(muted()));
+        self.m_piano_editor(ui, self.project.current_pattern);
+    }
+
+    /// Keep the toolbar and piano keys in place while the note grid scrolls horizontally.
+    fn m_piano_editor(&mut self, ui: &mut Ui, pattern: usize) {
+        let Some(pat) = self.project.patterns.get(pattern) else {
+            ui.label(RichText::new("No pattern selected.").color(muted()));
             return;
-        }
+        };
+        let steps = pat.length_steps.max(1) as usize;
+        let track = pat.notes.first().map(|note| note.track)
+            .or_else(|| self.project.arrangement.tracks.get(self.arr.sel_lane).and_then(|lane| lane.instrument))
+            .unwrap_or(Track::Synth);
         let oct_id = egui::Id::new("m_piano_oct");
-        let mut oct: u8 = ui.data(|d| d.get_temp(oct_id)).unwrap_or(4);
-        ui.horizontal(|ui| {
-            if p_button(ui, "Oct -", false, vec2(70.0, 34.0)).clicked() && oct > 1 {
-                oct -= 1;
-            }
-            ui.label(RichText::new(format!("C{oct} – B{}", oct + 1)).size(14.0).color(ink()));
-            if p_button(ui, "Oct +", false, vec2(70.0, 34.0)).clicked() && oct < 7 {
-                oct += 1;
-            }
-        });
-        ui.data_mut(|d| d.insert_temp(oct_id, oct));
-        ui.add_space(4.0);
         let chord_id = egui::Id::new("m_piano_chords");
-        let mut chords: bool = ui.data(|d| d.get_temp(chord_id)).unwrap_or(false);
+        let mut oct = ui.data(|d| d.get_temp::<u8>(oct_id)).unwrap_or(4);
+        let mut chords = ui.data(|d| d.get_temp::<bool>(chord_id)).unwrap_or(false);
         let names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-        ui.horizontal(|ui| {
-            let root = (self.project.key_root % 12) as usize;
-            if p_button(ui, &format!("Key {}", names[root]), false, vec2(80.0, 34.0)).clicked() {
-                self.project.key_root = ((root + 1) % 12) as u8;
-            }
-            let scale = self.project.key_scale.min(crate::theory::CHROMATIC);
-            let sname = crate::theory::SCALES[scale].0;
-            let short: String = sname.chars().take(11).collect();
-            if p_button(ui, &short, false, vec2(118.0, 34.0)).clicked() {
-                self.project.key_scale = (scale + 1) % crate::theory::SCALES.len();
-            }
-            if p_button(ui, "Chords", chords, vec2(84.0, 34.0)).clicked() {
-                chords = !chords;
-            }
-        });
-        ui.data_mut(|d| d.insert_temp(chord_id, chords));
-        ui.add_space(6.0);
-        let (key_root, key_scale) = (self.project.key_root, self.project.key_scale);
-        let base = (oct + 1) * 12;
-        let keys = 24usize;
-        let steps = self.project.patterns[pi].length_steps.max(16) as usize;
-        let track = self.project.patterns[pi].notes.first().map(|n| n.track).unwrap_or(crate::piano_roll::Track::Synth);
-        let w = ui.available_width();
-        let label_w = 30.0;
-        let kw = (w - label_w) / keys as f32;
-        let row_h = 26.0;
-        // keyboard across the top: white keys full height, black keys short and dark
-        let (hdr, _) = ui.allocate_exact_size(vec2(w, 34.0), Sense::hover());
-        let keys_r = Rect::from_min_max(pos2(hdr.left() + label_w, hdr.top()), hdr.right_bottom());
-        ui.painter().rect_filled(keys_r, 6.0, pick(0xFFE9EDF1, 0xFFFFFFFF));
-        for k in 0..keys {
-            let pitch = base + k as u8;
-            let x = keys_r.left() + k as f32 * kw;
-            if matches!(pitch % 12, 1 | 3 | 6 | 8 | 10) {
-                ui.painter().rect_filled(Rect::from_min_size(pos2(x + 1.0, keys_r.top()), vec2(kw - 2.0, 21.0)), 2.0, pick(0xFF14171B, 0xFF2A3038));
-            } else if matches!(pitch % 12, 0 | 5) && k > 0 {
-                ui.painter().line_segment([pos2(x, keys_r.top()), pos2(x, keys_r.bottom())], Stroke::new(1.0, Color32::from_gray(150)));
-            }
-            if pitch % 12 == 0 {
-                ui.painter().text(pos2(x + kw * 0.5, keys_r.bottom() - 6.0), Align2::CENTER_CENTER, format!("C{}", pitch / 12 - 1), FontId::proportional(8.5), Color32::from_gray(70));
-            }
-        }
-        ui.add_space(4.0);
-        let playing = self.playing() && !self.project.song_mode;
-        let play_step = (self.shared.position.load(Ordering::Relaxed) / TICKS_PER_STEP) as usize % steps;
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            let (rect, resp) = ui.allocate_exact_size(vec2(w, steps as f32 * row_h), Sense::click());
-            let p = ui.painter_at(rect);
-            panel(&p, rect, 12.0);
-            for s in 0..steps {
-                let y = rect.top() + s as f32 * row_h;
-                if s % 4 == 0 {
-                    p.text(pos2(rect.left() + 6.0, y + row_h * 0.5), Align2::LEFT_CENTER, format!("{}", s / 4 + 1), FontId::proportional(11.0), muted());
+        egui::ScrollArea::horizontal().id_salt("m_piano_tools").auto_shrink([false, true]).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                if p_button(ui, "Oct −", false, vec2(64.0, 34.0)).clicked() {
+                    oct = oct.saturating_sub(1).max(1);
                 }
-                let stroke = if s % 16 == 0 { Stroke::new(1.0, outline()) } else if s % 4 == 0 { Stroke::new(0.7, glass_edge()) } else { Stroke::new(0.4, glass_edge().linear_multiply(0.5)) };
-                p.line_segment([pos2(rect.left() + label_w, y), pos2(rect.right(), y)], stroke);
-                if playing && play_step == s {
-                    p.rect_filled(Rect::from_min_size(pos2(rect.left() + label_w, y), vec2(rect.width() - label_w, row_h)), 0.0, p_accent().linear_multiply(0.15));
+                if p_button(ui, "Oct +", false, vec2(64.0, 34.0)).clicked() {
+                    oct = (oct + 1).min(7);
                 }
-            }
-            for k in 0..keys {
-                let pitch = base + k as u8;
-                let x = rect.left() + label_w + k as f32 * kw;
-                let col_r = Rect::from_min_size(pos2(x, rect.top()), vec2(kw, rect.height()));
-                if crate::theory::is_root(key_root, pitch) {
-                    p.rect_filled(col_r, 0.0, p_accent().linear_multiply(0.10));
-                } else if !crate::theory::in_scale(key_root, key_scale, pitch) {
-                    p.rect_filled(col_r, 0.0, pick(0x30000000, 0x1E000000));
-                } else if matches!(pitch % 12, 1 | 3 | 6 | 8 | 10) {
-                    p.rect_filled(col_r, 0.0, pick(0x14000000, 0x0C000000));
-                }
-            }
-            let notes = &self.project.patterns[pi].notes;
-            for n in notes {
-                if n.pitch < base || n.pitch >= base + keys as u8 {
-                    continue;
-                }
-                let x = rect.left() + label_w + (n.pitch - base) as f32 * kw;
-                let y = rect.top() + n.start as f32 / TICKS_PER_STEP as f32 * row_h;
-                let h = (n.len as f32 / TICKS_PER_STEP as f32 * row_h).max(6.0);
-                let r = Rect::from_min_size(pos2(x + 1.0, y + 1.0), vec2(kw - 2.0, h - 2.0));
-                p.rect_filled(r, 4.0, lane_col(3));
-            }
-            if resp.clicked() {
-                if let Some(pos) = resp.interact_pointer_pos() {
-                    if pos.x > rect.left() + label_w {
-                        let k = ((pos.x - rect.left() - label_w) / kw) as usize;
-                        let s = ((pos.y - rect.top()) / row_h) as u32;
-                        let pitch = base + k.min(keys - 1) as u8;
-                        let tick = s * TICKS_PER_STEP;
-                        let notes = &mut self.project.patterns[pi].notes;
-                        if let Some(i) = notes.iter().position(|n| n.pitch == pitch && n.start <= tick && tick < n.start + n.len.max(1)) {
-                            notes.remove(i);
-                        } else {
-                            // chord mode stacks thirds of the key's scale on the tapped (scale) tone
-                            let pitches = if chords {
-                                let tone = crate::theory::snap_to_scale(key_root, key_scale, pitch);
-                                crate::theory::stack_chord(key_root, key_scale, tone, 3)
-                            } else {
-                                vec![pitch]
-                            };
-                            let len = if chords { TICKS_PER_STEP * 4 } else { TICKS_PER_STEP };
-                            for pitch in pitches {
-                                notes.push(crate::piano_roll::Note { start: tick, len, pitch, vel: 100, track, slide: false, chance: 100, pan: 0, mute: false });
-                            }
+                ui.label(format!("C{oct}–B{}", oct + 1));
+                ui.menu_button(format!("Key {}", names[(self.project.key_root % 12) as usize]), |ui| {
+                    for (root, name) in names.iter().enumerate() {
+                        if ui.selectable_value(&mut self.project.key_root, root as u8, *name).clicked() {
+                            ui.close_menu();
                         }
                     }
+                });
+                let scale = self.project.key_scale.min(crate::theory::CHROMATIC);
+                ui.menu_button(crate::theory::SCALES[scale].0, |ui| {
+                    for (index, (name, _)) in crate::theory::SCALES.iter().enumerate() {
+                        if ui.selectable_value(&mut self.project.key_scale, index, *name).clicked() {
+                            ui.close_menu();
+                        }
+                    }
+                });
+                if p_button(ui, "Chords", chords, vec2(78.0, 34.0)).clicked() {
+                    chords = !chords;
                 }
-            }
+            });
         });
+        ui.data_mut(|d| {
+            d.insert_temp(oct_id, oct);
+            d.insert_temp(chord_id, chords);
+        });
+        ui.add_space(5.0);
+
+        let base = (oct + 1) * 12;
+        let keys = 24usize;
+        let key_width = 62.0;
+        let row = 22.0;
+        let step = 27.0;
+        let ruler = 20.0;
+        let total_h = ruler + keys as f32 * row;
+        let (root, scale) = (self.project.key_root, self.project.key_scale);
+        let playing = self.playing() && !self.project.song_mode;
+        let position = self.shared.position.load(Ordering::Relaxed);
+        egui::ScrollArea::vertical().id_salt(("m_piano_pitch", pattern)).auto_shrink([false, false]).show(ui, |ui| {
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                let (keyboard, _) = ui.allocate_exact_size(vec2(key_width, total_h), Sense::hover());
+                let paint = ui.painter_at(keyboard);
+                paint.rect_filled(keyboard, 0.0, p_bg());
+                for key in 0..keys {
+                    let pitch = base + (keys - key - 1) as u8;
+                    let dark = matches!(pitch % 12, 1 | 3 | 6 | 8 | 10);
+                    let rect = Rect::from_min_size(keyboard.min + vec2(0.0, ruler + key as f32 * row), vec2(key_width, row - 1.0));
+                    paint.rect_filled(rect, 2.0, Color32::from_gray(230));
+                    if dark {
+                        paint.rect_filled(Rect::from_min_size(rect.min, vec2(key_width * 0.66, rect.height())), 2.0, Color32::from_gray(24));
+                    } else if pitch % 12 == 0 {
+                        paint.text(rect.right_center() - vec2(5.0, 0.0), Align2::RIGHT_CENTER,
+                            format!("C{}", pitch / 12 - 1), FontId::proportional(11.0), Color32::from_gray(65));
+                    }
+                }
+                let width = ui.available_width();
+                egui::ScrollArea::horizontal().id_salt(("m_piano_time", pattern)).max_width(width)
+                    .auto_shrink([false, true]).show(ui, |ui| {
+                        let (grid, response) = ui.allocate_exact_size(vec2(steps as f32 * step, total_h), Sense::click());
+                        let paint = ui.painter_at(grid);
+                        paint.rect_filled(grid, 0.0, p_bg());
+                        for key in 0..keys {
+                            let pitch = base + (keys - key - 1) as u8;
+                            let rect = Rect::from_min_size(grid.min + vec2(0.0, ruler + key as f32 * row), vec2(grid.width(), row));
+                            if crate::theory::is_root(root, pitch) {
+                                paint.rect_filled(rect, 0.0, p_accent().linear_multiply(0.12));
+                            } else if !crate::theory::in_scale(root, scale, pitch) {
+                                paint.rect_filled(rect, 0.0, Color32::from_black_alpha(42));
+                            }
+                            paint.line_segment([rect.left_bottom(), rect.right_bottom()], Stroke::new(0.5, glass_edge()));
+                        }
+                        for column in 0..steps {
+                            let x = grid.left() + column as f32 * step;
+                            paint.line_segment([pos2(x, grid.top()), pos2(x, grid.bottom())],
+                                Stroke::new(if column % 4 == 0 { 1.0 } else { 0.4 }, glass_edge()));
+                            if column % 4 == 0 {
+                                paint.text(pos2(x + 4.0, grid.top() + 3.0), Align2::LEFT_TOP, format!("{}", column / 4 + 1),
+                                    FontId::proportional(10.0), muted());
+                            }
+                        }
+                        let notes = &mut self.project.patterns[pattern].notes;
+                        if let Some(point) = response.interact_pointer_pos().filter(|_| response.clicked()) {
+                            let local = point - grid.min;
+                            if local.y >= ruler && local.y < total_h && local.x >= 0.0 && local.x < grid.width() {
+                                let pitch = base + (keys - 1 - ((local.y - ruler) / row) as usize) as u8;
+                                let tick = (local.x / step) as u32 * TICKS_PER_STEP;
+                                if let Some(index) = notes.iter().position(|note| note.pitch == pitch
+                                    && note.start <= tick && tick < note.start.saturating_add(note.len.max(1)))
+                                {
+                                    notes.remove(index);
+                                } else {
+                                    let pitches = if chords {
+                                        let tone = crate::theory::snap_to_scale(root, scale, pitch);
+                                        crate::theory::stack_chord(root, scale, tone, 3)
+                                    } else { vec![pitch] };
+                                    let len = (if chords { TICKS_PER_STEP * 4 } else { TICKS_PER_STEP })
+                                        .min(steps as u32 * TICKS_PER_STEP - tick);
+                                    for pitch in pitches {
+                                        notes.push(Note { start: tick, len, pitch, vel: 100, track, slide: false, chance: 100, pan: 0, mute: false });
+                                    }
+                                }
+                            }
+                        }
+                        for note in notes.iter().filter(|n| (base..base + keys as u8).contains(&n.pitch)) {
+                            let x = grid.left() + note.start as f32 / TICKS_PER_STEP as f32 * step;
+                            let y = grid.top() + ruler + (keys - 1 - (note.pitch - base) as usize) as f32 * row;
+                            let width = (note.len as f32 / TICKS_PER_STEP as f32 * step).max(3.0);
+                            paint.rect_filled(Rect::from_min_size(pos2(x + 1.0, y + 2.0), vec2(width - 2.0, row - 4.0)), 4.0, lane_col(3));
+                        }
+                        if playing {
+                            let x = grid.left() + (position as f32 / TICKS_PER_STEP as f32 % steps as f32) * step;
+                            paint.line_segment([pos2(x, grid.top()), pos2(x, grid.bottom())], Stroke::new(1.5, p_accent()));
+                        }
+                    });
+            });
+        });
+    }
+
+    fn m_clip_sheet(&mut self, ctx: &egui::Context) {
+        let id = egui::Id::new("m_clip_sheet_selection");
+        let Some(index) = ctx.data(|d| d.get_temp::<usize>(id)) else { return };
+        if self.arr.sel_clip != Some(index) {
+            ctx.data_mut(|d| d.remove::<usize>(id));
+            return;
+        }
+        let Some(clip) = self.project.arrangement.clips.get(index).copied() else {
+            ctx.data_mut(|d| d.remove::<usize>(id));
+            return;
+        };
+        let screen = ctx.screen_rect();
+        let width = (screen.width() - 22.0).max(1.0);
+        let height = (screen.height() * 0.76).max(96.0);
+        let mut done = false;
+        egui::Window::new("Clip editor").id(egui::Id::new("m_clip_sheet_window"))
+            .title_bar(false).resizable(false).movable(false)
+            .anchor(Align2::CENTER_BOTTOM, [0.0, -8.0])
+            .fixed_size(vec2(width, height))
+            .frame(Frame::none().fill(p_bg()).stroke(Stroke::new(1.0, outline())).rounding(16.0).inner_margin(10.0))
+            .show(ctx, |ui| {
+                pulse_visuals(ui);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(if clip.audio { "Audio clip" } else { "Piano Roll" }).size(17.0).strong().color(ink()));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        done = p_button(ui, "Done", true, vec2(68.0, 32.0)).clicked();
+                    });
+                });
+                if clip.audio {
+                    egui::ScrollArea::vertical().id_salt("m_audio_clip_controls").show(ui, |ui| {
+                        arrangement_ui::clip_options(ui, &mut self.project, &mut self.arr, &mut self.lib, index, clip.start);
+                    });
+                } else {
+                    self.m_piano_editor(ui, clip.pattern);
+                }
+            });
+        if done || ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            ctx.data_mut(|d| d.remove::<usize>(id));
+        }
     }
 
     /// Clip launcher in portrait: a row per scene, a column per track. Tap a clip to launch it on the next bar, tap a
@@ -1635,7 +1687,7 @@ impl VinteriaApp {
                     if pt.y > gy {
                         let lane = (((pt.y - gy) / lane_h) as usize).min(tracks - 1);
                         let clip = clip_rects.iter().find(|(_, _, r)| r.contains(pt)).map(|(i, _, _)| *i);
-                        pick = Some((lane, clip, resp.double_clicked()));
+                        pick = Some((lane, clip));
                     }
                 }
             }
@@ -1647,17 +1699,15 @@ impl VinteriaApp {
             self.m_drop_effect(kind, lane);
             self.arr.sel_clip = None;
         }
-        if let Some((lane, clip, edit)) = pick {
+        if let Some((lane, clip)) = pick {
             self.arr.sel_lane = lane;
             self.arr.sel_clip = clip;
             if let Some(i) = clip {
                 if let Some(c) = self.project.arrangement.clips.get(i) {
                     if !c.audio && c.pattern < self.project.patterns.len() {
                         self.project.current_pattern = c.pattern;
-                        if edit {
-                            self.m_sec = SEC_PIANO;
-                        }
                     }
+                    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("m_clip_sheet_selection"), i));
                 }
             }
         }

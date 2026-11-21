@@ -47,8 +47,8 @@ The Android app uses package ID `com.winteria.daw`. Keep the same signing
 key for every release so Android can install updates over the existing app.
 
 Android checks the public OTA feed on startup and every ten minutes while open.
-When an update is available, the download button opens the APK in the system
-browser. Android verifies the app signature and asks for installation approval.
+On Android 10 or later, the update button downloads and verifies the APK in
+Winteria, then opens Android’s installer for signature verification and approval.
 To publish a release, increase the Cargo patch version, sign the APK, and publish
 `releases/Winteria-<versionName>.apk` with `latest.json` on the `winteria` branch of `dozyFJ/pulse-updates`.
 The manifest contains `versionCode`, `versionName`, `url`, and `sha256`.

@@ -44,6 +44,9 @@ resources = "android/res"
 [[package.metadata.android.uses_permission]]
 name = "android.permission.INTERNET"
 
+[[package.metadata.android.uses_permission]]
+name = "android.permission.REQUEST_INSTALL_PACKAGES"
+
 [package.metadata.android.sdk]
 min_sdk_version = 26
 target_sdk_version = 34

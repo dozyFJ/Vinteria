@@ -9,6 +9,8 @@ use serde::Deserialize;
 const FEED: &str = "https://raw.githubusercontent.com/dozyFJ/pulse-updates/winteria/";
 const CHECK_INTERVAL: Duration = Duration::from_secs(600);
 const MAX_MANIFEST_BYTES: usize = 16 * 1024;
+const MAX_APK_BYTES: usize = 64 * 1024 * 1024;
+const APK_MIME: &str = "application/vnd.android.package-archive";
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,6 +38,9 @@ enum Status {
     Checking,
     Current,
     Available(Release),
+    Downloading,
+    Downloaded(String),
+    Ready(String, Option<String>),
     Failed(&'static str),
 }
 
@@ -73,7 +78,7 @@ impl Updater {
         std::thread::spawn(move || {
             let result = with_activity(&app, |env, activity| {
                 let installed = installed_version(env, activity)?;
-                let bytes = read_manifest(env)?;
+                let bytes = get_bytes(env, &format!("{FEED}latest.json"), MAX_MANIFEST_BYTES)?;
                 Ok((installed, bytes))
             });
             *status.lock().unwrap() = match result {
@@ -117,23 +122,77 @@ impl Updater {
         .map_err(|e| e.to_string())
     }
 
+    fn download(&mut self, release: Release, ctx: &egui::Context) {
+        *self.status.lock().unwrap() = Status::Downloading;
+        let status = Arc::clone(&self.status);
+        let app = self.app.clone();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let result = with_activity(&app, |env, activity| {
+                if env.get_static_field("android/os/Build$VERSION", "SDK_INT", "I")?.i()? < 29 {
+                    return Ok(Err("In-app installation requires Android 10 or newer."));
+                }
+                let bytes = get_bytes(env, &release.url, MAX_APK_BYTES)?;
+                if bytes.is_empty() {
+                    return Ok(Err("The APK download was empty or too large."));
+                }
+                let payload = env.byte_array_from_slice(&bytes)?;
+                let algorithm = env.new_string("SHA-256")?;
+                let digest = env.call_static_method("java/security/MessageDigest", "getInstance",
+                    "(Ljava/lang/String;)Ljava/security/MessageDigest;", &[JValue::Object(&algorithm)])?.l()?;
+                let hash = JByteArray::from(env.call_method(digest, "digest", "([B)[B", &[JValue::Object(&payload)])?.l()?);
+                let hex: String = env.convert_byte_array(hash)?.iter().map(|b| format!("{b:02x}")).collect();
+                if !hex.eq_ignore_ascii_case(&release.sha256) {
+                    return Ok(Err("APK checksum did not match. Tap to retry."));
+                }
+                Ok(Ok(save_apk(env, activity, &release.version_name, &payload)?))
+            });
+            *status.lock().unwrap() = match result {
+                Ok(Ok(uri)) => Status::Downloaded(uri),
+                Ok(Err(message)) => Status::Failed(message),
+                Err(_) => Status::Failed("Could not download or save the APK. Tap to retry."),
+            };
+            ctx.request_repaint();
+        });
+    }
+
+    fn install(&self, uri: String) {
+        let message = match open_installer(&self.app, &uri) {
+            Ok(true) => None,
+            Ok(false) => Some("Allow installs from Winteria in Android Settings, then tap Install update.".into()),
+            Err(_) => Some("Android could not open the installer. The APK is in Downloads.".into()),
+        };
+        *self.status.lock().unwrap() = Status::Ready(uri, message);
+    }
+
     pub(crate) fn show(&mut self, ui: &mut egui::Ui) {
         let status = self.status.lock().unwrap().clone();
         let elapsed = self.last_check.map_or(CHECK_INTERVAL, |last| last.elapsed());
-        if elapsed >= CHECK_INTERVAL && !matches!(status, Status::Checking) {
+        if elapsed >= CHECK_INTERVAL && matches!(status, Status::Idle | Status::Current | Status::Failed(_)) {
             self.check(ui.ctx());
             ui.ctx().request_repaint_after(CHECK_INTERVAL);
             return;
         }
-        ui.ctx().request_repaint_after(CHECK_INTERVAL.saturating_sub(elapsed));
+        if elapsed < CHECK_INTERVAL {
+            ui.ctx().request_repaint_after(CHECK_INTERVAL - elapsed);
+        }
         match status {
             Status::Available(release) => {
-                if ui.button(format!("Download {}", release.version_name))
-                    .on_hover_text("Opens the APK in your browser. Confirm installation in Android.")
-                    .clicked()
-                    && open_browser(&self.app, &release.url).is_err()
-                {
-                    *self.status.lock().unwrap() = Status::Failed("Could not open the browser. Tap to retry.");
+                if ui.button(format!("Download {}", release.version_name)).clicked() {
+                    self.download(release, ui.ctx());
+                }
+            }
+            Status::Downloading => {
+                ui.spinner();
+                ui.label("Downloading and verifying the APK…");
+            }
+            Status::Downloaded(uri) => self.install(uri),
+            Status::Ready(uri, message) => {
+                if let Some(message) = message {
+                    ui.label(message);
+                }
+                if ui.button("Install update").clicked() {
+                    self.install(uri);
                 }
             }
             Status::Idle | Status::Current | Status::Failed(_) => {
@@ -179,16 +238,16 @@ fn installed_version(env: &mut JNIEnv<'_>, activity: &JObject<'_>) -> jni::error
     env.get_field(info, "versionCode", "I")?.i()
 }
 
-fn read_manifest(env: &mut JNIEnv<'_>) -> jni::errors::Result<Vec<u8>> {
-    let address = env.new_string(format!("{FEED}latest.json"))?;
+fn get_bytes(env: &mut JNIEnv<'_>, url: &str, limit: usize) -> jni::errors::Result<Vec<u8>> {
+    let address = env.new_string(url)?;
     let url = env.new_object("java/net/URL", "(Ljava/lang/String;)V", &[JValue::Object(&address)])?;
     let connection = env.call_method(url, "openConnection", "()Ljava/net/URLConnection;", &[])?.l()?;
     for method in ["setConnectTimeout", "setReadTimeout"] {
-        env.call_method(&connection, method, "(I)V", &[JValue::Int(8000)])?;
+        env.call_method(&connection, method, "(I)V", &[JValue::Int(10000)])?;
     }
     env.call_method(&connection, "setUseCaches", "(Z)V", &[JValue::Bool(0)])?;
     let input = env.call_method(&connection, "getInputStream", "()Ljava/io/InputStream;", &[])?.l()?;
-    let result = read_stream(env, &input);
+    let result = read_stream(env, &input, limit);
     if env.exception_check()? {
         env.exception_clear()?;
     }
@@ -196,32 +255,94 @@ fn read_manifest(env: &mut JNIEnv<'_>) -> jni::errors::Result<Vec<u8>> {
     result
 }
 
-fn read_stream(env: &mut JNIEnv<'_>, input: &JObject<'_>) -> jni::errors::Result<Vec<u8>> {
-    let buffer: JByteArray<'_> = env.new_byte_array(2048)?;
+fn read_stream(env: &mut JNIEnv<'_>, input: &JObject<'_>, limit: usize) -> jni::errors::Result<Vec<u8>> {
+    let buffer = env.new_byte_array(32 * 1024)?;
     let mut bytes = Vec::new();
-    while bytes.len() <= MAX_MANIFEST_BYTES {
+    loop {
         let count = env.call_method(input, "read", "([B)I", &[JValue::Object(&buffer)])?.i()?;
         if count <= 0 {
             break;
         }
+        if bytes.len() + count as usize > limit {
+            bytes.clear();
+            break;
+        }
         bytes.extend_from_slice(&env.convert_byte_array(&buffer)?[..count as usize]);
-    }
-    if bytes.len() > MAX_MANIFEST_BYTES {
-        bytes.clear();
     }
     Ok(bytes)
 }
 
-fn open_browser(app: &AndroidApp, url: &str) -> jni::errors::Result<()> {
+fn save_apk(
+    env: &mut JNIEnv<'_>,
+    activity: &JObject<'_>,
+    version: &str,
+    apk: &JByteArray<'_>,
+) -> jni::errors::Result<String> {
+    let resolver = env.call_method(activity, "getContentResolver", "()Landroid/content/ContentResolver;", &[])?.l()?;
+    let downloads = env.get_static_field("android/provider/MediaStore$Downloads", "EXTERNAL_CONTENT_URI", "Landroid/net/Uri;")?.l()?;
+    let values = env.new_object("android/content/ContentValues", "()V", &[])?;
+    for (key, value) in [("_display_name", format!("Winteria-{version}.apk")), ("mime_type", APK_MIME.into())] {
+        let key = env.new_string(key)?;
+        let value = env.new_string(value)?;
+        env.call_method(&values, "put", "(Ljava/lang/String;Ljava/lang/String;)V", &[JValue::Object(&key), JValue::Object(&value)])?;
+    }
+    let pending_key = env.new_string("is_pending")?;
+    let pending = |env: &mut JNIEnv<'_>, value| {
+        let boxed = env.new_object("java/lang/Integer", "(I)V", &[JValue::Int(value)])?;
+        env.call_method(&values, "put", "(Ljava/lang/String;Ljava/lang/Integer;)V", &[JValue::Object(&pending_key), JValue::Object(&boxed)])?;
+        Ok::<(), jni::errors::Error>(())
+    };
+    pending(env, 1)?;
+    let uri = env.call_method(&resolver, "insert", "(Landroid/net/Uri;Landroid/content/ContentValues;)Landroid/net/Uri;",
+        &[JValue::Object(&downloads), JValue::Object(&values)])?.l()?;
+    let result = (|| {
+        let output = env.call_method(&resolver, "openOutputStream", "(Landroid/net/Uri;)Ljava/io/OutputStream;", &[JValue::Object(&uri)])?.l()?;
+        let write = env.call_method(&output, "write", "([B)V", &[JValue::Object(apk)]);
+        if env.exception_check()? {
+            env.exception_clear()?;
+        }
+        let close = env.call_method(&output, "close", "()V", &[]);
+        write?;
+        close?;
+        env.call_method(&values, "clear", "()V", &[])?;
+        pending(env, 0)?;
+        env.call_method(&resolver, "update", "(Landroid/net/Uri;Landroid/content/ContentValues;Ljava/lang/String;[Ljava/lang/String;)I",
+            &[JValue::Object(&uri), JValue::Object(&values), JValue::Object(&JObject::null()), JValue::Object(&JObject::null())])?;
+        let uri = jni::objects::JString::from(env.call_method(&uri, "toString", "()Ljava/lang/String;", &[])?.l()?);
+        let address: String = env.get_string(&uri)?.into();
+        Ok(address)
+    })();
+    if result.is_err() {
+        if env.exception_check()? {
+            env.exception_clear()?;
+        }
+        let _ = env.call_method(resolver, "delete", "(Landroid/net/Uri;Ljava/lang/String;[Ljava/lang/String;)I",
+            &[JValue::Object(&uri), JValue::Object(&JObject::null()), JValue::Object(&JObject::null())]);
+    }
+    result
+}
+
+fn open_installer(app: &AndroidApp, uri: &str) -> jni::errors::Result<bool> {
     with_activity(app, |env, activity| {
-        let uri = env.new_string(url)?;
-        let uri = env.call_static_method("android/net/Uri", "parse", "(Ljava/lang/String;)Landroid/net/Uri;", &[JValue::Object(&uri)])?.l()?;
-        let action = env.new_string("android.intent.action.VIEW")?;
-        let intent = env.new_object(
-            "android/content/Intent", "(Ljava/lang/String;Landroid/net/Uri;)V",
-            &[JValue::Object(&action), JValue::Object(&uri)],
-        )?;
+        let manager = env.call_method(activity, "getPackageManager", "()Landroid/content/pm/PackageManager;", &[])?.l()?;
+        let allowed = env.call_method(manager, "canRequestPackageInstalls", "()Z", &[])?.z()?;
+        let package = if allowed { None } else {
+            let name = jni::objects::JString::from(env.call_method(activity, "getPackageName", "()Ljava/lang/String;", &[])?.l()?);
+            let name: String = env.get_string(&name)?.into();
+            Some(format!("package:{name}"))
+        };
+        let target = env.new_string(package.as_deref().unwrap_or(uri))?;
+        let target = env.call_static_method("android/net/Uri", "parse", "(Ljava/lang/String;)Landroid/net/Uri;", &[JValue::Object(&target)])?.l()?;
+        let action = env.new_string(if allowed { "android.intent.action.VIEW" } else { "android.settings.MANAGE_UNKNOWN_APP_SOURCES" })?;
+        let intent = env.new_object("android/content/Intent", "(Ljava/lang/String;Landroid/net/Uri;)V",
+            &[JValue::Object(&action), JValue::Object(&target)])?;
+        if allowed {
+            let mime = env.new_string(APK_MIME)?;
+            env.call_method(&intent, "setDataAndType", "(Landroid/net/Uri;Ljava/lang/String;)Landroid/content/Intent;",
+                &[JValue::Object(&target), JValue::Object(&mime)])?;
+            env.call_method(&intent, "addFlags", "(I)Landroid/content/Intent;", &[JValue::Int(1)])?;
+        }
         env.call_method(activity, "startActivity", "(Landroid/content/Intent;)V", &[JValue::Object(&intent)])?;
-        Ok(())
+        Ok(allowed)
     })
 }
