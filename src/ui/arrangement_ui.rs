@@ -1059,16 +1059,35 @@ pub fn new_midi_clip(project: &mut Project, st: &mut ArrState) {
         project.arrangement.add_track(TrackKind::Midi);
         project.arrangement.tracks.len() - 1
     };
-    let n = project.patterns.iter().filter(|p| p.clip_only).count() + 1;
-    let mut pat = crate::sequencer::Pattern::new(&format!("MIDI clip {n}"), 32);
-    pat.clip_only = true;
-    project.patterns.push(pat);
-    let pi = project.patterns.len() - 1;
     let start = project.arrangement.clips.iter().filter(|c| c.lane == lane).map(|c| c.end_tick()).max().unwrap_or(0);
-    project.arrangement.clips.push(Clip::new(pi, lane, start, 2 * TICKS_PER_BAR, false));
+    new_midi_clip_at(project, st, lane, start, 2 * TICKS_PER_BAR);
+}
+
+pub(super) fn new_midi_clip_at(project: &mut Project, st: &mut ArrState, lane: usize, start: u32, duration: u32) -> bool {
+    if !project.arrangement.tracks.get(lane).is_some_and(|track| track.kind == TrackKind::Midi) {
+        return false;
+    }
+    let next = project.arrangement.clips.iter().filter(|c| c.lane == lane && c.start >= start)
+        .map(|c| c.start - start).min().unwrap_or(duration);
+    let len = duration.min(next);
+    if len == 0 {
+        return false;
+    }
+    let pi = project.patterns.len();
+    let clip = Clip::new(pi, lane, start, len, false);
+    if !project.arrangement.can_place(&clip, None) {
+        return false;
+    }
+    let n = project.patterns.iter().filter(|p| p.clip_only).count() + 1;
+    let steps = len.div_ceil(crate::sequencer::TICKS_PER_STEP);
+    let mut pattern = crate::sequencer::Pattern::new(&format!("MIDI clip {n}"), steps);
+    pattern.clip_only = true;
+    project.patterns.push(pattern);
+    project.arrangement.clips.push(clip);
     st.sel_clip = Some(project.arrangement.clips.len() - 1);
     st.sel_lane = lane;
     project.current_pattern = pi;
+    true
 }
 
 /// Copy a clip right after itself (a MIDI clip with its own notes, a pattern clip keeps pointing at its pattern).
