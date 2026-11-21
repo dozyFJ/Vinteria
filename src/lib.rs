@@ -360,6 +360,7 @@ fn android_main(app: android_activity::AndroidApp) {
         let _ = std::fs::create_dir_all(&dir);
         let _ = std::env::set_current_dir(&dir);
     }
+    android_panic_hook();
     use winit::platform::android::EventLoopBuilderExtAndroid;
     let mut options = eframe::NativeOptions::default();
     let activity = app.clone();
@@ -370,6 +371,26 @@ fn android_main(app: android_activity::AndroidApp) {
         let mut app = ui::VinteriaApp::new(cc);
         app.android_updater = Some(android_update::Updater::new(activity));
         Ok(Box::new(app))
+    }));
+}
+
+/// A panic on the phone closes the app without a trace: write it (with a backtrace) to `crash.txt` in the app's storage and to
+/// logcat, so the next start can show what happened.
+#[cfg(target_os = "android")]
+fn android_panic_hook() {
+    extern "C" {
+        fn __android_log_write(prio: i32, tag: *const std::os::raw::c_char, text: *const std::os::raw::c_char) -> i32;
+    }
+    std::panic::set_hook(Box::new(|info| {
+        let t = std::thread::current();
+        let bt = std::backtrace::Backtrace::force_capture();
+        let report = format!("Winteria {} crashed\n[thread {}] {}\n\n{}", env!("CARGO_PKG_VERSION"), t.name().unwrap_or("unnamed"), info, bt);
+        let _ = std::fs::write(ui::CRASH_FILE, &report);
+        if let (Ok(tag), Ok(text)) = (std::ffi::CString::new("Winteria"), std::ffi::CString::new(report.replace('\0', " "))) {
+            unsafe {
+                __android_log_write(6, tag.as_ptr(), text.as_ptr());
+            }
+        }
     }));
 }
 

@@ -7,6 +7,8 @@ use crate::sequencer::{NUM_DRUMS, TICKS_PER_STEP};
 use egui::{Align2, FontId, Frame, Margin, Painter, Pos2, Rect, Response, RichText, Sense, Shape, Ui};
 
 const TOUCH: f32 = 44.0;
+/// written by the Android panic hook, shown on the next start
+pub const CRASH_FILE: &str = "crash.txt";
 
 // ───────────────────── Pulse palette ─────────────────────
 
@@ -120,8 +122,11 @@ fn doodle_background(ctx: &egui::Context) {
     let col = doodle();
     let s = Stroke::new(1.4, col);
     let cell = 62.0;
-    let cols = (rect.width() / cell).ceil() as i32 + 1;
-    let rows = (rect.height() / cell).ceil() as i32 + 1;
+    if !rect.is_finite() || rect.width() <= 0.0 {
+        return;
+    }
+    let cols = ((rect.width() / cell).ceil() as i32 + 1).min(60);
+    let rows = ((rect.height() / cell).ceil() as i32 + 1).min(80);
     for j in 0..rows {
         for i in 0..cols {
             let h = (i as u32).wrapping_mul(73856093) ^ (j as u32).wrapping_mul(19349663);
@@ -354,6 +359,54 @@ impl VinteriaApp {
     }
 
     pub(super) fn mobile_ui(&mut self, ctx: &egui::Context) {
+        let crash_id = egui::Id::new("m_crash_report");
+        if !ctx.data(|d| d.get_temp::<bool>(egui::Id::new("m_crash_checked")).unwrap_or(false)) {
+            ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_crash_checked"), true));
+            if let Ok(text) = std::fs::read_to_string(CRASH_FILE) {
+                ctx.data_mut(|d| d.insert_temp(crash_id, text));
+            }
+        }
+        if let Some(report) = ctx.data(|d| d.get_temp::<String>(crash_id)) {
+            doodle_background(ctx);
+            self.m_crash_screen(ctx, &report, crash_id);
+            return;
+        }
+        // a bug in the phone screens shows its message instead of closing the app
+        let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.mobile_screens(ctx)));
+        if let Err(e) = run {
+            let msg = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_else(|| "unknown panic".into());
+            let report = std::fs::read_to_string(CRASH_FILE).unwrap_or(msg);
+            ctx.data_mut(|d| d.insert_temp(crash_id, report));
+            ctx.request_repaint();
+        }
+    }
+
+    fn m_crash_screen(&mut self, ctx: &egui::Context, report: &str, crash_id: egui::Id) {
+        egui::CentralPanel::default().frame(Frame::none().inner_margin(Margin::symmetric(14.0, 18.0))).show(ctx, |ui| {
+            pulse_visuals(ui);
+            ui.label(RichText::new("Winteria hit an error").size(22.0).strong().color(ink()));
+            ui.label(RichText::new("Send a screenshot of this screen to the developer.").size(13.0).color(muted()));
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if p_button(ui, "Continue", true, vec2(130.0, 40.0)).clicked() {
+                    let _ = std::fs::remove_file(CRASH_FILE);
+                    ctx.data_mut(|d| d.remove::<String>(crash_id));
+                }
+                if p_button(ui, "Copy", false, vec2(100.0, 40.0)).clicked() {
+                    ui.ctx().copy_text(report.to_string());
+                }
+            });
+            ui.add_space(10.0);
+            let (rect, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
+            panel(ui.painter(), rect, 14.0);
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(10.0)));
+            egui::ScrollArea::both().auto_shrink([false, false]).show(&mut child, |ui| {
+                ui.label(RichText::new(report).monospace().size(10.5).color(ink()));
+            });
+        });
+    }
+
+    fn mobile_screens(&mut self, ctx: &egui::Context) {
         doodle_background(ctx);
         self.mobile_dock(ctx);
         let sections: &[(&str, Icon)] = match self.m_tab {
@@ -1040,6 +1093,12 @@ impl VinteriaApp {
             ui.painter().text(rect.left_top() + vec2(16.0, 14.0), Align2::LEFT_TOP, "Audio output", FontId::proportional(15.0), ink());
             ui.painter().text(rect.left_top() + vec2(16.0, 36.0), Align2::LEFT_TOP, status, FontId::proportional(12.0), muted());
             ui.add_space(10.0);
+            #[cfg(target_os = "android")]
+            if let Some(updater) = &mut self.android_updater {
+                heading(ui, "Updates");
+                ui.horizontal_wrapped(|ui| updater.show(ui));
+                ui.add_space(10.0);
+            }
             heading(ui, "Sync with PC");
             ui.label(RichText::new(format!("Projects folder: {}", hub_dir().display())).size(12.0).color(ink()));
             ui.label(RichText::new("On the PC choose the same cloud folder in the Hub: a project saved on one device shows up on the other.").size(11.0).color(muted()));

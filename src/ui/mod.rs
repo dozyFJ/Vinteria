@@ -17,6 +17,7 @@ pub mod theme;
 pub mod track_ui;
 pub mod widgets;
 mod mobile;
+pub use mobile::CRASH_FILE;
 mod navigation;
 mod account_ui;
 mod transport_ui;
