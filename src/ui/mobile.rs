@@ -386,7 +386,7 @@ fn pulse_visuals(ui: &mut Ui) {
 }
 
 const PROJECT_SECTIONS: [(&str, Icon); 4] = [("Projects", Icon::Folder), ("Recent", Icon::Clock), ("Templates", Icon::Layout), ("Sounds", Icon::Wave)];
-const STUDIO_SECTIONS: [(&str, Icon); 6] = [("Playlist", Icon::Timeline), ("Steps", Icon::Steps), ("Piano", Icon::Keys), ("Session", Icon::Session), ("Mixer", Icon::Mixer), ("Tracks", Icon::Tracks)];
+const STUDIO_SECTIONS: [&str; 6] = ["Playlist", "Steps", "Piano", "Session", "Mixer", "Tracks"];
 const SEC_PLAYLIST: usize = 0;
 const SEC_PIANO: usize = 2;
 
@@ -514,13 +514,8 @@ impl VinteriaApp {
         step("header");
         self.mobile_header(ctx);
         step("rail");
-        let sections: &[(&str, Icon)] = match self.m_tab {
-            0 => &PROJECT_SECTIONS,
-            1 => &STUDIO_SECTIONS,
-            _ => &[],
-        };
-        if !sections.is_empty() {
-            self.mobile_rail(ctx, sections);
+        if self.m_tab == 0 {
+            self.mobile_rail(ctx, &PROJECT_SECTIONS);
         }
         if self.m_tab == 1 && self.m_sec == SEC_PLAYLIST {
             self.m_browser_sidebar(ctx);
@@ -578,104 +573,142 @@ impl VinteriaApp {
     fn mobile_header(&mut self, ctx: &egui::Context) {
         let resp = egui::TopBottomPanel::top("m_header").show_separator_line(false).frame(Frame::none().fill(bar_fill()).inner_margin(Margin::symmetric(14.0, 10.0))).show(ctx, |ui| {
             pulse_visuals(ui);
+            if self.m_tab == 1 {
+                self.m_studio_header(ui);
+                return;
+            }
+            let t = self.m_tab;
             ui.horizontal(|ui| {
                 ui.set_min_height(TOUCH);
-                match self.m_tab {
-                    1 => {
-                        if p_button(ui, "‹", false, vec2(34.0, 38.0)).on_hover_text("Back to Projects").clicked() {
-                            self.m_tab = 0;
-                            self.m_sec = 0;
-                            self.hub_cache = None;
+                if t != 0 && p_button(ui, "‹", false, vec2(34.0, 38.0)).on_hover_text("Back to Projects").clicked() {
+                    self.m_tab = 0;
+                    self.m_sec = 0;
+                }
+                let (title, sub) = match t {
+                    0 => ("Winteria", format!("v{}  ·  your projects", env!("CARGO_PKG_VERSION"))),
+                    2 => ("Settings", "theme, sync and about".to_string()),
+                    _ => ("Profile", "Winteria Studio".to_string()),
+                };
+                ui.vertical(|ui| {
+                    ui.label(RichText::new(title).size(22.0).strong().color(ink()));
+                    ui.label(RichText::new(sub).size(12.0).color(muted()));
+                });
+                if t == 0 {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let (r, resp) = ui.allocate_exact_size(vec2(TOUCH, TOUCH), Sense::click());
+                        pill(ui.painter(), r, p_accent());
+                        icon(ui.painter(), Icon::Plus, r.center(), on_accent());
+                        if resp.clicked() {
+                            self.new_project();
+                            self.m_open_studio(0);
                         }
-                        let name: String = self.project.name.chars().take(18).collect();
-                        let playing = self.playing();
-                        let (status, color) = match (playing, self.record) {
-                            (true, true) => ("● Playing · Rec armed", RED),
-                            (true, false) => ("● Playing", ink()),
-                            (false, true) => ("● Rec armed", RED),
-                            (false, false) => ("○ Idle", muted()),
-                        };
-                        ui.vertical(|ui| {
-                            ui.label(RichText::new(name).size(18.0).strong().color(ink()));
-                            ui.label(RichText::new(status).size(12.0).color(color));
-                        });
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let (r, resp) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::click());
-                            glass(ui.painter(), r, 20.0);
-                            icon(ui.painter(), Icon::Share, r.center(), ink());
-                            if resp.on_hover_text("Export or share").clicked() {
-                                self.m_export.open = !self.m_export.open;
-                                self.m_export.song = self.m_sec == SEC_PLAYLIST;
-                            }
-                            ui.add_sized([78.0, 36.0], egui::DragValue::new(&mut self.project.bpm)
-                                .range(40.0..=300.0).speed(0.5).suffix(" BPM").max_decimals(1));
-                        });
-                    }
-                    t => {
-                        if t != 0 && p_button(ui, "‹", false, vec2(34.0, 38.0)).on_hover_text("Back to Projects").clicked() {
-                            self.m_tab = 0;
-                            self.m_sec = 0;
-                        }
-                        let (title, sub) = match t {
-                            0 => ("Winteria", format!("v{}  ·  your projects", env!("CARGO_PKG_VERSION"))),
-                            2 => ("Settings", "theme, sync and about".to_string()),
-                            _ => ("Profile", "Winteria Studio".to_string()),
-                        };
-                        ui.vertical(|ui| {
-                            ui.label(RichText::new(title).size(22.0).strong().color(ink()));
-                            ui.label(RichText::new(sub).size(12.0).color(muted()));
-                        });
-                        if t == 0 {
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                let (r, resp) = ui.allocate_exact_size(vec2(TOUCH, TOUCH), Sense::click());
-                                pill(ui.painter(), r, p_accent());
-                                icon(ui.painter(), Icon::Plus, r.center(), on_accent());
-                                if resp.clicked() {
-                                    self.new_project();
-                                    self.m_open_studio(0);
+                        ui.menu_button("⋯", |ui| {
+                            for (tab, label) in [(3, "Profile"), (2, "Settings")] {
+                                if ui.button(label).clicked() {
+                                    self.m_tab = tab;
+                                    self.m_sec = 0;
+                                    ui.close_menu();
                                 }
-                                ui.menu_button("⋯", |ui| {
-                                    for (tab, label) in [(3, "Profile"), (2, "Settings")] {
-                                        if ui.button(label).clicked() {
-                                            self.m_tab = tab;
-                                            self.m_sec = 0;
-                                            ui.close_menu();
-                                        }
-                                    }
-                                }).response.on_hover_text("Profile and settings");
-                            });
-                        }
-                    }
+                            }
+                        }).response.on_hover_text("Profile and settings");
+                    });
                 }
             });
-            if self.m_tab == 1 {
-                ui.add_space(4.0);
-                let playing = self.playing();
-                ui.columns(4, |cols| {
-                    let w = cols[0].available_width();
-                    if p_button(&mut cols[0], "|◀", false, vec2(w, 38.0)).on_hover_text("Return to start").clicked() {
-                        self.return_to_start(ctx, playing);
-                    }
-                    let w = cols[1].available_width();
-                    if p_button(&mut cols[1], if playing { "Pause" } else { "Play" }, true, vec2(w, 38.0)).clicked() {
-                        self.m_toggle_play();
-                    }
-                    let w = cols[2].available_width();
-                    if p_button(&mut cols[2], "Stop", false, vec2(w, 38.0)).clicked() {
-                        self.return_to_start(ctx, false);
-                    }
-                    let w = cols[3].available_width();
-                    if p_button(&mut cols[3], "Rec", self.record, vec2(w, 38.0)).clicked() {
-                        self.record = !self.record;
-                        if self.record && !playing {
-                            self.m_toggle_play();
-                        }
-                    }
-                });
-            }
         });
         let r = resp.response.rect;
         ctx.layer_painter(egui::LayerId::background()).line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(1.0, outline()));
+    }
+
+    fn m_studio_header(&mut self, ui: &mut Ui) {
+        let offset_id = egui::Id::new("m_transport_scroll_offset");
+        let request_id = egui::Id::new("m_transport_scroll_request");
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            if p_button(ui, "Exit", false, vec2(54.0, 38.0)).on_hover_text("Leave project").clicked() {
+                self.return_to_start(ui.ctx(), false);
+                self.m_tab = 0;
+                self.m_sec = 0;
+                self.hub_cache = None;
+                return;
+            }
+
+            let editor = STUDIO_SECTIONS.get(self.m_sec).copied().unwrap_or("Playlist");
+            ui.menu_button(format!("{editor} ▾"), |ui| {
+                for (index, title) in STUDIO_SECTIONS.iter().enumerate() {
+                    if ui.selectable_label(self.m_sec == index, *title).clicked() {
+                        self.m_sec = index;
+                        ui.close_menu();
+                    }
+                }
+            });
+            let left = p_button(ui, "‹", false, vec2(28.0, 38.0)).on_hover_text("Scroll left").clicked();
+            let viewport = (ui.available_width() - 34.0).max(1.0);
+            let old_offset = ui.data(|d| d.get_temp::<f32>(offset_id)).unwrap_or(0.0);
+            let request = ui.data_mut(|d| d.remove_temp::<f32>(request_id));
+            let mut scroll = egui::ScrollArea::horizontal().id_salt("m_studio_transport")
+                .max_width(viewport).auto_shrink([false, true])
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden);
+            if left {
+                scroll = scroll.horizontal_scroll_offset((old_offset - viewport * 0.7).max(0.0));
+            } else if let Some(offset) = request {
+                scroll = scroll.horizontal_scroll_offset(offset);
+            }
+            let output = scroll.show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    const CONTROL_WIDTH: f32 = 518.0;
+                    let padding = ((viewport - CONTROL_WIDTH) * 0.5 - 6.0).max(0.0);
+                    if padding > 0.0 {
+                        ui.add_space(padding);
+                    }
+                    self.m_transport_controls(ui);
+                });
+            });
+            ui.data_mut(|d| d.insert_temp(offset_id, output.state.offset.x));
+            if p_button(ui, "›", false, vec2(28.0, 38.0)).on_hover_text("Scroll right").clicked() {
+                let max = (output.content_size.x - output.inner_rect.width()).max(0.0);
+                ui.data_mut(|d| d.insert_temp(request_id, (output.state.offset.x + viewport * 0.7).min(max)));
+                ui.ctx().request_repaint();
+            }
+        });
+    }
+
+    fn m_transport_controls(&mut self, ui: &mut Ui) {
+        let playing = self.playing();
+        let (status, color) = match (playing, self.record) {
+            (true, true) => ("● Playing · Rec armed", RED),
+            (true, false) => ("● Playing", ink()),
+            (false, true) => ("● Rec armed", RED),
+            (false, false) => ("○ Idle", muted()),
+        };
+        ui.allocate_ui_with_layout(vec2(130.0, 38.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.set_width(130.0);
+            ui.add(egui::Label::new(RichText::new(&self.project.name).size(16.0).strong().color(ink())).truncate());
+            ui.add(egui::Label::new(RichText::new(status).size(11.0).color(color)).truncate());
+        });
+        if p_button(ui, "|◀", false, vec2(48.0, 38.0)).on_hover_text("Return to start").clicked() {
+            self.return_to_start(ui.ctx(), playing);
+        }
+        if p_button(ui, if playing { "Pause" } else { "Play" }, true, vec2(68.0, 38.0)).clicked() {
+            self.m_toggle_play();
+        }
+        if p_button(ui, "Stop", false, vec2(57.0, 38.0)).clicked() {
+            self.return_to_start(ui.ctx(), false);
+        }
+        if p_button(ui, "Rec", self.record, vec2(54.0, 38.0)).clicked() {
+            self.record = !self.record;
+            if self.record && !playing {
+                self.m_toggle_play();
+            }
+        }
+        ui.add_sized([83.0, 38.0], egui::DragValue::new(&mut self.project.bpm)
+            .range(40.0..=300.0).speed(0.5).suffix(" BPM").max_decimals(1));
+        let (rect, response) = ui.allocate_exact_size(vec2(42.0, 38.0), Sense::click());
+        glass(ui.painter(), rect, 19.0);
+        icon(ui.painter(), Icon::Share, rect.center(), ink());
+        if response.on_hover_text("Export or share").clicked() {
+            self.m_export.open = !self.m_export.open;
+            self.m_export.song = self.m_sec == SEC_PLAYLIST;
+        }
     }
 
     /// Section navigation immediately below the header.
