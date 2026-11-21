@@ -2,7 +2,7 @@ name: Android APK
 
 on:
   push:
-    branches: [winteria-mobile-pulse]
+    branches: [winteria-mobile-pulse, winteria]
   workflow_dispatch:
 
 permissions:

@@ -1230,6 +1230,11 @@ impl VinteriaApp {
         let mut record_step = ui.data(|d| d.get_temp::<usize>(record_id));
         let erase_id = egui::Id::new(("m_piano_erase", pi, drawer.is_some()));
         let mut erasing = ui.data(|d| d.get_temp::<bool>(erase_id)).unwrap_or(false);
+        // horizontal zoom (width of one 1/16 step) and the optional keyboard along the bottom
+        let zoom_id = egui::Id::new("m_piano_step_w");
+        let mut step_w = ui.data(|d| d.get_temp::<f32>(zoom_id)).unwrap_or(32.0);
+        let keys_id = egui::Id::new("m_piano_bottom_keys");
+        let mut bottom_keys = ui.data(|d| d.get_temp::<bool>(keys_id)).unwrap_or(false);
         let valid_pattern = pi < self.project.patterns.len();
         let screen = ui.ctx().screen_rect();
         let portrait = screen.width() < screen.height();
@@ -1285,6 +1290,15 @@ impl VinteriaApp {
                     if p_button(ui, "Oct +", false, vec2(62.0, 44.0)).clicked() {
                         oct = (oct + 1).min(9);
                     }
+                    if p_button(ui, "Zoom −", false, vec2(70.0, 44.0)).clicked() {
+                        step_w = (step_w / 1.25).max(14.0);
+                    }
+                    if p_button(ui, "Zoom +", false, vec2(70.0, 44.0)).clicked() {
+                        step_w = (step_w * 1.25).min(72.0);
+                    }
+                    if p_button(ui, "Keys", bottom_keys, vec2(58.0, 44.0)).clicked() {
+                        bottom_keys = !bottom_keys;
+                    }
                     ui.menu_button(format!("Key {}", names[(self.project.key_root % 12) as usize]), |ui| {
                         for (index, name) in names.iter().enumerate() {
                             if ui.selectable_value(&mut self.project.key_root, index as u8, *name).clicked() {
@@ -1317,16 +1331,18 @@ impl VinteriaApp {
             d.insert_temp(oct_id, oct);
             d.insert_temp(chord_id, chords);
             d.insert_temp(loop_id, looping);
+            d.insert_temp(zoom_id, step_w);
+            d.insert_temp(keys_id, bottom_keys);
         });
         ui.add_space(3.0);
-        let hint = if erasing { "Tap a note to erase it" } else { "Drag note to move · Drag edge to resize" };
+        let hint = if erasing { "Erase: tap a note to delete it" } else { "Tap: add · Drag: move · Edge: length · Keys on the left play" };
         ui.add(egui::Label::new(RichText::new(hint).size(11.0).color(if erasing { RED } else { muted() })).truncate());
         let (key_root, key_scale) = (self.project.key_root, self.project.key_scale);
         let base = oct * 12;
         let high_pitch = 127_u8;
         let rows = usize::from(high_pitch) + 1;
-        let (step_w, row_h) = (32.0, 22.0);
-        let kb_h = (ui.available_height() * 0.20).clamp(34.0, 58.0);
+        let row_h = 24.0;
+        let kb_h = if bottom_keys { (ui.available_height() * 0.20).clamp(34.0, 58.0) } else { 0.0 };
         let steps = self.project.patterns[pi].length_steps.max(1) as usize;
         let track = self.project.arrangement.tracks.get(self.arr.sel_lane).and_then(|track| track.instrument)
             .or_else(|| self.project.patterns[pi].notes.first().map(|note| note.track)).unwrap_or(Track::Synth);
@@ -1336,8 +1352,8 @@ impl VinteriaApp {
         let pos = self.shared.position.load(Ordering::Relaxed);
         let play_step = (pos / TICKS_PER_STEP) as usize % steps;
         let cursor = if playing { Some(play_step) } else { record_step.map(|step| step % steps) };
-        let (ruler_width, timeline_height) = (38.0, 23.0);
-        let view_h = (ui.available_height() - kb_h - 12.0).max(timeline_height + 1.0);
+        let (ruler_width, timeline_height) = (50.0, 23.0);
+        let view_h = (ui.available_height() - kb_h - if bottom_keys { 12.0 } else { 4.0 }).max(timeline_height + 1.0);
         let (viewport, _) = ui.allocate_exact_size(vec2(ui.available_width(), view_h), Sense::hover());
         let grid = Rect::from_min_max(viewport.min + vec2(ruler_width, timeline_height), viewport.max);
         let mut grid_ui = ui.new_child(egui::UiBuilder::new().max_rect(grid));
@@ -1362,7 +1378,7 @@ impl VinteriaApp {
                 if held.is_some_and(|(_, key)| key == pitch) {
                     p.rect_filled(lane, 0.0, p_accent().linear_multiply(0.30));
                 } else if crate::theory::is_root(key_root, pitch) {
-                    p.rect_filled(lane, 0.0, p_accent().linear_multiply(0.09));
+                    p.rect_filled(lane, 0.0, p_accent().gamma_multiply(0.07));
                 } else if !crate::theory::in_scale(key_root, key_scale, pitch) || matches!(pitch % 12, 1 | 3 | 6 | 8 | 10) {
                     p.rect_filled(lane, 0.0, pick(0x28000000, 0x18000000));
                 }
@@ -1503,9 +1519,19 @@ impl VinteriaApp {
             }
             rect.min
         });
-        let ruler = Rect::from_min_max(pos2(viewport.left(), grid.top()), pos2(grid.left(), grid.bottom()));
+        // keys down the left side, one per row of the grid (like the PC piano roll): press one to hear it (and record it)
+        let ruler = Rect::from_min_max(pos2(viewport.left(), grid.top()), pos2(grid.left() - 2.0, grid.bottom()));
+        let side = ui.interact(ruler, ui.id().with(("m_piano_side_keys", pi)), Sense::click_and_drag());
+        let side_pressed = if side.is_pointer_button_down_on() {
+            side.interact_pointer_pos().filter(|pt| ruler.contains(*pt)).map(|pt| {
+                let row = (((pt.y - out.inner.y) / row_h).max(0.0) as usize).min(rows - 1);
+                high_pitch - row as u8
+            })
+        } else {
+            None
+        };
         let painter = ui.painter_at(ruler);
-        painter.rect_filled(ruler, 3.0, bar_fill());
+        painter.rect_filled(ruler, 3.0, Color32::from_gray(236));
         for row in 0..rows {
             let pitch = high_pitch - row as u8;
             let y = out.inner.y + row as f32 * row_h;
@@ -1513,12 +1539,25 @@ impl VinteriaApp {
                 continue;
             }
             let lane = Rect::from_min_size(pos2(ruler.left(), y), vec2(ruler.width(), row_h));
-            if held.is_some_and(|(_, key)| key == pitch) {
-                painter.rect_filled(lane, 0.0, p_accent().linear_multiply(0.40));
+            let black = matches!(pitch % 12, 1 | 3 | 6 | 8 | 10);
+            let down = side_pressed == Some(pitch) || held.is_some_and(|(_, key)| key == pitch);
+            if black {
+                let key = Rect::from_min_size(lane.min, vec2(lane.width() * 0.62, row_h));
+                painter.rect_filled(key.shrink2(vec2(0.0, 1.0)), 2.0, if down { lane_col(3) } else { Color32::from_gray(32) });
+            } else {
+                if down {
+                    painter.rect_filled(lane.shrink(0.5), 2.0, lane_col(3));
+                }
+                if matches!(pitch % 12, 0 | 5) {
+                    painter.line_segment([lane.left_bottom(), lane.right_bottom()], Stroke::new(1.0, Color32::from_gray(150)));
+                }
             }
-            painter.text(lane.center(), Align2::CENTER_CENTER,
-                format!("{}{}", names[usize::from(pitch % 12)], i16::from(pitch) / 12 - 1),
-                FontId::proportional(10.0), if pitch % 12 == 0 { ink() } else { muted() });
+            if pitch % 12 == 0 || !black {
+                let label = format!("{}{}", names[usize::from(pitch % 12)], i16::from(pitch) / 12 - 1);
+                painter.text(pos2(lane.right() - 4.0, lane.center().y), Align2::RIGHT_CENTER, label,
+                    FontId::proportional(if pitch % 12 == 0 { 10.5 } else { 9.0 }),
+                    if pitch % 12 == 0 { Color32::from_gray(25) } else { Color32::from_gray(110) });
+            }
         }
         let timeline = Rect::from_min_max(pos2(grid.left(), viewport.top()), pos2(grid.right(), grid.top()));
         let painter = ui.painter_at(timeline);
@@ -1532,8 +1571,10 @@ impl VinteriaApp {
                 format!("{}.{}", step / 16 + 1, (step % 16) / 4 + 1), FontId::proportional(11.0),
                 if step % 16 == 0 { ink() } else { muted() });
         }
-        ui.add_space(4.0);
-        let (keyboard, resp) = ui.allocate_exact_size(vec2(ui.available_width(), kb_h), Sense::click_and_drag());
+        if bottom_keys {
+            ui.add_space(4.0);
+        }
+        let (keyboard, resp) = ui.allocate_exact_size(vec2(ui.available_width(), kb_h.max(0.0)), if bottom_keys { Sense::click_and_drag() } else { Sense::hover() });
         let whites = [0, 2, 4, 5, 7, 9, 11];
         let blacks = [(1, 1), (2, 3), (4, 6), (5, 8), (6, 10)];
         let kw = keyboard.width() / whites.len() as f32;
@@ -1543,7 +1584,9 @@ impl VinteriaApp {
                 vec2(kw * 0.58, kb_h * 0.68))
         };
         let p = ui.painter_at(keyboard);
-        let pressed = if resp.is_pointer_button_down_on() {
+        let pressed = if !bottom_keys {
+            None
+        } else if resp.is_pointer_button_down_on() {
             resp.interact_pointer_pos().filter(|pt| keyboard.contains(*pt)).map(|pt| {
                 let key = ((pt.x - keyboard.left()) / kw) as usize;
                 let offset = blacks.iter().find(|&&(boundary, _)| black_rect(boundary).contains(pt))
@@ -1553,7 +1596,7 @@ impl VinteriaApp {
         } else {
             None
         };
-        for (key, semitone) in whites.into_iter().enumerate() {
+        for (key, semitone) in whites.into_iter().enumerate().filter(|_| bottom_keys) {
             let pitch = base + semitone;
             let rect = Rect::from_min_size(pos2(keyboard.left() + key as f32 * kw, keyboard.top()), vec2(kw, kb_h));
             p.rect_filled(rect.shrink(0.5), 3.0, if pressed == Some(pitch) { lane_col(3) } else { Color32::from_gray(242) });
@@ -1562,11 +1605,11 @@ impl VinteriaApp {
                     FontId::proportional(11.0), Color32::from_gray(60));
             }
         }
-        for (boundary, semitone) in blacks {
+        for (boundary, semitone) in blacks.into_iter().filter(|_| bottom_keys) {
             let color = if pressed == Some(base + semitone) { lane_col(3) } else { Color32::from_gray(29) };
             p.rect_filled(black_rect(boundary), 3.0, color);
         }
-        let pressed = pressed.map(|pitch| (track, pitch));
+        let pressed = pressed.or(side_pressed).map(|pitch| (track, pitch));
         if pressed != held {
             if let Some((track, pitch)) = held {
                 self.shared.send(Cmd::NoteOff { track, pitch });
@@ -1669,7 +1712,7 @@ impl VinteriaApp {
         let full = ctx.data(|d| d.get_temp::<bool>(full_id)).unwrap_or(false);
         let screen = ctx.screen_rect();
         let portrait = screen.width() < screen.height();
-        let panel_width = if portrait { screen.width() - 24.0 } else { screen.width() * 0.74 };
+        let panel_width = if portrait { screen.width() } else { screen.width() * 0.74 };
         let width = if full {
             screen.width()
         } else {

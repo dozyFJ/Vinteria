@@ -1,6 +1,6 @@
 [package]
 name = "vinteria_daw"
-version = "1.0.25"
+version = "1.0.26"
 edition = "2021"
 description = "Winteria DAW - a from-scratch DAW (audio engine, synths, sequencer, piano roll, arrangement, mixer)"
 
@@ -72,3 +72,5 @@ strip = true
 
 [patch.crates-io]
 webbrowser = { path = "vendor/webbrowser" }
+# highp texture coordinates in the shaders: fixes broken glyphs on Android GPUs (see vendor/egui_glow/src/shader)
+egui_glow = { path = "vendor/egui_glow" }
