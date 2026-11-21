@@ -54,8 +54,9 @@ jobs:
           if [ -n "$KEYSTORE_B64" ]; then
             echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
             export CARGO_APK_RELEASE_KEYSTORE_PASSWORD="$KEYSTORE_PASSWORD"
+            echo "SIGNED=yes" >> "$GITHUB_ENV"
           else
-            echo "::warning::no signing secret - using a one-off key"
+            echo "::warning::no signing secret - using a one-off key, the OTA channel is not updated"
             keytool -genkeypair -keystore "$RUNNER_TEMP/release.keystore" -storetype PKCS12 -storepass android -keypass android \
               -alias winteria -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Winteria"
             export CARGO_APK_RELEASE_KEYSTORE_PASSWORD=android
@@ -80,3 +81,22 @@ jobs:
           gh release delete "$tag" --yes --cleanup-tag || true
           gh release create "$tag" out/*.apk --target "$GITHUB_SHA" --prerelease \
             --title "Winteria $VERSION (Android)" --notes "Build of ${GITHUB_SHA::7}."
+
+      - name: Publish OTA update (branch "ota")
+        if: ${{ env.SIGNED == 'yes' }}
+        run: |
+          # the app reads ota/latest.json and offers ota/releases/Winteria-<version>.apk (see src/android_update.rs)
+          apk="out/Winteria-$VERSION.apk"
+          IFS=. read -r major minor patch <<< "$VERSION"
+          code=$(( 16777216 + major * 65536 + minor * 256 + patch ))
+          sha=$(sha256sum "$apk" | cut -d' ' -f1)
+          rm -rf ota && mkdir -p ota/releases && cp "$apk" ota/releases/
+          printf '{\n  "versionCode": %s,\n  "versionName": "%s",\n  "url": "https://raw.githubusercontent.com/%s/ota/releases/Winteria-%s.apk",\n  "sha256": "%s",\n  "sourceCommit": "%s"\n}\n' \
+            "$code" "$VERSION" "$GITHUB_REPOSITORY" "$VERSION" "$sha" "$GITHUB_SHA" > ota/latest.json
+          cd ota
+          git init -q -b ota
+          git config user.name "Winteria CI"
+          git config user.email "ci@users.noreply.github.com"
+          git add -A
+          git commit -qm "Winteria $VERSION"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/$GITHUB_REPOSITORY.git" ota
