@@ -361,17 +361,66 @@ fn android_main(app: android_activity::AndroidApp) {
         let _ = std::env::set_current_dir(&dir);
     }
     android_panic_hook();
+    // the previous start never reached "BOOT OK": keep its log and start in safe mode (no audio, start-up log on screen)
+    if let Ok(prev) = std::fs::read_to_string(BOOT_FILE) {
+        if !prev.contains("BOOT OK") {
+            let _ = std::fs::write(LAST_BOOT_FILE, &prev);
+            SAFE_MODE.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    let _ = std::fs::remove_file(BOOT_FILE);
+    BOOT_TRACE.store(true, std::sync::atomic::Ordering::Relaxed);
+    boot_log(&format!("Winteria {} start{}", env!("CARGO_PKG_VERSION"), if safe_mode() { " (safe mode)" } else { "" }));
     use winit::platform::android::EventLoopBuilderExtAndroid;
     let mut options = eframe::NativeOptions::default();
     let activity = app.clone();
     options.event_loop_builder = Some(Box::new(move |builder| {
         builder.with_android_app(app);
     }));
+    boot_log("eframe::run_native");
     let _ = eframe::run_native("Winteria DAW", options, Box::new(move |cc| {
+        boot_log("window and GL ready");
         let mut app = ui::VinteriaApp::new(cc);
+        boot_log("app created");
         app.android_updater = Some(android_update::Updater::new(activity));
         Ok(Box::new(app))
     }));
+}
+
+static BOOT_TRACE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static SAFE_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub const BOOT_FILE: &str = "boot.txt";
+pub const LAST_BOOT_FILE: &str = "last_boot.txt";
+
+/// Start-up breadcrumbs on the phone: each step is appended to `boot.txt` right away, so a hard crash (no panic: a native
+/// fault, a stack overflow, the audio driver) still leaves the last step that was reached.
+pub fn boot_log(step: &str) {
+    if !BOOT_TRACE.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(BOOT_FILE) {
+        let _ = writeln!(f, "{step}");
+        let _ = f.sync_all();
+    }
+}
+
+/// Stop writing breadcrumbs: the app started and drew a few frames.
+pub fn boot_done() {
+    if BOOT_TRACE.swap(false, std::sync::atomic::Ordering::Relaxed) {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(BOOT_FILE) {
+            let _ = writeln!(f, "BOOT OK");
+        }
+    }
+}
+
+/// true when the previous start did not get through: the app then starts without audio and shows the start-up log.
+pub fn safe_mode() -> bool {
+    SAFE_MODE.load(std::sync::atomic::Ordering::Relaxed)
+}
+pub fn leave_safe_mode() {
+    SAFE_MODE.store(false, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// A panic on the phone closes the app without a trace: write it (with a backtrace) to `crash.txt` in the app's storage and to
@@ -386,6 +435,7 @@ fn android_panic_hook() {
         let bt = std::backtrace::Backtrace::force_capture();
         let report = format!("Winteria {} crashed\n[thread {}] {}\n\n{}", env!("CARGO_PKG_VERSION"), t.name().unwrap_or("unnamed"), info, bt);
         let _ = std::fs::write(ui::CRASH_FILE, &report);
+        boot_log(&format!("PANIC: {info}"));
         if let (Ok(tag), Ok(text)) = (std::ffi::CString::new("Winteria"), std::ffi::CString::new(report.replace('\0', " "))) {
             unsafe {
                 __android_log_write(6, tag.as_ptr(), text.as_ptr());

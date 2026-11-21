@@ -328,7 +328,9 @@ pub struct VinteriaApp {
 
 impl VinteriaApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        crate::boot_log("theme");
         theme::apply(&cc.egui_ctx);
+        crate::boot_log("project");
         let mut project = Project::default();
         project.arrangement.tracks = crate::arrangement::Arrangement::starter_tracks();
         let mut lib = library::Library::new();
@@ -337,7 +339,9 @@ impl VinteriaApp {
         project.adopt_track_params();
         let published = Arc::new(project.clone());
         let shared = Shared::new(Arc::clone(&published));
-        let audio = AudioIo::new(Arc::clone(&shared));
+        crate::boot_log(if crate::safe_mode() { "audio skipped (safe mode)" } else { "audio open" });
+        let audio = if crate::safe_mode() { AudioIo::silent(Arc::clone(&shared)) } else { AudioIo::new(Arc::clone(&shared)) };
+        crate::boot_log("audio ready, midi");
         let midi = MidiIn::new(Arc::clone(&shared));
         let status = match &audio.error {
             Some(e) => e.clone(),
@@ -2127,6 +2131,12 @@ impl eframe::App for VinteriaApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let frame_no = ctx.cumulative_pass_nr();
+        if frame_no < 4 {
+            crate::boot_log(&format!("frame {frame_no}"));
+        } else if frame_no == 4 {
+            crate::boot_done();
+        }
         paint_glass_background(ctx);
         self.audio.poll_error();
         crate::silence_system_beeps();

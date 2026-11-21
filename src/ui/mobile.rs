@@ -371,6 +371,15 @@ impl VinteriaApp {
             self.m_crash_screen(ctx, &report, crash_id);
             return;
         }
+        if crate::safe_mode() {
+            doodle_background(ctx);
+            self.m_safe_screen(ctx);
+            return;
+        }
+        let first = ctx.cumulative_pass_nr() < 4;
+        if first {
+            crate::boot_log("phone screens");
+        }
         // a bug in the phone screens shows its message instead of closing the app
         let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.mobile_screens(ctx)));
         if let Err(e) = run {
@@ -379,6 +388,31 @@ impl VinteriaApp {
             ctx.data_mut(|d| d.insert_temp(crash_id, report));
             ctx.request_repaint();
         }
+    }
+
+    /// Shown after a start that crashed without a Rust panic: the start-up steps of that run tell where it stopped.
+    fn m_safe_screen(&mut self, ctx: &egui::Context) {
+        let last = std::fs::read_to_string(crate::LAST_BOOT_FILE).unwrap_or_default();
+        let crash = std::fs::read_to_string(CRASH_FILE).unwrap_or_default();
+        let report = format!("Last start stopped after:\n{last}\n{crash}");
+        egui::CentralPanel::default().frame(Frame::none().inner_margin(Margin::symmetric(14.0, 18.0))).show(ctx, |ui| {
+            pulse_visuals(ui);
+            ui.label(RichText::new("Safe mode").size(22.0).strong().color(ink()));
+            ui.label(RichText::new("The last start crashed. Sound is off. Send a screenshot of this screen to the developer.").size(13.0).color(muted()));
+            ui.add_space(10.0);
+            if p_button(ui, "Open Winteria (no sound)", true, vec2(230.0, 40.0)).clicked() {
+                let _ = std::fs::remove_file(crate::LAST_BOOT_FILE);
+                let _ = std::fs::remove_file(CRASH_FILE);
+                crate::leave_safe_mode();
+            }
+            ui.add_space(10.0);
+            let (rect, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
+            panel(ui.painter(), rect, 14.0);
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(10.0)));
+            egui::ScrollArea::both().auto_shrink([false, false]).show(&mut child, |ui| {
+                ui.label(RichText::new(&report).monospace().size(11.0).color(ink()));
+            });
+        });
     }
 
     fn m_crash_screen(&mut self, ctx: &egui::Context, report: &str, crash_id: egui::Id) {
@@ -407,8 +441,17 @@ impl VinteriaApp {
     }
 
     fn mobile_screens(&mut self, ctx: &egui::Context) {
+        let first = ctx.cumulative_pass_nr() < 4;
+        let step = |s: &str| {
+            if first {
+                crate::boot_log(s);
+            }
+        };
+        step("background");
         doodle_background(ctx);
+        step("dock");
         self.mobile_dock(ctx);
+        step("rail");
         let sections: &[(&str, Icon)] = match self.m_tab {
             0 => &PROJECT_SECTIONS,
             1 => &STUDIO_SECTIONS,
@@ -417,7 +460,9 @@ impl VinteriaApp {
         if !sections.is_empty() {
             self.mobile_rail(ctx, sections);
         }
+        step("header");
         self.mobile_header(ctx);
+        step("page");
         egui::CentralPanel::default().frame(Frame::none().inner_margin(Margin { left: 14.0, right: 14.0, top: 10.0, bottom: 6.0 })).show(ctx, |ui| {
             pulse_visuals(ui);
             match self.m_tab {
@@ -427,6 +472,7 @@ impl VinteriaApp {
                 _ => self.m_profile(ui),
             }
         });
+        step("page done");
         let repaint = if self.playing() { 33 } else { 250 };
         ctx.request_repaint_after(std::time::Duration::from_millis(repaint));
     }

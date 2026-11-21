@@ -123,8 +123,24 @@ mod io {
             let name = default.or_else(|| a.devices.first().cloned()).unwrap_or_default();
             // 512 frames: a safe margin so other programs / a busy window do not starve the callback (crackling)
             let preferred_rate = if cfg!(target_os = "android") { 48000 } else { 0 };
+            crate::boot_log(&format!("audio device '{name}'"));
             a.open(&name, preferred_rate, 512);
             a
+        }
+
+        /// No audio device at all (phone safe mode after a crash at start-up).
+        pub fn silent(shared: Arc<Shared>) -> Self {
+            AudioIo {
+                shared,
+                stream: None,
+                devices: vec![],
+                device_name: String::new(),
+                sample_rate: 48000,
+                rates: vec![],
+                buffer_frames: 0,
+                error: Some("Safe mode: sound is off".into()),
+                err_flag: Arc::new(AtomicBool::new(false)),
+            }
         }
 
         pub fn refresh_devices(&mut self) {
