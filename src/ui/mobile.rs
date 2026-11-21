@@ -1322,24 +1322,36 @@ impl VinteriaApp {
         }
     }
 
+    /// Playlist on top, and under it the same device dock as the PC (track settings, instrument, effects, clip options)
+    /// for the selected track: tap a track name or a clip to select it.
     fn m_playlist(&mut self, ui: &mut Ui) {
-        let (bar_w, lane_h, hdr, ruler) = (52.0f32, 50.0f32, 96.0f32, 26.0f32);
+        let (bar_w, lane_h, hdr, ruler) = (52.0f32, 46.0f32, 96.0f32, 26.0f32);
         let tracks = self.project.arrangement.tracks.len();
         if tracks == 0 {
             ui.label(RichText::new("No tracks yet. Open a template in Projects.").color(muted()));
             return;
         }
+        if self.arr.sel_lane >= tracks {
+            self.arr.sel_lane = 0;
+        }
         let bars = (self.project.arrangement.song_end_bar() + 8).max(16);
         let pos = self.shared.position.load(Ordering::Relaxed);
         let playing = self.playing() && self.project.song_mode;
-        egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
-            let (rect, _) = ui.allocate_exact_size(vec2(hdr + bars as f32 * bar_w, ruler + tracks as f32 * lane_h), Sense::hover());
+        let full_h = ruler + tracks as f32 * lane_h;
+        let grid_h = full_h.min((ui.available_height() * 0.42).max(160.0));
+        let mut pick: Option<(usize, Option<usize>)> = None;
+        egui::ScrollArea::both().id_salt("m_playlist").max_height(grid_h).auto_shrink([false, true]).show(ui, |ui| {
+            let (rect, resp) = ui.allocate_exact_size(vec2(hdr + bars as f32 * bar_w, full_h), Sense::click());
             let p = ui.painter_at(rect);
             let gx = rect.left() + hdr;
             let gy = rect.top() + ruler;
             panel(&p, rect, 12.0);
             for l in 0..tracks {
                 let r = Rect::from_min_size(pos2(rect.left(), gy + l as f32 * lane_h), vec2(rect.width(), lane_h));
+                if l == self.arr.sel_lane {
+                    p.rect_filled(r, 0.0, p_accent().linear_multiply(0.035));
+                    p.rect_filled(Rect::from_min_size(r.min, vec2(3.0, r.height())), 0.0, p_accent());
+                }
                 p.line_segment([r.left_top(), r.right_top()], Stroke::new(0.6, glass_edge()));
                 let t = &self.project.arrangement.tracks[l];
                 p.circle_filled(pos2(r.left() + 14.0, r.center().y), 5.0, lane_col(l));
@@ -1353,22 +1365,81 @@ impl VinteriaApp {
                     p.text(pos2(x + 4.0, rect.top() + 6.0), Align2::LEFT_TOP, format!("{}", b + 1), FontId::proportional(11.0), muted());
                 }
             }
-            for c in &self.project.arrangement.clips {
+            let mut clip_rects = Vec::new();
+            for (i, c) in self.project.arrangement.clips.iter().enumerate() {
                 let x0 = gx + c.start as f32 / TICKS_PER_BAR as f32 * bar_w;
                 let w = (c.len as f32 / TICKS_PER_BAR as f32 * bar_w).max(6.0);
-                let r = Rect::from_min_size(pos2(x0, gy + c.lane as f32 * lane_h), vec2(w, lane_h)).shrink2(vec2(1.5, 6.0));
+                let r = Rect::from_min_size(pos2(x0, gy + c.lane as f32 * lane_h), vec2(w, lane_h)).shrink2(vec2(1.5, 5.0));
                 let col = lane_col(c.lane);
                 p.rect_filled(r, 8.0, col.linear_multiply(0.75));
+                if self.arr.sel_clip == Some(i) {
+                    p.rect_stroke(r.expand(1.0), 9.0, Stroke::new(2.0, p_accent()));
+                }
                 if r.width() > 40.0 {
                     let name = if c.audio { self.project.audio_pool.get(c.pattern).map(|s| s.name.clone()).unwrap_or_default() } else { self.project.patterns.get(c.pattern).map(|p| p.name.clone()).unwrap_or_default() };
                     let text: String = name.chars().take(((r.width() - 10.0) / 6.5) as usize).collect();
                     p.text(r.left_center() + vec2(6.0, 0.0), Align2::LEFT_CENTER, text, FontId::proportional(11.0), Color32::WHITE);
                 }
+                clip_rects.push((i, c.lane, r));
             }
             if playing {
                 let x = gx + pos as f32 / TICKS_PER_BAR as f32 * bar_w;
                 p.line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], Stroke::new(2.0, p_accent()));
             }
+            if resp.clicked() {
+                if let Some(pt) = resp.interact_pointer_pos() {
+                    if pt.y > gy {
+                        let lane = (((pt.y - gy) / lane_h) as usize).min(tracks - 1);
+                        let clip = clip_rects.iter().find(|(_, _, r)| r.contains(pt)).map(|(i, _, _)| *i);
+                        pick = Some((lane, clip));
+                    }
+                }
+            }
+        });
+        if let Some((lane, clip)) = pick {
+            self.arr.sel_lane = lane;
+            self.arr.sel_clip = clip;
+            if let Some(i) = clip {
+                if let Some(c) = self.project.arrangement.clips.get(i) {
+                    if !c.audio {
+                        self.project.current_pattern = c.pattern;
+                    }
+                }
+            }
+        }
+        ui.add_space(8.0);
+        // the device dock of the PC, scrolled sideways on a phone
+        let lane = self.arr.sel_lane;
+        let tname = self.project.arrangement.tracks.get(lane).map(|t| t.name.clone()).unwrap_or_default();
+        ui.horizontal(|ui| {
+            ui.painter().circle_filled(ui.cursor().min + vec2(6.0, 9.0), 5.0, lane_col(lane));
+            ui.add_space(16.0);
+            ui.label(RichText::new(tname).size(15.0).strong().color(ink()));
+            ui.label(RichText::new("track · instrument · effects").size(11.0).color(muted()));
+        });
+        ui.add_space(4.0);
+        let h = ui.available_height().max(200.0);
+        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::hover());
+        panel(ui.painter(), rect, 14.0);
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(10.0)));
+        let inner_h = rect.height() - 20.0;
+        egui::ScrollArea::horizontal().id_salt("m_dock").auto_shrink([false, false]).show(&mut child, |ui| {
+            let w = ui.available_width().max(660.0);
+            ui.allocate_ui_with_layout(vec2(w, inner_h), egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                ui.set_min_size(vec2(w, inner_h));
+                devices_ui::dock(
+                    ui,
+                    &mut self.project,
+                    &mut self.arr,
+                    &mut self.roll,
+                    &mut self.live_track,
+                    &mut self.inst,
+                    &mut self.plugin_window,
+                    &mut self.lib,
+                    self.shared.position.load(Ordering::Relaxed),
+                    &self.shared,
+                );
+            });
         });
     }
 
