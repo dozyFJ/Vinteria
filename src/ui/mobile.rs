@@ -759,7 +759,7 @@ impl VinteriaApp {
                 self.m_studio_orientation_button(ui, ctx, width);
                 ui.separator();
                 mobile_scroll(egui::ScrollArea::vertical()).id_salt("m_studio_controls")
-                    .auto_shrink([false, false]).show(ui, |ui| self.m_studio_controls(ui, ctx, width, false));
+                    .auto_shrink([false, false]).show(ui, |ui| self.m_studio_controls(ui, ctx, width));
             });
     }
 
@@ -774,12 +774,13 @@ impl VinteriaApp {
                     self.m_studio_full_view_button(ui, ctx, width);
                     let folder = self.m_sec == SEC_PLAYLIST;
                     let button_slot = width + ui.spacing().item_spacing.x;
-                    let reserved = (3 + usize::from(folder)) as f32 * button_slot;
+                    let tempo_width = 70.0;
+                    let reserved = tempo_width + 4.0 + (2 + usize::from(folder)) as f32 * button_slot;
                     let title_width = (ui.available_width() - reserved).max(1.0);
                     ui.add_sized([title_width, 44.0], egui::Label::new(RichText::new(&self.project.name)
                         .strong().size(14.0).color(ink())).truncate());
                     self.m_studio_play_stop(ui, ctx, width);
-                    self.m_studio_tempo(ui, width);
+                    self.m_studio_tempo(ui, tempo_width, true);
                     if folder {
                         self.m_studio_browser_button(ui, ctx, width);
                     }
@@ -794,19 +795,56 @@ impl VinteriaApp {
             .show(ctx, |ui| {
                 pulse_visuals(ui);
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 5.0;
-                    let width = 44.0;
-                    if self.m_studio_exit(ui, ctx, width) {
-                        return;
+                    ui.spacing_mut().item_spacing.x = 1.0;
+                    let width = (ui.available_width() - 5.0) / 6.0;
+                    for (index, (label, symbol)) in STUDIO_SECTIONS.into_iter().take(5).enumerate() {
+                        let (rect, response) = ui.allocate_exact_size(vec2(width, 50.0), Sense::click());
+                        let p = ui.painter();
+                        if self.m_sec == index {
+                            glass_tinted(p, rect, 11.0, Some(p_accent().linear_multiply(0.22)));
+                        }
+                        icon(p, symbol, rect.center_top() + vec2(0.0, 16.0), ink());
+                        p.text(rect.center_bottom() - vec2(0.0, 5.0), Align2::CENTER_BOTTOM, label,
+                            FontId::proportional(10.0), ink());
+                        if response.clicked() {
+                            self.m_select_studio_section(ctx, index);
+                        }
                     }
-                    self.m_studio_orientation_button(ui, ctx, width);
-                    ui.separator();
-                    mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_studio_port_controls")
-                        .auto_shrink([false, true]).show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                self.m_studio_controls(ui, ctx, width, true);
-                            });
-                        });
+                    ui.spacing_mut().button_padding.x = 4.0;
+                    let menu = egui::Button::new("⋯\nMore").min_size(vec2(width, 50.0));
+                    egui::menu::menu_custom_button(ui, menu, |ui| {
+                        if ui.button("Tracks").clicked() {
+                            self.m_select_studio_section(ctx, 5);
+                            ui.close_menu();
+                        }
+                        if ui.button("Return to start").clicked() {
+                            self.return_to_start(ctx, self.playing());
+                            ui.close_menu();
+                        }
+                        let rec = if self.record { "Disarm recording" } else { "Arm recording" };
+                        if ui.button(rec).clicked() {
+                            self.m_toggle_studio_record(ctx);
+                            ui.close_menu();
+                        }
+                        if ui.button("Export or share").clicked() {
+                            self.m_export.open = true;
+                            self.m_export.song = self.m_sec == SEC_PLAYLIST;
+                            ui.close_menu();
+                        }
+                        #[cfg(target_os = "android")]
+                        {
+                            let id = egui::Id::new("m_studio_landscape");
+                            let landscape = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+                            if ui.button(if landscape { "Switch to portrait" } else { "Switch to landscape" }).clicked() {
+                                ctx.data_mut(|d| d.insert_temp(id, !landscape));
+                                ui.close_menu();
+                            }
+                        }
+                        if ui.button("Leave project").clicked() {
+                            self.m_leave_studio(ctx);
+                            ui.close_menu();
+                        }
+                    });
                 });
             });
     }
@@ -823,9 +861,12 @@ impl VinteriaApp {
                         ui.horizontal(|ui| {
                             for (lane, track) in self.project.arrangement.tracks.iter().enumerate() {
                                 let selected = self.arr.sel_lane == lane;
-                                let label = RichText::new(&track.name).color(lane_col(lane));
-                                let button = egui::Button::new(label).selected(selected)
+                                let label = RichText::new(&track.name).color(if selected { on_accent() } else { ink() });
+                                let mut button = egui::Button::new(label)
                                     .min_size(vec2(60.0, 44.0)).wrap_mode(egui::TextWrapMode::Extend);
+                                if selected {
+                                    button = button.fill(p_accent());
+                                }
                                 let response = ui.add(button).on_hover_text(if selected { "Track settings" } else { "Select track" });
                                 if response.clicked() || response.secondary_clicked() {
                                     select = Some((lane, selected || response.secondary_clicked()));
@@ -853,6 +894,11 @@ impl VinteriaApp {
         if !studio_icon(ui, width, Icon::Exit, false, "Leave project").clicked() {
             return false;
         }
+        self.m_leave_studio(ctx);
+        true
+    }
+
+    fn m_leave_studio(&mut self, ctx: &egui::Context) {
         self.return_to_start(ctx, false);
         self.m_tab = 0;
         self.m_sec = 0;
@@ -862,7 +908,6 @@ impl VinteriaApp {
             d.remove::<bool>(egui::Id::new("m_track_sheet_open"));
             d.remove::<bool>(egui::Id::new("m_studio_full_view"));
         });
-        true
     }
 
     fn m_studio_full_view_button(&self, ui: &mut Ui, ctx: &egui::Context, width: f32) {
@@ -883,39 +928,44 @@ impl VinteriaApp {
         }
     }
 
-    fn m_studio_controls(&mut self, ui: &mut Ui, ctx: &egui::Context, width: f32, portrait: bool) {
-        let playing = self.playing();
+    fn m_studio_controls(&mut self, ui: &mut Ui, ctx: &egui::Context, width: f32) {
         if studio_icon(ui, width, Icon::Rewind, false, "Return to start").clicked() {
-            self.return_to_start(ctx, playing);
+            self.return_to_start(ctx, self.playing());
         }
-        if !portrait {
-            self.m_studio_play_stop(ui, ctx, width);
-        }
+        self.m_studio_play_stop(ui, ctx, width);
         if studio_icon(ui, width, Icon::Record, self.record, "Arm recording").clicked() {
-            self.record = !self.record;
-            if self.record && !playing {
-                self.m_toggle_play(ctx);
-            }
+            self.m_toggle_studio_record(ctx);
         }
-        if !portrait {
-            self.m_studio_tempo(ui, width);
-        }
+        self.m_studio_tempo(ui, width, false);
         if studio_icon(ui, width, Icon::Share, false, "Export or share").clicked() {
             self.m_export.open = !self.m_export.open;
             self.m_export.song = self.m_sec == SEC_PLAYLIST;
         }
         ui.separator();
         for (index, (title, icon)) in STUDIO_SECTIONS.into_iter().enumerate() {
-            if studio_icon(ui, width, icon, self.m_sec == index, title).clicked() && self.m_sec != index {
-                self.m_sec = index;
-                ctx.data_mut(|d| {
-                    d.remove::<usize>(egui::Id::new("m_clip_sheet_selection"));
-                    d.remove::<bool>(egui::Id::new("m_track_sheet_open"));
-                });
+            if studio_icon(ui, width, icon, self.m_sec == index, title).clicked() {
+                self.m_select_studio_section(ctx, index);
             }
         }
-        if !portrait && self.m_sec == SEC_PLAYLIST {
+        if self.m_sec == SEC_PLAYLIST {
             self.m_studio_browser_button(ui, ctx, width);
+        }
+    }
+
+    fn m_toggle_studio_record(&mut self, ctx: &egui::Context) {
+        self.record = !self.record;
+        if self.record && !self.playing() {
+            self.m_toggle_play(ctx);
+        }
+    }
+
+    fn m_select_studio_section(&mut self, ctx: &egui::Context, index: usize) {
+        if self.m_sec != index {
+            self.m_sec = index;
+            ctx.data_mut(|d| {
+                d.remove::<usize>(egui::Id::new("m_clip_sheet_selection"));
+                d.remove::<bool>(egui::Id::new("m_track_sheet_open"));
+            });
         }
     }
 
@@ -933,8 +983,9 @@ impl VinteriaApp {
         }
     }
 
-    fn m_studio_tempo(&mut self, ui: &mut Ui, width: f32) {
-        let tempo = egui::Button::new(RichText::new(format!("{:.0}", self.project.bpm)).size(12.0))
+    fn m_studio_tempo(&mut self, ui: &mut Ui, width: f32, show_unit: bool) {
+        let unit = if show_unit { " BPM" } else { "" };
+        let tempo = egui::Button::new(RichText::new(format!("{:.0}{unit}", self.project.bpm)).size(12.0))
             .wrap_mode(egui::TextWrapMode::Extend).min_size(vec2(width, 44.0));
         ui.scope(|ui| {
             ui.spacing_mut().button_padding.x = 3.0;
@@ -1245,8 +1296,6 @@ impl VinteriaApp {
         let names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
         let record_id = egui::Id::new(("m_piano_record", pi));
         let mut record_step = ui.data(|d| d.get_temp::<usize>(record_id));
-        let erase_id = egui::Id::new(("m_piano_erase", pi, drawer.is_some()));
-        let mut erasing = ui.data(|d| d.get_temp::<bool>(erase_id)).unwrap_or(false);
         let valid_pattern = pi < self.project.patterns.len();
         let screen = ui.ctx().screen_rect();
         let portrait = screen.width() < screen.height();
@@ -1281,15 +1330,8 @@ impl VinteriaApp {
                     if studio_icon(ui, 44.0, Icon::Stop, false, "Stop").clicked() {
                         self.return_to_start(ui.ctx(), false);
                     }
-                    if p_button(ui, "Erase", erasing, vec2(51.0, 44.0)).clicked() {
-                        erasing = !erasing;
-                        if erasing {
-                            record_step = None;
-                        }
-                    }
                     if p_button(ui, "Rec", record_step.is_some(), vec2(44.0, 44.0)).clicked() {
                         record_step = if record_step.is_some() { None } else { Some(0) };
-                        erasing = false;
                     }
                     if let Some((full_id, full)) = drawer {
                         if p_button(ui, if full { "Restore" } else { "Full view" }, false, vec2(86.0, 44.0)).clicked() {
@@ -1336,8 +1378,8 @@ impl VinteriaApp {
             d.insert_temp(loop_id, looping);
         });
         ui.add_space(3.0);
-        let hint = if erasing { "Tap a note to erase it" } else { "Drag note to move · Drag edge to resize" };
-        ui.add(egui::Label::new(RichText::new(hint).size(11.0).color(if erasing { RED } else { muted() })).truncate());
+        ui.add(egui::Label::new(RichText::new("Double-tap to delete · Drag to move")
+            .size(11.0).color(muted())).truncate());
         let (key_root, key_scale) = (self.project.key_root, self.project.key_scale);
         let base = oct * 12;
         let high_pitch = 127_u8;
@@ -1412,14 +1454,13 @@ impl VinteriaApp {
                 };
                 let original = body(note.len, note.pitch);
                 let id = resp.id.with(("note", index));
-                let sense = if erasing { Sense::click() } else { Sense::click_and_drag() };
-                let note_response = ui.interact(original, id, sense)
-                    .on_hover_cursor(if erasing { egui::CursorIcon::PointingHand } else { egui::CursorIcon::Grab });
+                let note_response = ui.interact(original, id, Sense::click_and_drag())
+                    .on_hover_cursor(egui::CursorIcon::Grab);
                 let edge = Rect::from_min_max(
                     pos2(original.right() - original.width().min(14.0), original.top()),
                     original.right_bottom());
-                let handle = ui.interact(edge, id.with("length"), sense)
-                    .on_hover_cursor(if erasing { egui::CursorIcon::PointingHand } else { egui::CursorIcon::ResizeHorizontal });
+                let handle = ui.interact(edge, id.with("length"), Sense::click_and_drag())
+                    .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
                 let max_len = pattern_end - note.start;
                 let mut len = note.len;
                 let mut pitch = note.pitch;
@@ -1468,7 +1509,7 @@ impl VinteriaApp {
                         FontId::proportional(10.0), Color32::from_gray(18));
                 }
                 if note_response.secondary_clicked() || handle.secondary_clicked()
-                    || (erasing && (note_response.clicked() || handle.clicked()))
+                    || note_response.double_clicked() || handle.double_clicked()
                 {
                     remove = Some(index);
                 } else if note_response.clicked() || handle.clicked() {
@@ -1488,7 +1529,7 @@ impl VinteriaApp {
                 self.project.patterns[pi].notes.remove(index);
             } else if let Some((track, pitch)) = audition {
                 self.m_preview_piano_notes(ui.ctx(), track, vec![pitch]);
-            } else if !erasing && resp.clicked() {
+            } else if resp.clicked() {
                 if let Some(pt) = resp.interact_pointer_pos() {
                     let row = (((pt.y - rect.top()) / row_h) as usize).min(rows - 1);
                     let step = (((pt.x - rect.left()) / step_w) as usize).min(steps - 1);
@@ -1607,7 +1648,6 @@ impl VinteriaApp {
             held = pressed;
         }
         ui.data_mut(|d| {
-            d.insert_temp(erase_id, erasing && !close);
             if let Some(step) = record_step {
                 d.insert_temp(record_id, step);
             } else {
@@ -2202,17 +2242,18 @@ impl VinteriaApp {
         let pos = self.shared.position.load(Ordering::Relaxed);
         let playing = self.playing() && self.project.song_mode;
         let add_lane = ui.data(|d| d.get_temp::<bool>(egui::Id::new("m_browser_open"))).unwrap_or(false);
-        let full_h = ruler + (tracks + usize::from(add_lane)) as f32 * lane_h;
+        let full_h = (tracks + usize::from(add_lane)) as f32 * lane_h;
         let panel_id = egui::Id::new("m_playlist_track_names");
         let panel_open = ui.data(|d| d.get_temp::<bool>(panel_id)).unwrap_or(false);
         let screen = ui.ctx().screen_rect();
         let portrait = screen.width() < screen.height();
-        let panel_width: f32 = if portrait { 0.0 } else if panel_open { 106.0 } else { 28.0 };
+        let panel_width: f32 = if portrait { 44.0 } else if panel_open { 106.0 } else { 28.0 };
         let reveal_id = egui::Id::new("m_playlist_reveal_track");
         let reveal_lane = ui.data_mut(|d| d.remove_temp::<usize>(reveal_id));
         let (viewport, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
         let mut grid = viewport;
         grid.min.x += panel_width.min((viewport.width() - 1.0).max(0.0));
+        grid.min.y += ruler.min((viewport.height() - 1.0).max(0.0));
         let mut grid_ui = ui.new_child(egui::UiBuilder::new().max_rect(grid));
         grid_ui.set_clip_rect(grid.intersect(ui.clip_rect()));
         let mut selection = None;
@@ -2223,7 +2264,7 @@ impl VinteriaApp {
         let scroll = mobile_scroll(egui::ScrollArea::both()).id_salt("m_playlist")
             .drag_to_scroll(gesture.is_none()).max_height(grid.height()).auto_shrink([false, false]);
         let scroll = if let Some(lane) = reveal_lane.filter(|&lane| lane < tracks) {
-            scroll.vertical_scroll_offset((ruler + lane as f32 * lane_h - grid.height() * 0.35).max(0.0))
+            scroll.vertical_scroll_offset((lane as f32 * lane_h - grid.height() * 0.35).max(0.0))
         } else {
             scroll
         };
@@ -2232,10 +2273,8 @@ impl VinteriaApp {
                 vec2((bars as f32 * bar_w).max(grid.width()), full_h.max(grid.height())), Sense::click());
             let p = ui.painter_at(rect);
             let gx = rect.left();
-            let gy = rect.top() + ruler;
+            let gy = rect.top();
             p.rect_filled(rect, 0.0, pick(0xFF191E25, 0xFFB1BDC3));
-            let time_header = Rect::from_min_size(rect.min, vec2(rect.width(), ruler));
-            p.rect_filled(time_header, 0.0, pick(0xFF252D37, 0xFFB9C5CA));
             for (lane, track) in self.project.arrangement.tracks.iter().enumerate() {
                 let y = gy + lane as f32 * lane_h;
                 let r = Rect::from_min_size(pos2(rect.left(), y), vec2(rect.width(), lane_h));
@@ -2261,10 +2300,9 @@ impl VinteriaApp {
             }
             for b in 0..=bars {
                 let x = gx + b as f32 * bar_w;
-                p.line_segment([pos2(x, rect.top() + ruler - 4.0), pos2(x, rect.bottom())], Stroke::new(if b % 4 == 0 { 0.9 } else { 0.4 }, glass_edge()));
-                if b < bars {
-                    p.text(pos2(x + 4.0, rect.top() + 6.0), Align2::LEFT_TOP, format!("{}", b + 1), FontId::proportional(11.0), muted());
-                }
+                let strong = b % 4 == 0;
+                p.line_segment([pos2(x, gy), pos2(x, gy + full_h)],
+                    Stroke::new(if strong { 1.0 } else { 0.45 }, if strong { outline() } else { glass_edge() }));
             }
             for (i, c) in self.project.arrangement.clips.iter().enumerate() {
                 let x0 = gx + c.start as f32 / TICKS_PER_BAR as f32 * bar_w;
@@ -2343,7 +2381,7 @@ impl VinteriaApp {
             }
             if playing {
                 let x = gx + pos as f32 / TICKS_PER_BAR as f32 * bar_w;
-                p.line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], Stroke::new(2.0, p_accent()));
+                p.line_segment([pos2(x, gy), pos2(x, gy + full_h)], Stroke::new(2.0, p_accent()));
             }
             if let Some(point) = ui.input(|input| input.pointer.interact_pos()).filter(|p| rect.contains(*p) && p.y >= gy && p.y < gy + (tracks + usize::from(add_lane)) as f32 * lane_h) {
                 let lane = (((point.y - gy) / lane_h) as usize).min(tracks);
@@ -2373,35 +2411,64 @@ impl VinteriaApp {
                     }
                 }
             }
+            rect.min
         });
-        if !portrait {
-            let panel = Rect::from_min_max(viewport.min, pos2(grid.left(), viewport.bottom()));
-            let painter = ui.painter_at(panel);
-            painter.rect_filled(panel, 0.0, pick(0xFF252D37, 0xFFB9C5CA));
-            let track_y = scroll.inner_rect.top() + ruler - scroll.state.offset.y;
-            let names = Rect::from_min_max(pos2(panel.left(), panel.top() + ruler), panel.max);
-            if panel_open {
-                let labels = painter.with_clip_rect(names.intersect(ui.clip_rect()));
-                for (lane, track) in self.project.arrangement.tracks.iter().enumerate() {
-                    let top = track_y + lane as f32 * lane_h;
-                    let row = Rect::from_min_size(pos2(panel.left(), top), vec2(panel.width(), lane_h));
-                    if !row.intersects(names) {
-                        continue;
-                    }
-                    let selected = lane == self.arr.sel_lane;
-                    if selected {
-                        labels.rect_filled(row, 0.0, pick(0xFF323D4C, 0xFFA2B5BE));
-                    }
-                    labels.line_segment([row.left_top(), row.right_top()], Stroke::new(0.6, glass_edge()));
-                    labels.circle_filled(row.left_center() + vec2(12.0, 0.0), 4.0, lane_col(lane));
-                    labels.with_clip_rect(row.intersect(names).intersect(ui.clip_rect())).text(
-                        row.left_center() + vec2(23.0, 0.0), Align2::LEFT_CENTER, &track.name,
-                        FontId::proportional(13.0), if track.mute { muted() } else { ink() });
-                    if ui.interact(row.intersect(names), panel_id.with(lane), Sense::click()).clicked() {
-                        selection = Some((lane, None, None, false));
-                    }
+        let timeline = Rect::from_min_max(pos2(grid.left(), viewport.top()), pos2(grid.right(), grid.top()));
+        let painter = ui.painter_at(timeline);
+        painter.rect_filled(timeline, 0.0, pick(0xFF252D37, 0xFFB9C5CA));
+        for bar in 0..bars {
+            let x = scroll.inner.x + bar as f32 * bar_w;
+            if x + 18.0 < timeline.left() || x >= timeline.right() {
+                continue;
+            }
+            let strong = bar % 4 == 0;
+            painter.line_segment([pos2(x, timeline.bottom() - 5.0), pos2(x, timeline.bottom())],
+                Stroke::new(1.0, if strong { ink() } else { outline() }));
+            painter.text(pos2(x + 5.0, timeline.center().y), Align2::LEFT_CENTER, format!("{}", bar + 1),
+                FontId::proportional(if strong { 13.0 } else { 11.0 }), if strong { ink() } else { muted() });
+        }
+        if playing {
+            let x = scroll.inner.x + pos as f32 / TICKS_PER_BAR as f32 * bar_w;
+            if timeline.x_range().contains(x) {
+                painter.add(Shape::convex_polygon(
+                    vec![pos2(x - 4.0, timeline.bottom() - 8.0), pos2(x + 4.0, timeline.bottom() - 8.0), pos2(x, timeline.bottom())],
+                    p_accent(), Stroke::NONE));
+            }
+        }
+        let panel = Rect::from_min_max(viewport.min, pos2(grid.left(), viewport.bottom()));
+        let painter = ui.painter_at(panel);
+        painter.rect_filled(panel, 0.0, pick(0xFF252D37, 0xFFB9C5CA));
+        let names = Rect::from_min_max(pos2(panel.left(), grid.top()), panel.max);
+        if portrait || panel_open {
+            let labels = painter.with_clip_rect(names.intersect(ui.clip_rect()));
+            let mut counts = [0, 0];
+            for (lane, track) in self.project.arrangement.tracks.iter().enumerate() {
+                let audio = track.kind == crate::arrangement::TrackKind::Audio;
+                let kind = usize::from(audio);
+                counts[kind] += 1;
+                let top = scroll.inner.y + lane as f32 * lane_h;
+                let row = Rect::from_min_size(pos2(panel.left(), top), vec2(panel.width(), lane_h));
+                if !row.intersects(names) {
+                    continue;
+                }
+                if lane == self.arr.sel_lane {
+                    labels.rect_filled(row, 0.0, pick(0xFF323D4C, 0xFFA2B5BE));
+                }
+                labels.line_segment([row.left_top(), row.right_top()], Stroke::new(0.6, glass_edge()));
+                labels.circle_filled(row.left_center() + vec2(if portrait { 7.0 } else { 12.0 }, 0.0), 3.0, lane_col(lane));
+                let short = if portrait { format!("{}{}", if audio { "A" } else { "M" }, counts[kind]) } else { String::new() };
+                let label = if portrait { short.as_str() } else { track.name.as_str() };
+                labels.with_clip_rect(row.intersect(names).intersect(ui.clip_rect())).text(
+                    row.left_center() + vec2(if portrait { 14.0 } else { 23.0 }, 0.0), Align2::LEFT_CENTER, label,
+                    FontId::proportional(if portrait { 11.0 } else { 13.0 }), if track.mute { muted() } else { ink() });
+                if ui.interact(row.intersect(names), panel_id.with(lane), Sense::click())
+                    .on_hover_text(&track.name).clicked()
+                {
+                    selection = Some((lane, None, None, false));
                 }
             }
+        }
+        if !portrait {
             let toggle = Rect::from_min_size(panel.min, vec2(panel.width(), ruler));
             let toggle_response = ui.interact(toggle, panel_id, Sense::click())
                 .on_hover_text(if panel_open { "Hide track names" } else { "Show track names" });
