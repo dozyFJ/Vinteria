@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       NDK_VERSION: 26.3.11579264
-      RELEASE_CERT_SHA256: f8dd8eaed875b0aa5896e1d23cbec407fd7b4e38da634e866ca139a408d18523
+      RELEASE_CERT_SHA256: 1ace6d878458a5fbe718477ee6673ce2b781046351b2982cd421a5c4a4d7334e
     steps:
       - uses: actions/checkout@v5
 
@@ -80,3 +80,22 @@ jobs:
           tag="android-v$VERSION"
           gh release create "$tag" out/*.apk --target "$GITHUB_SHA" --prerelease \
             --title "Winteria $VERSION (Android)" --notes "Build of ${GITHUB_SHA::7}."
+
+      - name: Publish OTA update (branch "ota")
+        run: |
+          # the app reads ota/latest.json and offers ota/releases/Winteria-<version>.apk (src/android_update.rs)
+          apk="out/Winteria-$VERSION.apk"
+          IFS=. read -r major minor patch <<< "$VERSION"
+          code=$(( 16777216 + major * 65536 + minor * 256 + patch ))
+          sha=$(sha256sum "$apk" | cut -d' ' -f1)
+          rm -rf ota && mkdir -p ota/releases && cp "$apk" ota/releases/
+          printf '{\n  "versionCode": %s,\n  "versionName": "%s",\n  "url": "https://raw.githubusercontent.com/%s/ota/releases/Winteria-%s.apk",\n  "sha256": "%s",\n  "sourceCommit": "%s"\n}\n' \
+            "$code" "$VERSION" "$GITHUB_REPOSITORY" "$VERSION" "$sha" "$GITHUB_SHA" > ota/latest.json
+          cat ota/latest.json
+          cd ota
+          git init -q -b ota
+          git config user.name "Winteria CI"
+          git config user.email "ci@users.noreply.github.com"
+          git add -A
+          git commit -qm "Winteria $VERSION"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/$GITHUB_REPOSITORY.git" ota

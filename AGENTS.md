@@ -16,11 +16,17 @@
 - `ffight763-glitch/Vinteria-git3` — только зеркало для бесплатной сборки APK в GitHub Actions.
   Claude сам синхронизирует его с `dozyFJ/Vinteria:winteria`. Работать там не нужно.
 
-## Кто что делает
+## Кто что делает и как выходят обновления (с 1.0.36)
 
-- **ChatGPT (Codex):** собирает APK **своим ключом** и выкладывает обновления в `dozyFJ/pulse-updates`, ветка
-  `winteria`, в `latest.json` указывает `sourceCommit` = коммит из `winteria`. Делает и фичи.
-- **Claude:** фичи и исправления в той же ветке.
+- **Ключ подписи** лежит в секретах GitHub репозитория `ffight763-glitch/Vinteria-git3`
+  (`ANDROID_KEYSTORE_B64`, `ANDROID_KEYSTORE_PASSWORD`), сертификат SHA-256 `1ace6d87…7334e`
+  (`RELEASE_CERT_SHA256` в `.github/workflows/android.yml`).
+- **Выпуск обновления = push в `winteria`.** Claude синхронизирует зеркало, CI в Vinteria-git3 собирает APK, проверяет
+  подпись и публикует OTA в ветку `ota` того же репозитория (`latest.json` + `releases/Winteria-<версия>.apk`).
+  Приложение читает именно её (`FEED` в `src/android_update.rs`).
+- **ChatGPT:** в `dozyFJ/pulse-updates` больше не публикуй, своим старым ключом не подписывай. Просто пушь в `winteria`
+  (версия = следующая после `ota/latest.json`), остальное сделает CI.
+- **Claude** делает фичи и исправления в той же ветке и следит за CI.
 
 ## Правила
 
