@@ -30,19 +30,23 @@ fn assign(p: &mut Project, lane: usize, track: Track, dc: &mut DetailCtx) {
 fn show(ui: &mut Ui, p: &mut Project, st: &mut ArrState, dc: &mut DetailCtx, plugin_window: &mut bool, lib: &mut Library, playhead: u32, part: u8) {
     let lane = st.sel_lane;
     let Some(track) = p.arrangement.tracks.get(lane) else { return };
+    let mobile_instrument = part == 3;
+    let instrument_width = if mobile_instrument { (ui.available_width() - 22.0).clamp(120.0, 286.0) } else { 286.0 };
     let (name, kind, out) = (track.name.clone(), track.kind, track.output.filter(|&i| i < NUM_INSERTS));
     p.insert_fx.resize_with(NUM_INSERTS, Vec::new);
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("Device chain").strong());
-        ui.label(RichText::new(name).color(lane_col(lane)));
-        if let Some(i) = out { ui.label(RichText::new(format!("→ {}", p.channels[NUM_CH + i].name)).small().color(DIM())); }
-        ui.label(RichText::new("Signal flows left to right").small().color(DIM()));
-    });
-    ui.add_space(6.0);
-    let mut add_fx = None;
-    egui::ScrollArea::horizontal().id_salt(("track_device_chain", lane)).auto_shrink([false, false]).show(ui, |ui| {
+    if !mobile_instrument {
         ui.horizontal(|ui| {
-            if part == 2 {} else if let Some(i) = st.sel_clip.filter(|&i| p.arrangement.clips.get(i).map_or(false, |c| c.lane == lane)) {
+            ui.label(RichText::new("Device chain").strong());
+            ui.label(RichText::new(name).color(lane_col(lane)));
+            if let Some(i) = out { ui.label(RichText::new(format!("→ {}", p.channels[NUM_CH + i].name)).small().color(DIM())); }
+            ui.label(RichText::new("Signal flows left to right").small().color(DIM()));
+        });
+        ui.add_space(6.0);
+    }
+    let mut add_fx = None;
+    egui::ScrollArea::horizontal().id_salt(("track_device_chain", lane, mobile_instrument)).auto_shrink([false, false]).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            if part == 2 || mobile_instrument {} else if let Some(i) = st.sel_clip.filter(|&i| p.arrangement.clips.get(i).map_or(false, |c| c.lane == lane)) {
                 ui.push_id(("device_clip_options", lane, i), |ui| {
                     card_ui(ui, 270.0, |ui| {
                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
@@ -63,12 +67,12 @@ fn show(ui: &mut Ui, p: &mut Project, st: &mut ArrState, dc: &mut DetailCtx, plu
                     ui.label(RichText::new("Select a clip to edit its options").small().color(DIM()));
                 });
             }
-            ui.label(RichText::new("→").color(DIM()));
+            if part != 2 && !mobile_instrument { ui.label(RichText::new("→").color(DIM())); }
             if part == 2 {} else if kind == TrackKind::Midi {
                 let mut picked = None;
                 let current = p.arrangement.tracks[lane].instrument;
-                let response = card_ui(ui, 286.0, |ui| {
-                    ui.horizontal(|ui| {
+                let response = card_ui(ui, instrument_width, |ui| {
+                    ui.horizontal_wrapped(|ui| {
                         ui.label(RichText::new("Instrument").small().color(DIM()));
                         if current.is_some() && ui.small_button("Open").clicked() { *plugin_window = true; }
                         ui.menu_button("Choose", |ui| {
@@ -105,7 +109,7 @@ fn show(ui: &mut Ui, p: &mut Project, st: &mut ArrState, dc: &mut DetailCtx, plu
                         if let Some(v) = level { ui.add(egui::Slider::new(v, 0.0..=3.0).text("Level")); }
                         if t == Track::Drums { ui.label("Edit sounds in the Channel Rack."); }
                     } else {
-                        let (r, _) = ui.allocate_exact_size(vec2(286.0, 106.0), Sense::hover());
+                        let (r, _) = ui.allocate_exact_size(vec2(instrument_width, 106.0), Sense::hover());
                         ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, "Drop an instrument or WAV\nor use Choose", egui::FontId::proportional(13.0), DIM());
                     }
                 });
@@ -127,7 +131,7 @@ fn show(ui: &mut Ui, p: &mut Project, st: &mut ArrState, dc: &mut DetailCtx, plu
                     ui.add(egui::Slider::new(&mut tr.transpose, -24..=24).text("Transpose"));
                 });
             }
-            if let (Some(i), true) = (out, part != 1) {
+            if let (Some(i), true) = (out, part != 1 && !mobile_instrument) {
                 let chain = &mut p.insert_fx[i];
                 let len = chain.len(); let mut clear = None; let mut swap = None;
                 for k in 0..len {
@@ -172,7 +176,7 @@ fn show(ui: &mut Ui, p: &mut Project, st: &mut ArrState, dc: &mut DetailCtx, plu
                 if let Some(k) = clear { chain[k] = FxSlot::empty(); }
                 if let Some((a, b)) = swap { chain.swap(a, b); }
             }
-            if part != 1 { ui.label(RichText::new("→").color(DIM()));
+            if part != 1 && !mobile_instrument { ui.label(RichText::new("→").color(DIM()));
             card_ui(ui, 184.0, |ui| {
                 ui.label(RichText::new("Audio effects").strong()); ui.separator();
                 ui.label(RichText::new("Add the next device\nto this signal chain").small().color(DIM()));
@@ -289,30 +293,39 @@ fn track_settings(ui: &mut Ui, p: &mut Project, lane: usize, mobile: bool, mut e
     let page_count = if mobile { 4 } else { 3 };
     let tab_id = egui::Id::new(("ts_page", lane, mobile));
     let mut cur_tab = ui.data(|d| d.get_temp::<usize>(tab_id)).unwrap_or(0).min(page_count - 1);
-    let tabs = |ui: &mut Ui| {
-        if !mobile {
+    let body_rect = if mobile {
+        let area = ui.available_rect_before_wrap();
+        let width = area.width().min(400.0) * 0.28;
+        let left = Rect::from_min_size(area.min, vec2(width, area.height()));
+        let mut nav = ui.new_child(egui::UiBuilder::new().max_rect(left).layout(egui::Layout::top_down(egui::Align::LEFT)));
+        nav.set_clip_rect(left.intersect(ui.clip_rect()));
+        for (i, (label, _)) in pages.iter().enumerate() {
+            if side_tab(&mut nav, label, cur_tab == i) { cur_tab = i; }
+        }
+        Rect::from_min_max(pos2(left.right() + 8.0, area.top()), area.max)
+    } else {
+        ui.horizontal(|ui| {
             ui.label(RichText::new(format!("Track Settings – {name}")).strong().size(14.0));
             ui.add_space(16.0);
-        }
-        for (i, (n, _)) in pages.iter().take(page_count).enumerate() {
-            if pill_tab(ui, n, cur_tab == i) { cur_tab = i; }
-        }
+            for (i, (label, _)) in pages.iter().take(page_count).enumerate() {
+                if pill_tab(ui, label, cur_tab == i) { cur_tab = i; }
+            }
+        });
+        ui.add_space(6.0);
+        ui.available_rect_before_wrap()
     };
-    if mobile {
-        ui.horizontal_wrapped(tabs);
-    } else {
-        ui.horizontal(tabs);
-    }
     ui.data_mut(|d| d.insert_temp(tab_id, cur_tab));
-    ui.add_space(6.0);
-    let tids: Vec<u8> = pages[cur_tab].1.clone();
-    let body_rect = ui.available_rect_before_wrap();
+    let tids = &pages[cur_tab].1;
     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(body_rect).layout(egui::Layout::top_down(egui::Align::LEFT)), |ui| {
+    if mobile {
+        ui.set_clip_rect(body_rect.intersect(ui.clip_rect()));
+    }
     let k = 1.0f32;
-    egui::ScrollArea::both().id_salt(("track_settings", lane)).auto_shrink([false, false]).show(ui, |ui| {
+    let scroll = if mobile { egui::ScrollArea::vertical() } else { egui::ScrollArea::both() };
+    scroll.id_salt(("track_settings", lane, cur_tab)).auto_shrink([false, false]).show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
-            for &tid in &tids {
+            for &tid in tids {
             if tid == 0 {
                 extra(ui, p, 0);
                 continue;
@@ -406,7 +419,7 @@ pub(super) fn mobile_track_settings(
     track_settings(ui, project, lane, true, |ui, project, part| {
         match part {
             0 if audio => super::track_ui::sample_panel(ui, project, lane, state.sel_sample, library, shared),
-            0 => show(ui, project, state, detail, plugin_window, library, shared.position.load(std::sync::atomic::Ordering::Relaxed), 1),
+            0 => show(ui, project, state, detail, plugin_window, library, shared.position.load(std::sync::atomic::Ordering::Relaxed), 3),
             2 => show(ui, project, state, detail, plugin_window, library, shared.position.load(std::sync::atomic::Ordering::Relaxed), 2),
             _ => {}
         }

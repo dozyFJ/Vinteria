@@ -1623,7 +1623,10 @@ impl VinteriaApp {
 
     fn m_track_sheet(&mut self, ctx: &egui::Context) {
         let id = egui::Id::new("m_track_sheet_open");
-        if !ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false) {
+        let animation = id.with("animation");
+        let open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+        let shown = ctx.animate_bool(animation, open);
+        if !open {
             return;
         }
         let Some(track) = self.project.arrangement.tracks.get(self.arr.sel_lane) else {
@@ -1631,15 +1634,35 @@ impl VinteriaApp {
             return;
         };
         let title = format!("Track Settings · {}", track.name);
-        if mobile_editor_sheet(ctx, "m_track_sheet_window", &title, |ui| {
-            let mut detail = arrangement_ui::DetailCtx {
-                roll_track: &mut self.roll.track,
-                live_track: &mut self.live_track,
-                inst: &mut self.inst,
-            };
-            devices_ui::mobile_track_settings(ui, &mut self.project, &mut self.arr, &mut detail,
-                &mut self.plugin_window, &mut self.lib, &self.shared);
-        }) {
+        let screen = ctx.screen_rect();
+        let width = if screen.width() < screen.height() {
+            screen.width()
+        } else {
+            (screen.width() * 0.76).max(screen.width().min(364.0))
+        };
+        let origin = pos2(screen.left() - (1.0 - shown) * width, screen.top());
+        let mut done = false;
+        egui::Area::new(id.with("drawer"))
+            .fixed_pos(origin).constrain(false).movable(false).order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                let (rect, _) = ui.allocate_exact_size(vec2(width, screen.height()), Sense::hover());
+                ui.painter().rect_filled(rect, 0.0, p_bg());
+                let mut content = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(9.0)));
+                content.set_clip_rect(rect.intersect(screen));
+                pulse_visuals(&mut content);
+                content.horizontal(|ui| {
+                    done = p_button(ui, "Done", true, vec2(60.0, 32.0)).clicked();
+                    ui.add(egui::Label::new(RichText::new(&title).size(15.0).strong()).truncate());
+                });
+                let mut detail = arrangement_ui::DetailCtx {
+                    roll_track: &mut self.roll.track,
+                    live_track: &mut self.live_track,
+                    inst: &mut self.inst,
+                };
+                devices_ui::mobile_track_settings(&mut content, &mut self.project, &mut self.arr,
+                    &mut detail, &mut self.plugin_window, &mut self.lib, &self.shared);
+            });
+        if done || ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
             ctx.data_mut(|d| d.remove::<bool>(id));
         }
     }
