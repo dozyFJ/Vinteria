@@ -1305,9 +1305,7 @@ impl VinteriaApp {
                 if playing && play_step == s {
                     p.rect_filled(Rect::from_min_size(pos2(rect.left(), y), vec2(rect.width(), row_h)), 0.0, p_accent().linear_multiply(0.15));
                 }
-                if s % 4 == 0 {
-                    p.text(pos2(vis_left + 4.0, y + 3.0), Align2::LEFT_TOP, format!("{}.{}", s / 16 + 1, (s % 16) / 4 + 1), FontId::proportional(10.0), muted());
-                }
+
             }
             let mut remove = None;
             let mut audition = None;
