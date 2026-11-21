@@ -1541,37 +1541,27 @@ impl VinteriaApp {
         let full = ctx.data(|d| d.get_temp::<bool>(full_id)).unwrap_or(false);
         let screen = ctx.screen_rect();
         let portrait = screen.width() < screen.height();
-        let bottom_sheet = portrait && !full;
-        let width = if full || portrait {
+        let panel_width = if portrait { screen.width() - 24.0 } else { screen.width() * 0.74 };
+        let width = if full {
             screen.width()
         } else {
-            (screen.width() * 0.74).max(screen.width().min(320.0))
+            panel_width.max(screen.width().min(296.0))
         }.max(1.0);
-        let height = (screen.height() * if bottom_sheet { 0.76 } else { 1.0 }).max(1.0);
-        let open_at = if portrait {
-            pos2(screen.left(), screen.bottom() - shown * height)
-        } else {
-            pos2(screen.left() - (1.0 - shown) * width, screen.top())
-        };
+        let height = screen.height().max(1.0);
+        let open_at = pos2(screen.left() - (1.0 - shown) * width, screen.top());
         let mut close = false;
         egui::Area::new(egui::Id::new("m_piano_drawer"))
             .fixed_pos(open_at).constrain(false).movable(false).order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-                ui.painter().rect_filled(rect, if bottom_sheet { 12.0 } else { 0.0 }, p_bg());
-                if !portrait {
+                ui.painter().rect_filled(rect, 0.0, p_bg());
+                if !full {
                     ui.painter().line_segment([rect.right_top(), rect.right_bottom()], Stroke::new(1.0, outline()));
                 }
                 let content = rect.shrink2(vec2(9.0, 7.0));
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(content));
                 child.set_clip_rect(rect.intersect(screen));
                 pulse_visuals(&mut child);
-                if bottom_sheet {
-                    let (handle, grip) = child.allocate_exact_size(vec2(child.available_width(), 14.0), Sense::drag());
-                    let mark = Rect::from_center_size(handle.center(), vec2(34.0, 3.0));
-                    child.painter().rect_filled(mark, 2.0, muted());
-                    close = grip.drag_delta().y > 18.0;
-                }
                 close |= self.m_piano_editor(&mut child, pattern, Some((full_id, full)));
             });
         close || ctx.input(|input| input.key_pressed(egui::Key::Escape))
