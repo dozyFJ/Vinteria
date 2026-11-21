@@ -168,6 +168,21 @@ fn doodle_background(ctx: &egui::Context) {
     }
 }
 
+/// The app logo (yin-yang of night and day with a W), the same picture as the launcher icon.
+fn logo(ui: &Ui, rect: Rect) {
+    let id = egui::Id::new("winteria_logo_tex");
+    let tex = match ui.ctx().data(|d| d.get_temp::<egui::TextureHandle>(id)) {
+        Some(t) => t,
+        None => {
+            let img = egui::ColorImage::from_rgba_unmultiplied([128, 128], include_bytes!("../../assets/winteria_icon128.rgba"));
+            let t = ui.ctx().load_texture("winteria_logo", img, egui::TextureOptions::LINEAR);
+            ui.ctx().data_mut(|d| d.insert_temp(id, t.clone()));
+            t
+        }
+    };
+    ui.painter().image(tex.id(), rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Icon {
     Folder,
@@ -574,9 +589,7 @@ impl VinteriaApp {
                 glass(p, cell, 22.0);
             }
             let c = cell.center();
-            p.circle_filled(c, 18.0, lane_col(2).linear_multiply(0.9));
-            p.circle_stroke(c, 18.0, Stroke::new(2.0, glass_edge()));
-            p.text(c, Align2::CENTER_CENTER, "W", FontId::proportional(17.0), Color32::WHITE);
+            logo(ui, Rect::from_center_size(c, vec2(40.0, 40.0)));
             if resp.clicked() {
                 self.m_tab = 3;
                 self.m_sec = 0;
@@ -1161,9 +1174,9 @@ impl VinteriaApp {
             glass(ui.painter(), rect, 18.0);
             let c = pos2(rect.center().x, rect.top() + 64.0);
             let p = ui.painter();
-            p.circle_filled(c, 40.0, lane_col(2).linear_multiply(0.9));
-            p.circle_stroke(c, 43.0, Stroke::new(3.0, p_accent()));
-            p.text(c, Align2::CENTER_CENTER, "W", FontId::proportional(34.0), Color32::WHITE);
+            p.circle_stroke(c, 44.0, Stroke::new(3.0, p_accent()));
+            logo(ui, Rect::from_center_size(c, vec2(84.0, 84.0)));
+            let p = ui.painter();
             p.text(pos2(c.x, rect.top() + 124.0), Align2::CENTER_CENTER, "Winteria Studio", FontId::proportional(19.0), ink());
             p.text(pos2(c.x, rect.top() + 150.0), Align2::CENTER_CENTER, "Guest", FontId::proportional(12.0), muted());
             ui.add_space(12.0);

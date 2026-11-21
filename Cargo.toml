@@ -1,6 +1,6 @@
 [package]
 name = "vinteria_daw"
-version = "1.0.5"
+version = "1.0.6"
 edition = "2021"
 description = "Winteria DAW - a from-scratch DAW (audio engine, synths, sequencer, piano roll, arrangement, mixer)"
 
@@ -38,6 +38,8 @@ winit = { version = "0.30", default-features = false, features = ["android-nativ
 package = "com.winteria.daw"
 build_targets = ["aarch64-linux-android"]
 apk_name = "Winteria"
+# launcher icon: tools/make_android_icon.py draws it
+resources = "android/res"
 
 [[package.metadata.android.uses_permission]]
 name = "android.permission.INTERNET"
@@ -48,6 +50,7 @@ target_sdk_version = 34
 
 [package.metadata.android.application]
 label = "Winteria"
+icon = "@mipmap/ic_launcher"
 theme = "@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
 
 [package.metadata.android.application.activity]
