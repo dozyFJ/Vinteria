@@ -512,9 +512,6 @@ impl VinteriaApp {
         step("background");
         doodle_background(ctx);
         step("header");
-        if self.m_tab != 1 {
-            self.mobile_dock(ctx);
-        }
         self.mobile_header(ctx);
         step("rail");
         let sections: &[(&str, Icon)] = match self.m_tab {
@@ -576,7 +573,7 @@ impl VinteriaApp {
         }
     }
 
-    // ───────────────────── shell: header, rail, dock ─────────────────────
+    // ───────────────────── shell: header and section navigation ─────────────────────
 
     fn mobile_header(&mut self, ctx: &egui::Context) {
         let resp = egui::TopBottomPanel::top("m_header").show_separator_line(false).frame(Frame::none().fill(bar_fill()).inner_margin(Margin::symmetric(14.0, 10.0))).show(ctx, |ui| {
@@ -615,6 +612,10 @@ impl VinteriaApp {
                         });
                     }
                     t => {
+                        if t != 0 && p_button(ui, "‹", false, vec2(34.0, 38.0)).on_hover_text("Back to Projects").clicked() {
+                            self.m_tab = 0;
+                            self.m_sec = 0;
+                        }
                         let (title, sub) = match t {
                             0 => ("Winteria", format!("v{}  ·  your projects", env!("CARGO_PKG_VERSION"))),
                             2 => ("Settings", "theme, sync and about".to_string()),
@@ -633,6 +634,15 @@ impl VinteriaApp {
                                     self.new_project();
                                     self.m_open_studio(0);
                                 }
+                                ui.menu_button("⋯", |ui| {
+                                    for (tab, label) in [(3, "Profile"), (2, "Settings")] {
+                                        if ui.button(label).clicked() {
+                                            self.m_tab = tab;
+                                            self.m_sec = 0;
+                                            ui.close_menu();
+                                        }
+                                    }
+                                }).response.on_hover_text("Profile and settings");
                             });
                         }
                     }
@@ -692,50 +702,6 @@ impl VinteriaApp {
                 }
             }
         });
-    }
-
-    /// Bottom navigation for Projects, Profile, and Settings.
-    fn mobile_dock(&mut self, ctx: &egui::Context) {
-        let resp = egui::TopBottomPanel::bottom("m_dock").show_separator_line(false).frame(Frame::none().fill(bar_fill()).inner_margin(Margin { left: 8.0, right: 8.0, top: 6.0, bottom: 14.0 })).show(ctx, |ui| {
-            let w = ui.available_width();
-            let (rect, _) = ui.allocate_exact_size(vec2(w, TOUCH), Sense::hover());
-            let tabs = ["Projects", "Studio", "Settings"];
-            let slot = rect.width() / (tabs.len() as f32 + 1.0);
-            // avatar = Profile
-            let cell = Rect::from_min_size(rect.min, vec2(slot, rect.height())).shrink2(vec2(2.0, 0.0));
-            let resp = ui.interact(cell, ui.id().with("dock_profile"), Sense::click());
-            let p = ui.painter();
-            if self.m_tab == 3 {
-                glass(p, cell, 22.0);
-            }
-            let c = cell.center();
-            logo(ui, Rect::from_center_size(c, vec2(40.0, 40.0)));
-            if resp.clicked() {
-                self.m_tab = 3;
-                self.m_sec = 0;
-            }
-            for (i, name) in tabs.iter().enumerate() {
-                let cell = Rect::from_min_size(pos2(rect.left() + (i + 1) as f32 * slot, rect.top()), vec2(slot, rect.height())).shrink2(vec2(2.0, 0.0));
-                let resp = ui.interact(cell, ui.id().with(("dock", i)), Sense::click());
-                let on = self.m_tab == i;
-                let p = ui.painter();
-                if on {
-                    pill(p, cell, p_accent());
-                } else {
-                    glass(p, cell, 22.0);
-                }
-                p.text(cell.center(), Align2::CENTER_CENTER, *name, FontId::proportional(13.5), if on { on_accent() } else { ink() });
-                if resp.clicked() && !on {
-                    self.m_tab = i;
-                    self.m_sec = 0;
-                    if i == 0 {
-                        self.hub_cache = None;
-                    }
-                }
-            }
-        });
-        let r = resp.response.rect;
-        ctx.layer_painter(egui::LayerId::background()).line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, outline()));
     }
 
     fn m_open_studio(&mut self, section: usize) {
