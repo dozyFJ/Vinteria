@@ -196,6 +196,7 @@ enum Icon {
     Tracks,
     Exit,
     FullView,
+    Orientation,
     Rewind,
     Play,
     Pause,
@@ -294,6 +295,13 @@ fn icon(p: &Painter, kind: Icon, c: Pos2, col: Color32) {
                     p.line_segment([corner, c + vec2(x * 8.0, y * 3.0)], s);
                 }
             }
+        }
+        Icon::Orientation => {
+            p.rect_stroke(Rect::from_center_size(c + vec2(-4.0, 0.0), vec2(8.0, 15.0)), 2.0, s);
+            p.line_segment([c + vec2(2.0, -6.0), c + vec2(7.0, -6.0)], s);
+            p.line_segment([c + vec2(7.0, -6.0), c + vec2(7.0, 3.0)], s);
+            p.line_segment([c + vec2(7.0, 3.0), c + vec2(4.0, 0.0)], s);
+            p.line_segment([c + vec2(7.0, 3.0), c + vec2(10.0, 0.0)], s);
         }
         Icon::Rewind => {
             p.line_segment([c + vec2(-8.0, -7.0), c + vec2(-8.0, 7.0)], s);
@@ -628,7 +636,8 @@ impl VinteriaApp {
     fn m_sync_orientation(&self, ctx: &egui::Context) {
         let id = egui::Id::new("m_requested_landscape");
         let previous = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
-        let landscape = self.m_tab == 1;
+        let landscape = self.m_tab == 1
+            && ctx.data(|d| d.get_temp::<bool>(egui::Id::new("m_studio_landscape"))).unwrap_or(false);
         if previous == landscape {
             return;
         }
@@ -707,6 +716,15 @@ impl VinteriaApp {
                 }
                 if studio_icon(ui, width, Icon::FullView, false, "Full view").clicked() {
                     ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_studio_full_view"), true));
+                }
+                #[cfg(target_os = "android")]
+                {
+                    let id = egui::Id::new("m_studio_landscape");
+                    let landscape = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+                    let label = if landscape { "Switch to portrait" } else { "Switch to landscape" };
+                    if studio_icon(ui, width, Icon::Orientation, landscape, label).clicked() {
+                        ctx.data_mut(|d| d.insert_temp(id, !landscape));
+                    }
                 }
                 ui.separator();
                 mobile_scroll(egui::ScrollArea::vertical()).id_salt("m_studio_controls").auto_shrink([false, false]).show(ui, |ui| {
