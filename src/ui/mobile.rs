@@ -596,11 +596,7 @@ impl VinteriaApp {
         }
         if self.m_tab == 1 && self.m_sec == SEC_PLAYLIST {
             if !full_view {
-                if portrait {
-                    self.m_browser_bottom_sheet(ctx);
-                } else {
-                    self.m_browser_sidebar(ctx);
-                }
+                self.m_browser_sidebar(ctx);
             }
         } else {
             ctx.data_mut(|d| {
@@ -1942,81 +1938,31 @@ impl VinteriaApp {
         }
     }
 
-    fn m_browser_bottom_sheet(&mut self, ctx: &egui::Context) {
+    fn m_browser_sidebar(&mut self, ctx: &egui::Context) {
         let id = egui::Id::new("m_browser_open");
         let open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
-        let height = (ctx.screen_rect().height() * 0.39).min(360.0);
-        egui::TopBottomPanel::bottom("m_browser_bottom_sheet")
-            .show_separator_line(false)
-            .exact_height(height)
-            .frame(Frame::none().fill(p_bg()).stroke(Stroke::new(1.0, outline())).rounding(12.0).inner_margin(9.0))
+        let width = (ctx.screen_rect().width() * 0.46).min(288.0);
+        egui::SidePanel::left("m_sample_browser_left").resizable(false)
+            .exact_width(width)
+            .frame(Frame::none().fill(bar_fill()).inner_margin(8.0))
             .show_animated(ctx, open, |ui| {
                 pulse_visuals(ui);
-                let (handle, grip) = ui.allocate_exact_size(vec2(ui.available_width(), 14.0), Sense::drag());
-                let mark = Rect::from_center_size(handle.center(), vec2(34.0, 3.0));
-                ui.painter().rect_filled(mark, 2.0, muted());
-                let mut close = grip.drag_delta().y > 18.0;
+                let mut close = false;
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Browser").size(17.0).strong().color(ink()));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        close |= p_button(ui, "Close", false, vec2(62.0, 32.0)).clicked();
-                    });
+                    close = p_button(ui, "×", false, vec2(28.0, 32.0))
+                        .on_hover_text("Close browser").clicked();
+                    ui.add(egui::Label::new(RichText::new("Browser").size(15.0).strong()).truncate());
                 });
                 if close {
                     ctx.data_mut(|d| {
                         d.insert_temp(id, false);
                         d.remove::<(usize, u32)>(egui::Id::new("m_audio_clip_target"));
                     });
+                    ctx.request_repaint();
                 } else {
                     self.m_browser_items(ui);
                 }
             });
-    }
-
-    fn m_browser_sidebar(&mut self, ctx: &egui::Context) {
-        let id = egui::Id::new("m_browser_open");
-        let open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
-        let width = (ctx.screen_rect().width() * 0.44).min(300.0);
-        let mut next = open;
-        egui::SidePanel::right("m_sample_browser").resizable(false)
-            .exact_width(if open { width } else { 22.0 })
-            .frame(Frame::none().fill(bar_fill()))
-            .show(ctx, |ui| {
-                if !open {
-                    let (rect, response) = ui.allocate_exact_size(vec2(22.0, ui.available_height()), Sense::click_and_drag());
-                    ui.painter().text(pos2(rect.center().x, rect.top() + 22.0), Align2::CENTER_CENTER, "‹", FontId::proportional(22.0), ink());
-                    let response = response.on_hover_text("Browser");
-                    if response.clicked() || response.drag_delta().x < -18.0 {
-                        next = true;
-                    }
-                    return;
-                }
-
-                pulse_visuals(ui);
-                Frame::none().inner_margin(8.0).show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        let response = ui.add(egui::Label::new(RichText::new("Browser").size(17.0).strong()).sense(Sense::drag()));
-                        if response.drag_delta().x > 18.0 {
-                            next = false;
-                        }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if p_button(ui, "×", false, vec2(28.0, 32.0)).on_hover_text("Close browser").clicked() {
-                                next = false;
-                            }
-                        });
-                    });
-                    self.m_browser_items(ui);
-                });
-            });
-        if next != open {
-            ctx.data_mut(|d| {
-                d.insert_temp(id, next);
-                if !next {
-                    d.remove::<(usize, u32)>(egui::Id::new("m_audio_clip_target"));
-                }
-            });
-            ctx.request_repaint();
-        }
     }
 
     fn m_browser_items(&mut self, ui: &mut Ui) {
