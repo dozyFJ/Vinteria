@@ -512,7 +512,9 @@ impl VinteriaApp {
         step("background");
         doodle_background(ctx);
         step("header");
-        self.mobile_navigation(ctx);
+        if self.m_tab != 1 {
+            self.mobile_dock(ctx);
+        }
         self.mobile_header(ctx);
         step("rail");
         let sections: &[(&str, Icon)] = match self.m_tab {
@@ -565,6 +567,11 @@ impl VinteriaApp {
                 ui.set_min_height(TOUCH);
                 match self.m_tab {
                     1 => {
+                        if p_button(ui, "‹", false, vec2(34.0, 38.0)).on_hover_text("Back to Projects").clicked() {
+                            self.m_tab = 0;
+                            self.m_sec = 0;
+                            self.hub_cache = None;
+                        }
                         let name: String = self.project.name.chars().take(18).collect();
                         let playing = self.playing();
                         let (status, color) = match (playing, self.record) {
@@ -669,9 +676,9 @@ impl VinteriaApp {
         });
     }
 
-    /// Main navigation at the top of the screen.
-    fn mobile_navigation(&mut self, ctx: &egui::Context) {
-        let resp = egui::TopBottomPanel::top("m_primary_navigation").show_separator_line(false).frame(Frame::none().fill(bar_fill()).inner_margin(Margin::symmetric(8.0, 6.0))).show(ctx, |ui| {
+    /// Bottom navigation for Projects, Profile, and Settings.
+    fn mobile_dock(&mut self, ctx: &egui::Context) {
+        let resp = egui::TopBottomPanel::bottom("m_dock").show_separator_line(false).frame(Frame::none().fill(bar_fill()).inner_margin(Margin { left: 8.0, right: 8.0, top: 6.0, bottom: 14.0 })).show(ctx, |ui| {
             let w = ui.available_width();
             let (rect, _) = ui.allocate_exact_size(vec2(w, TOUCH), Sense::hover());
             let tabs = ["Projects", "Studio", "Settings"];
@@ -710,7 +717,7 @@ impl VinteriaApp {
             }
         });
         let r = resp.response.rect;
-        ctx.layer_painter(egui::LayerId::background()).line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(1.0, outline()));
+        ctx.layer_painter(egui::LayerId::background()).line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, outline()));
     }
 
     fn m_open_studio(&mut self, section: usize) {
