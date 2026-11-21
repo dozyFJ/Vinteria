@@ -1,5 +1,5 @@
 //! Phone layout in the style of the Pulse messenger (the PC keeps its own AOS look).
-//! Portrait UI with a translucent header, glass cards, and navigation above the content.
+//! Phone navigation and solid surfaces shared across the mobile screens.
 use super::*;
 use crate::mixer::{NUM_CH, NUM_INSERTS};
 use crate::sequencer::{DRUM_NAMES, NUM_DRUMS, TICKS_PER_STEP};
@@ -35,136 +35,33 @@ fn on_accent() -> Color32 {
 fn p_bg() -> Color32 {
     pick(0xFF1A1E23, 0xFFB8C2C7)
 }
-fn doodle() -> Color32 {
-    pick(0x10FFFFFF, 0x10505C62)
-}
 fn bar_fill() -> Color32 {
-    pick(0xA022262B, 0xECC2CBCE)
+    pick(0xFF22272E, 0xFFC2CBCE)
 }
 fn outline() -> Color32 {
     pick(0xFF555F69, 0xFF74858D)
 }
-fn glass_top() -> Color32 {
-    pick(0x80404750, 0xB4D0D6D7)
+fn card_fill() -> Color32 {
+    pick(0xFF2A3139, 0xFFCBD2D4)
 }
-fn glass_bottom() -> Color32 {
-    pick(0x60272C32, 0xAABAC5C9)
+fn selected_fill() -> Color32 {
+    pick(0xFF3B4B57, 0xFFA4B8C0)
 }
-fn glass_edge() -> Color32 {
-    pick(0x48AAB7C4, 0x887B8D94)
-}
-fn lerp_c(a: Color32, b: Color32, t: f32) -> Color32 {
-    let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
-    Color32::from_rgba_premultiplied(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()), m(a.a(), b.a()))
+fn grid_line() -> Color32 {
+    pick(0xFF45525E, 0xFF96A7AF)
 }
 
-// ───────────────────── drawing helpers ─────────────────────
-
-fn rounded_points(r: Rect, rad: f32) -> Vec<Pos2> {
-    let rad = rad.min(r.width() * 0.5).min(r.height() * 0.5).max(0.0);
-    let corners = [
-        (pos2(r.right() - rad, r.top() + rad), -90.0f32),
-        (pos2(r.right() - rad, r.bottom() - rad), 0.0),
-        (pos2(r.left() + rad, r.bottom() - rad), 90.0),
-        (pos2(r.left() + rad, r.top() + rad), 180.0),
-    ];
-    let mut pts = Vec::with_capacity(32);
-    for (c, start) in corners {
-        for i in 0..=6 {
-            let a = (start + i as f32 * 15.0).to_radians();
-            pts.push(pos2(c.x + rad * a.cos(), c.y + rad * a.sin()));
-        }
-    }
-    pts
+fn panel(p: &Painter, rect: Rect, radius: f32) {
+    p.rect_filled(rect, radius, card_fill());
+    p.rect_stroke(rect, radius, Stroke::new(1.0, grid_line()));
 }
 
-/// Glassmorphism card: translucent top-to-bottom gradient with a light rim, like Pulse's `glass()`.
-fn glass(p: &Painter, r: Rect, rad: f32) {
-    glass_tinted(p, r, rad, None);
+fn pill(p: &Painter, rect: Rect, fill: Color32) {
+    p.rect_filled(rect, rect.height() * 0.5, fill);
 }
 
-fn glass_tinted(p: &Painter, r: Rect, rad: f32, tint: Option<Color32>) {
-    let pts = rounded_points(r, rad);
-    let (top, bottom) = match tint {
-        Some(t) => (t, lerp_c(t, Color32::TRANSPARENT, 0.25)),
-        None => (glass_top(), glass_bottom()),
-    };
-    let col = |y: f32| lerp_c(top, bottom, ((y - r.top()) / r.height().max(1.0)).clamp(0.0, 1.0));
-    let mut mesh = egui::Mesh::default();
-    mesh.colored_vertex(r.center(), col(r.center().y));
-    for q in &pts {
-        mesh.colored_vertex(*q, col(q.y));
-    }
-    let n = pts.len() as u32;
-    for i in 0..n {
-        mesh.add_triangle(0, 1 + i, 1 + (i + 1) % n);
-    }
-    p.add(Shape::mesh(mesh));
-    p.add(Shape::closed_line(pts, Stroke::new(1.0, glass_edge())));
-}
-
-/// Glass on an opaque base, for editors where the doodles would get in the way (steps, piano roll, playlist, mixer).
-fn panel(p: &Painter, r: Rect, rad: f32) {
-    p.rect_filled(r, rad, p_bg());
-    glass(p, r, rad);
-}
-
-fn pill(p: &Painter, r: Rect, fill: Color32) {
-    p.rect_filled(r, r.height() * 0.5, fill);
-}
-
-/// Grey background with a faint pattern of music doodles (Pulse uses chat icons, like Telegram).
-fn doodle_background(ctx: &egui::Context) {
-    let rect = ctx.screen_rect();
-    let p = ctx.layer_painter(egui::LayerId::background());
-    p.rect_filled(rect, 0.0, p_bg());
-    let col = doodle();
-    let s = Stroke::new(1.4, col);
-    let cell = 62.0;
-    if !rect.is_finite() || rect.width() <= 0.0 {
-        return;
-    }
-    let cols = ((rect.width() / cell).ceil() as i32 + 1).min(60);
-    let rows = ((rect.height() / cell).ceil() as i32 + 1).min(80);
-    for j in 0..rows {
-        for i in 0..cols {
-            let h = (i as u32).wrapping_mul(73856093) ^ (j as u32).wrapping_mul(19349663);
-            let ox = (h % 17) as f32 - 8.0;
-            let oy = ((h >> 5) % 17) as f32 - 8.0;
-            let c = pos2(rect.left() + i as f32 * cell + cell * 0.5 + ox, rect.top() + j as f32 * cell + cell * 0.5 + oy + if i % 2 == 1 { cell * 0.5 } else { 0.0 });
-            match (h >> 10) % 5 {
-                0 => {
-                    // eighth note
-                    p.circle_stroke(c + vec2(-4.0, 6.0), 4.0, s);
-                    p.line_segment([c + vec2(0.0, 6.0), c + vec2(0.0, -9.0)], s);
-                    p.line_segment([c + vec2(0.0, -9.0), c + vec2(6.0, -4.0)], s);
-                }
-                1 => {
-                    // beamed notes
-                    p.circle_stroke(c + vec2(-7.0, 6.0), 3.5, s);
-                    p.circle_stroke(c + vec2(5.0, 4.0), 3.5, s);
-                    p.line_segment([c + vec2(-3.5, 6.0), c + vec2(-3.5, -8.0)], s);
-                    p.line_segment([c + vec2(8.5, 4.0), c + vec2(8.5, -10.0)], s);
-                    p.line_segment([c + vec2(-3.5, -8.0), c + vec2(8.5, -10.0)], s);
-                }
-                2 => {
-                    // wave
-                    let pts: Vec<Pos2> = (0..=16).map(|k| c + vec2(-11.0 + k as f32 * 1.4, (k as f32 * 0.8).sin() * 4.0)).collect();
-                    p.add(Shape::line(pts, s));
-                }
-                3 => {
-                    // knob
-                    p.circle_stroke(c, 7.0, s);
-                    p.line_segment([c, c + vec2(4.0, -4.0)], s);
-                }
-                _ => {
-                    // little fader
-                    p.line_segment([c + vec2(0.0, -9.0), c + vec2(0.0, 9.0)], s);
-                    p.rect_stroke(Rect::from_center_size(c + vec2(0.0, 2.0), vec2(9.0, 4.0)), 1.0, s);
-                }
-            }
-        }
-    }
+fn mobile_background(ctx: &egui::Context) {
+    ctx.layer_painter(egui::LayerId::background()).rect_filled(ctx.screen_rect(), 0.0, p_bg());
 }
 
 /// The app logo (yin-yang of night and day with a W), the same picture as the launcher icon.
@@ -354,14 +251,14 @@ fn heading(ui: &mut Ui, text: &str) {
     ui.add_space(4.0);
 }
 
-/// Glass list row: coloured badge with a letter, title, subtitle and a right-hand note.
+/// List row: coloured badge with a letter, title, subtitle and a right-hand note.
 fn list_row(ui: &mut Ui, badge: Color32, letter: &str, title: &str, sub: &str, note: &str, selected: bool) -> Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 64.0), Sense::click());
     let p = ui.painter();
     if selected {
-        glass_tinted(p, rect, 14.0, Some(p_accent().linear_multiply(0.30)));
+        p.rect_filled(rect, 14.0, selected_fill());
     } else {
-        glass(p, rect, 14.0);
+        panel(p, rect, 14.0);
     }
     let b = Rect::from_center_size(pos2(rect.left() + 32.0, rect.center().y), vec2(42.0, 42.0));
     p.circle_filled(b.center(), 21.0, badge.linear_multiply(0.85));
@@ -377,14 +274,14 @@ fn list_row(ui: &mut Ui, badge: Color32, letter: &str, title: &str, sub: &str, n
     resp
 }
 
-/// Pulse button: accent pill (primary) or glass pill.
+/// Pulse button: accent pill (primary) or neutral pill.
 fn p_button(ui: &mut Ui, text: &str, primary: bool, size: egui::Vec2) -> Response {
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let p = ui.painter();
     if primary {
         pill(p, rect, if resp.is_pointer_button_down_on() { p_accent().linear_multiply(0.8) } else { p_accent() });
     } else {
-        glass(p, rect, rect.height() * 0.5);
+        panel(p, rect, rect.height() * 0.5);
     }
     p.text(rect.center(), Align2::CENTER_CENTER, text, FontId::proportional(15.0), if primary { on_accent() } else { ink() });
     resp
@@ -407,12 +304,12 @@ fn segmented(ui: &mut Ui, id_salt: &str, items: &[&str]) -> usize {
     sel
 }
 
-/// egui widgets (sliders, text fields, drag values) restyled to match the glass look.
+/// egui widgets (sliders, text fields, drag values) restyled with solid fills.
 fn mobile_scroll(area: egui::ScrollArea) -> egui::ScrollArea {
     area.scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
 }
 
-fn pulse_visuals(ui: &mut Ui) {
+fn mobile_visuals(ui: &mut Ui) {
     // Shared desktop editors also inherit this style while embedded in a mobile sheet.
     let scroll = &mut ui.spacing_mut().scroll;
     scroll.bar_width = 0.0;
@@ -422,32 +319,22 @@ fn pulse_visuals(ui: &mut Ui) {
     scroll.bar_outer_margin = 0.0;
     let v = ui.visuals_mut();
     v.override_text_color = Some(ink());
-    v.extreme_bg_color = glass_bottom();
-    v.selection.bg_fill = p_accent().linear_multiply(0.6);
+    v.window_fill = card_fill();
+    v.panel_fill = p_bg();
+    v.extreme_bg_color = pick(0xFF1B2026, 0xFFACB9BF);
+    v.selection.bg_fill = selected_fill();
     v.selection.stroke = Stroke::new(1.0, p_accent());
-    for w in [&mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active] {
-        w.bg_fill = glass_top();
-        w.weak_bg_fill = glass_top();
-        w.bg_stroke = Stroke::new(1.0, glass_edge());
-        w.rounding = egui::Rounding::same(12.0);
-        w.fg_stroke = Stroke::new(1.5, ink());
-    }
-    if !is_dark() {
-        v.window_fill = argb(0xFFCBD2D4);
-        v.panel_fill = p_bg();
-        v.extreme_bg_color = argb(0xFFACB9BF);
-        v.selection.bg_fill = argb(0xFF8EA9B5);
-        for (widget, fill) in [
-            (&mut v.widgets.inactive, 0xFFC7D0D3),
-            (&mut v.widgets.hovered, 0xFFD0D8DA),
-            (&mut v.widgets.active, 0xFFA4B8C0),
-            (&mut v.widgets.open, 0xFFB3C3C9),
-        ] {
-            widget.bg_fill = argb(fill);
-            widget.weak_bg_fill = argb(fill);
-            widget.bg_stroke = Stroke::new(1.0, outline());
-            widget.fg_stroke = Stroke::new(1.5, ink());
-        }
+    for (widget, fill) in [
+        (&mut v.widgets.inactive, card_fill()),
+        (&mut v.widgets.hovered, pick(0xFF343D47, 0xFFD0D8DA)),
+        (&mut v.widgets.active, selected_fill()),
+        (&mut v.widgets.open, bar_fill()),
+    ] {
+        widget.bg_fill = fill;
+        widget.weak_bg_fill = fill;
+        widget.bg_stroke = Stroke::new(1.0, outline());
+        widget.rounding = egui::Rounding::same(10.0);
+        widget.fg_stroke = Stroke::new(1.5, ink());
     }
     v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, ink());
     v.slider_trailing_fill = true;
@@ -499,12 +386,12 @@ impl VinteriaApp {
             }
         }
         if let Some(report) = ctx.data(|d| d.get_temp::<String>(crash_id)) {
-            doodle_background(ctx);
+            mobile_background(ctx);
             self.m_crash_screen(ctx, &report, crash_id);
             return;
         }
         if crate::safe_mode() {
-            doodle_background(ctx);
+            mobile_background(ctx);
             self.m_safe_screen(ctx);
             return;
         }
@@ -528,7 +415,7 @@ impl VinteriaApp {
         let crash = std::fs::read_to_string(CRASH_FILE).unwrap_or_default();
         let report = format!("Last start stopped after:\n{last}\n{crash}");
         egui::CentralPanel::default().frame(Frame::none().inner_margin(Margin::symmetric(14.0, 18.0))).show(ctx, |ui| {
-            pulse_visuals(ui);
+            mobile_visuals(ui);
             ui.label(RichText::new("Safe mode").size(22.0).strong().color(ink()));
             ui.label(RichText::new("The last start crashed. Sound is off. Send a screenshot of this screen to the developer.").size(13.0).color(muted()));
             ui.add_space(10.0);
@@ -549,7 +436,7 @@ impl VinteriaApp {
 
     fn m_crash_screen(&mut self, ctx: &egui::Context, report: &str, crash_id: egui::Id) {
         egui::CentralPanel::default().frame(Frame::none().inner_margin(Margin::symmetric(14.0, 18.0))).show(ctx, |ui| {
-            pulse_visuals(ui);
+            mobile_visuals(ui);
             ui.label(RichText::new("Winteria hit an error").size(22.0).strong().color(ink()));
             ui.label(RichText::new("Send a screenshot of this screen to the developer.").size(13.0).color(muted()));
             ui.add_space(10.0);
@@ -594,11 +481,7 @@ impl VinteriaApp {
             }
         }
         step("background");
-        if self.m_tab == 0 {
-            ctx.layer_painter(egui::LayerId::background()).rect_filled(ctx.screen_rect(), 0.0, p_bg());
-        } else {
-            doodle_background(ctx);
-        }
+        mobile_background(ctx);
         step("header");
         let screen = ctx.screen_rect();
         let portrait = screen.width() < screen.height();
@@ -644,7 +527,7 @@ impl VinteriaApp {
             Margin { left: 14.0, right: 14.0, top: 10.0, bottom: 6.0 }
         };
         egui::CentralPanel::default().frame(Frame::none().inner_margin(margin)).show(ctx, |ui| {
-            pulse_visuals(ui);
+            mobile_visuals(ui);
             match self.m_tab {
                 0 => self.m_projects(ui),
                 1 => self.m_studio(ui),
@@ -660,7 +543,7 @@ impl VinteriaApp {
                 let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("m_browser_drag")));
                 let pos = (point + vec2(12.0, -22.0)).clamp(ctx.screen_rect().min, ctx.screen_rect().max);
                 let rect = Rect::from_min_size(pos, vec2(118.0, 28.0));
-                glass(&painter, rect, 9.0);
+                panel(&painter, rect, 9.0);
                 let short: String = label.chars().take(15).collect();
                 painter.text(rect.center(), Align2::CENTER_CENTER, short, FontId::proportional(12.0), ink());
             }
@@ -716,7 +599,7 @@ impl VinteriaApp {
 
     fn mobile_header(&mut self, ctx: &egui::Context) {
         let resp = egui::TopBottomPanel::top("m_header").show_separator_line(false).frame(Frame::none().fill(bar_fill()).inner_margin(Margin::symmetric(14.0, 10.0))).show(ctx, |ui| {
-            pulse_visuals(ui);
+            mobile_visuals(ui);
             let t = self.m_tab;
             ui.horizontal(|ui| {
                 ui.set_min_height(TOUCH);
@@ -773,7 +656,7 @@ impl VinteriaApp {
         egui::SidePanel::left("m_studio_sidebar").resizable(false).exact_width(52.0)
             .frame(Frame::none().fill(bar_fill()).inner_margin(Margin::symmetric(4.0, 5.0)))
             .show(ctx, |ui| {
-                pulse_visuals(ui);
+                mobile_visuals(ui);
                 let width = ui.available_width();
                 if self.m_studio_exit(ui, ctx, width) {
                     return;
@@ -790,7 +673,7 @@ impl VinteriaApp {
         egui::TopBottomPanel::top("m_studio_portrait_header").show_separator_line(false)
             .frame(Frame::none().fill(bar_fill()).inner_margin(Margin::symmetric(6.0, 4.0)))
             .show(ctx, |ui| {
-                pulse_visuals(ui);
+                mobile_visuals(ui);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
                     let width = 44.0;
@@ -816,7 +699,7 @@ impl VinteriaApp {
             .show_separator_line(false)
             .frame(Frame::none().fill(bar_fill()).inner_margin(Margin { left: 7.0, right: 7.0, top: 6.0, bottom: 12.0 }))
             .show(ctx, |ui| {
-                pulse_visuals(ui);
+                mobile_visuals(ui);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 1.0;
                     let width = (ui.available_width() - 5.0) / 6.0;
@@ -824,7 +707,7 @@ impl VinteriaApp {
                         let (rect, response) = ui.allocate_exact_size(vec2(width, 50.0), Sense::click());
                         let p = ui.painter();
                         if self.m_sec == index {
-                            glass_tinted(p, rect, 11.0, Some(p_accent().linear_multiply(0.22)));
+                            p.rect_filled(rect, 11.0, selected_fill());
                         }
                         icon(p, symbol, rect.center_top() + vec2(0.0, 16.0), ink());
                         p.text(rect.center_bottom() - vec2(0.0, 5.0), Align2::CENTER_BOTTOM, label,
@@ -882,7 +765,7 @@ impl VinteriaApp {
             .show_separator_line(false)
             .frame(Frame::none().fill(bar_fill()).inner_margin(Margin::symmetric(7.0, 3.0)))
             .show(ctx, |ui| {
-                pulse_visuals(ui);
+                mobile_visuals(ui);
                 mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_playlist_track_tabs")
                     .auto_shrink([false, true]).show(ui, |ui| {
                         ui.horizontal(|ui| {
@@ -1246,7 +1129,7 @@ impl VinteriaApp {
         ui.add_space(8.0);
     }
 
-    /// Drum step sequencer: one glass card per drum, two rows of 8 big steps per 16-step page.
+    /// Drum step sequencer: one card per drum, two rows of 8 big steps per 16-step page.
     fn m_steps(&mut self, ui: &mut Ui) {
         self.m_pattern_chips(ui);
         let pi = self.project.current_pattern;
@@ -1304,7 +1187,7 @@ impl VinteriaApp {
                             p.circle_filled(r.right_top() + vec2(-7.0, 7.0), 3.0, Color32::WHITE);
                         }
                     } else {
-                        glass(p, r, 10.0);
+                        panel(p, r, 10.0);
                     }
                     if playing && play_step == s {
                         p.rect_stroke(r.expand(2.0), 12.0, Stroke::new(2.0, p_accent()));
@@ -1496,12 +1379,12 @@ impl VinteriaApp {
                 } else if !crate::theory::in_scale(key_root, key_scale, pitch) || matches!(pitch % 12, 1 | 3 | 6 | 8 | 10) {
                     p.rect_filled(lane, 0.0, pick(0x28000000, 0x18000000));
                 }
-                let edge = if pitch % 12 == 0 { outline() } else { glass_edge().linear_multiply(0.5) };
+                let edge = if pitch % 12 == 0 { outline() } else { grid_line().linear_multiply(0.5) };
                 p.line_segment([lane.left_bottom(), lane.right_bottom()], Stroke::new(0.7, edge));
             }
             for step in 0..steps {
                 let x = rect.left() + step as f32 * step_w;
-                let stroke = if step % 16 == 0 { Stroke::new(1.0, outline()) } else if step % 4 == 0 { Stroke::new(0.7, glass_edge()) } else { Stroke::new(0.4, glass_edge().linear_multiply(0.5)) };
+                let stroke = if step % 16 == 0 { Stroke::new(1.0, outline()) } else if step % 4 == 0 { Stroke::new(0.7, grid_line()) } else { Stroke::new(0.4, grid_line().linear_multiply(0.5)) };
                 p.line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], stroke);
             }
             if let Some(step) = cursor {
@@ -1740,7 +1623,7 @@ impl VinteriaApp {
         let range = plot.shrink2(vec2(0.0, 4.0));
         for velocity in [32, 64, 96] {
             let y = range.bottom() - f32::from(velocity as u8) / 127.0 * range.height();
-            painter.hline(plot.x_range(), y, Stroke::new(0.5, glass_edge()));
+            painter.hline(plot.x_range(), y, Stroke::new(0.5, grid_line()));
         }
 
         let notes = &mut self.project.patterns[pattern].notes;
@@ -1865,7 +1748,7 @@ impl VinteriaApp {
                 let content = rect.shrink2(vec2(9.0, 7.0));
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(content));
                 child.set_clip_rect(rect.intersect(screen));
-                pulse_visuals(&mut child);
+                mobile_visuals(&mut child);
                 close |= self.m_piano_editor(&mut child, pattern, Some((full_id, full)));
             });
         close || ctx.input(|input| input.key_pressed(egui::Key::Escape))
@@ -1899,7 +1782,7 @@ impl VinteriaApp {
                 ui.painter().rect_filled(rect, 0.0, p_bg());
                 let mut content = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(9.0)));
                 content.set_clip_rect(rect.intersect(screen));
-                pulse_visuals(&mut content);
+                mobile_visuals(&mut content);
                 content.horizontal(|ui| {
                     done = p_button(ui, "Done", true, vec2(60.0, 32.0)).clicked();
                     ui.add(egui::Label::new(RichText::new(&title).size(15.0).strong()).truncate());
@@ -1958,7 +1841,7 @@ impl VinteriaApp {
                 // scene launcher
                 let sr = Rect::from_min_size(pos2(rect.left(), y), vec2(head_w - 8.0, cell_h));
                 let sresp = ui.interact(sr, ui.id().with(("scene", sc)), Sense::click());
-                glass(ui.painter(), sr, 12.0);
+                panel(ui.painter(), sr, 12.0);
                 icon(ui.painter(), Icon::Play, sr.center() + vec2(1.0, -6.0), ink());
                 ui.painter().text(sr.center() + vec2(0.0, 13.0), Align2::CENTER_CENTER, format!("{}", sc + 1), FontId::proportional(11.0), muted());
                 if sresp.clicked() {
@@ -1998,7 +1881,7 @@ impl VinteriaApp {
                         }
                         None => {
                             p.rect_filled(r, 12.0, p_bg());
-                            p.rect_stroke(r, 12.0, Stroke::new(1.0, glass_edge()));
+                            p.rect_stroke(r, 12.0, Stroke::new(1.0, grid_line()));
                             let midi = self.project.arrangement.tracks[l].kind != crate::arrangement::TrackKind::Audio;
                             if midi {
                                 icon(p, Icon::Plus, r.center(), muted().linear_multiply(0.6));
@@ -2027,9 +1910,9 @@ impl VinteriaApp {
         egui::Area::new(egui::Id::new("m_step_sheet")).order(egui::Order::Foreground).anchor(Align2::CENTER_BOTTOM, [0.0, -150.0]).show(ctx, |ui| {
             let (rect, _) = ui.allocate_exact_size(vec2(w, 372.0), Sense::click());
             ui.painter().rect_filled(rect, 20.0, p_bg());
-            glass(ui.painter(), rect, 20.0);
+            panel(ui.painter(), rect, 20.0);
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(16.0)));
-            pulse_visuals(&mut child);
+            mobile_visuals(&mut child);
             let ui = &mut child;
             ui.horizontal(|ui| {
                 ui.label(RichText::new(format!("{}  ·  step {}", DRUM_NAMES[lane], s + 1)).size(17.0).strong().color(ink()));
@@ -2104,9 +1987,9 @@ impl VinteriaApp {
         egui::Area::new(egui::Id::new("m_export_sheet")).order(egui::Order::Foreground).anchor(Align2::CENTER_BOTTOM, [0.0, -150.0]).show(ctx, |ui| {
             let (rect, _) = ui.allocate_exact_size(vec2(w, 250.0), Sense::click());
             ui.painter().rect_filled(rect, 20.0, p_bg());
-            glass(ui.painter(), rect, 20.0);
+            panel(ui.painter(), rect, 20.0);
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(16.0)));
-            pulse_visuals(&mut child);
+            mobile_visuals(&mut child);
             let ui = &mut child;
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Export & share").size(18.0).strong().color(ink()));
@@ -2200,7 +2083,7 @@ impl VinteriaApp {
             .exact_width(width)
             .frame(Frame::none().fill(bar_fill()).inner_margin(8.0))
             .show_animated(ctx, open, |ui| {
-                pulse_visuals(ui);
+                mobile_visuals(ui);
                 let mut close = false;
                 ui.horizontal(|ui| {
                     close = p_button(ui, "×", false, vec2(28.0, 32.0))
@@ -2475,11 +2358,11 @@ impl VinteriaApp {
                 if lane == self.arr.sel_lane {
                     p.rect_filled(Rect::from_min_size(r.min, vec2(3.0, r.height())), 0.0, lane_col(lane));
                 }
-                p.line_segment([r.left_top(), r.right_top()], Stroke::new(0.6, glass_edge()));
+                p.line_segment([r.left_top(), r.right_top()], Stroke::new(0.6, grid_line()));
             }
             if add_lane {
                 let y = gy + tracks as f32 * lane_h;
-                p.line_segment([pos2(rect.left(), y), pos2(rect.right(), y)], Stroke::new(0.6, glass_edge()));
+                p.line_segment([pos2(rect.left(), y), pos2(rect.right(), y)], Stroke::new(0.6, grid_line()));
                 p.text(pos2(rect.left() + 10.0, y + lane_h * 0.5), Align2::LEFT_CENTER,
                     "+ New track", FontId::proportional(12.0), muted());
             }
@@ -2487,7 +2370,7 @@ impl VinteriaApp {
                 let x = gx + b as f32 * bar_w;
                 let strong = b % 4 == 0;
                 p.line_segment([pos2(x, gy), pos2(x, gy + full_h)],
-                    Stroke::new(if strong { 1.0 } else { 0.45 }, if strong { outline() } else { glass_edge() }));
+                    Stroke::new(if strong { 1.0 } else { 0.45 }, if strong { outline() } else { grid_line() }));
             }
             for (i, c) in self.project.arrangement.clips.iter().enumerate() {
                 let x0 = gx + c.start as f32 / TICKS_PER_BAR as f32 * bar_w;
@@ -2497,7 +2380,7 @@ impl VinteriaApp {
                 let clip = ui.interact(hit, resp.id.with(("clip", i)), Sense::click_and_drag())
                     .on_hover_cursor(egui::CursorIcon::Grab);
                 let col = lane_col(c.lane);
-                let fill = if is_dark() { col.linear_multiply(0.75) } else { lerp_c(col, p_bg(), 0.30) };
+                let fill = if is_dark() { col.linear_multiply(0.75) } else { tint(col, p_bg(), 0.30) };
                 p.rect_filled(r, 3.0, fill);
                 if self.arr.sel_clip == Some(i) {
                     p.rect_stroke(r.expand(1.0), 9.0, Stroke::new(2.0, p_accent()));
@@ -2639,7 +2522,7 @@ impl VinteriaApp {
                 if lane == self.arr.sel_lane {
                     labels.rect_filled(row, 0.0, pick(0xFF323D4C, 0xFFA2B5BE));
                 }
-                labels.line_segment([row.left_top(), row.right_top()], Stroke::new(0.6, glass_edge()));
+                labels.line_segment([row.left_top(), row.right_top()], Stroke::new(0.6, grid_line()));
                 labels.circle_filled(row.left_center() + vec2(if portrait { 7.0 } else { 12.0 }, 0.0), 3.0, lane_col(lane));
                 let short = if portrait { format!("{}{}", if audio { "A" } else { "M" }, counts[kind]) } else { String::new() };
                 let label = if portrait { short.as_str() } else { track.name.as_str() };
@@ -2750,9 +2633,8 @@ impl VinteriaApp {
             for l in 0..n {
                 let col = lane_col(l);
                 let audio = self.project.arrangement.tracks[l].kind == crate::arrangement::TrackKind::Audio;
-                // the glass goes under the card's widgets: reserve its slot first, fill it once the size is known
-                let slot = ui.painter().add(Shape::Noop);
-                let inner = Frame::none().inner_margin(12.0).show(ui, |ui| {
+                Frame::none().fill(card_fill()).rounding(16.0).stroke(Stroke::new(1.0, grid_line()))
+                    .inner_margin(12.0).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
                         let (r, _) = ui.allocate_exact_size(vec2(10.0, 30.0), Sense::hover());
@@ -2767,7 +2649,7 @@ impl VinteriaApp {
                                 if *v {
                                     pill(ui.painter(), r, if flag == 0 { AMBER } else { p_accent() });
                                 } else {
-                                    glass(ui.painter(), r, 17.0);
+                                    panel(ui.painter(), r, 17.0);
                                 }
                                 ui.painter().text(r.center(), Align2::CENTER_CENTER, label, FontId::proportional(14.0), if *v { on_accent() } else { ink() });
                                 if resp.clicked() {
@@ -2787,20 +2669,6 @@ impl VinteriaApp {
                         ui.label(RichText::new(instruments_ui::Inst::from_track(inst).title()).size(11.0).color(muted()));
                     }
                 });
-                let r = inner.response.rect;
-                let pts = rounded_points(r, 16.0);
-                let (top, bottom) = (glass_top(), glass_bottom());
-                let col = |y: f32| lerp_c(top, bottom, ((y - r.top()) / r.height().max(1.0)).clamp(0.0, 1.0));
-                let mut mesh = egui::Mesh::default();
-                mesh.colored_vertex(r.center(), col(r.center().y));
-                for q in &pts {
-                    mesh.colored_vertex(*q, col(q.y));
-                }
-                let k = pts.len() as u32;
-                for i in 0..k {
-                    mesh.add_triangle(0, 1 + i, 1 + (i + 1) % k);
-                }
-                ui.painter().set(slot, Shape::Vec(vec![Shape::mesh(mesh), Shape::closed_line(pts, Stroke::new(1.0, glass_edge()))]));
                 ui.add_space(8.0);
             }
         });
@@ -2842,12 +2710,12 @@ impl VinteriaApp {
         let (rect, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
         if insert.is_none() {
             ui.painter().rect_filled(rect, 16.0, p_bg());
-            glass_tinted(ui.painter(), rect, 16.0, Some(p_accent().linear_multiply(0.10)));
+            panel(ui.painter(), rect, 16.0);
         } else {
             panel(ui.painter(), rect, 16.0);
         }
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(8.0)).layout(egui::Layout::top_down(egui::Align::Center)));
-        pulse_visuals(&mut child);
+        mobile_visuals(&mut child);
         child.spacing_mut().slider_width = (h - 130.0).max(80.0);
         match insert {
             None => {
@@ -2868,7 +2736,7 @@ impl VinteriaApp {
                 if ch.mute {
                     pill(child.painter(), r, AMBER);
                 } else {
-                    glass(child.painter(), r, 16.0);
+                    panel(child.painter(), r, 16.0);
                 }
                 child.painter().text(r.center(), Align2::CENTER_CENTER, "M", FontId::proportional(13.0), if ch.mute { on_accent() } else { ink() });
                 if resp.clicked() {
@@ -2899,7 +2767,7 @@ impl VinteriaApp {
             ui.add_space(10.0);
             heading(ui, "Sound");
             let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 64.0), Sense::hover());
-            glass(ui.painter(), rect, 14.0);
+            panel(ui.painter(), rect, 14.0);
             let status = match &self.audio.error {
                 Some(e) => e.clone(),
                 None if self.audio.has_stream() => format!("{} Hz  ·  output is running", self.audio.sample_rate),
@@ -2927,7 +2795,7 @@ impl VinteriaApp {
     fn m_profile(&mut self, ui: &mut Ui) {
         mobile_scroll(egui::ScrollArea::vertical()).auto_shrink([false, false]).show(ui, |ui| {
             let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 180.0), Sense::hover());
-            glass(ui.painter(), rect, 18.0);
+            panel(ui.painter(), rect, 18.0);
             let c = pos2(rect.center().x, rect.top() + 64.0);
             let p = ui.painter();
             p.circle_stroke(c, 44.0, Stroke::new(3.0, p_accent()));
@@ -2948,7 +2816,7 @@ fn studio_icon(ui: &mut Ui, width: f32, symbol: Icon, active: bool, label: &str)
     if active {
         pill(ui.painter(), rect, p_accent());
     } else if response.hovered() {
-        glass(ui.painter(), rect, 9.0);
+        panel(ui.painter(), rect, 9.0);
     }
     icon(ui.painter(), symbol, rect.center(), if active { on_accent() } else { ink() });
     response.on_hover_text(label)
@@ -2962,7 +2830,7 @@ fn mobile_editor_sheet(ctx: &egui::Context, id: &'static str, title: &str, body:
         .anchor(Align2::CENTER_BOTTOM, [0.0, -8.0]).fixed_size(size)
         .frame(Frame::none().fill(p_bg()).stroke(Stroke::new(1.0, outline())).rounding(16.0).inner_margin(10.0))
         .show(ctx, |ui| {
-            pulse_visuals(ui);
+            mobile_visuals(ui);
             ui.horizontal(|ui| {
                 let title_width = (ui.available_width() - 76.0).max(1.0);
                 ui.add_sized([title_width, 32.0], egui::Label::new(RichText::new(title).size(17.0).strong().color(ink())).truncate());
