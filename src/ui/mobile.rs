@@ -1196,11 +1196,8 @@ impl VinteriaApp {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().interact_size.y = 44.0;
-                    if let Some((full_id, full)) = drawer {
+                    if drawer.is_some() {
                         close = p_button(ui, "Done", true, vec2(60.0, 44.0)).clicked();
-                        if p_button(ui, if full { "Restore" } else { "Full view" }, false, vec2(86.0, 44.0)).clicked() {
-                            ui.data_mut(|d| d.insert_temp(full_id, !full));
-                        }
                     }
                     if !valid_pattern {
                         return;
@@ -1226,6 +1223,11 @@ impl VinteriaApp {
                     }
                     if p_button(ui, "Rec", record_step.is_some(), vec2(44.0, 44.0)).clicked() {
                         record_step = if record_step.is_some() { None } else { Some(0) };
+                    }
+                    if let Some((full_id, full)) = drawer {
+                        if p_button(ui, if full { "Restore" } else { "Full view" }, false, vec2(86.0, 44.0)).clicked() {
+                            ui.data_mut(|d| d.insert_temp(full_id, !full));
+                        }
                     }
                     if p_button(ui, "Oct −", false, vec2(62.0, 44.0)).clicked() {
                         oct = oct.saturating_sub(1);
