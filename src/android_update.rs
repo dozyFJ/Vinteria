@@ -78,6 +78,35 @@ impl Updater {
         });
     }
 
+    /// Hand a file to Android's share sheet (Telegram, TikTok, Drive, ...).
+    pub(crate) fn share_file(&self, path: &str, mime: &str) -> Result<(), String> {
+        with_activity(&self.app, |env, activity| {
+            // a file:// link would be refused by StrictMode on Android 7+: relax the VM policy for this app
+            let builder = env.new_object("android/os/StrictMode$VmPolicy$Builder", "()V", &[])?;
+            let policy = env.call_method(&builder, "build", "()Landroid/os/StrictMode$VmPolicy;", &[])?.l()?;
+            env.call_static_method("android/os/StrictMode", "setVmPolicy", "(Landroid/os/StrictMode$VmPolicy;)V", &[JValue::Object(&policy)])?;
+            let jpath = env.new_string(path)?;
+            let file = env.new_object("java/io/File", "(Ljava/lang/String;)V", &[JValue::Object(&jpath)])?;
+            let uri = env.call_static_method("android/net/Uri", "fromFile", "(Ljava/io/File;)Landroid/net/Uri;", &[JValue::Object(&file)])?.l()?;
+            let action = env.new_string("android.intent.action.SEND")?;
+            let intent = env.new_object("android/content/Intent", "(Ljava/lang/String;)V", &[JValue::Object(&action)])?;
+            let jmime = env.new_string(mime)?;
+            env.call_method(&intent, "setType", "(Ljava/lang/String;)Landroid/content/Intent;", &[JValue::Object(&jmime)])?;
+            let extra = env.new_string("android.intent.extra.STREAM")?;
+            env.call_method(&intent, "putExtra", "(Ljava/lang/String;Landroid/os/Parcelable;)Landroid/content/Intent;", &[JValue::Object(&extra), JValue::Object(&uri)])?;
+            env.call_method(&intent, "addFlags", "(I)Landroid/content/Intent;", &[JValue::Int(1)])?;
+            let title = env.new_string("Share")?;
+            let chooser = env.call_static_method(
+                "android/content/Intent", "createChooser",
+                "(Landroid/content/Intent;Ljava/lang/CharSequence;)Landroid/content/Intent;",
+                &[JValue::Object(&intent), JValue::Object(&title)],
+            )?.l()?;
+            env.call_method(activity, "startActivity", "(Landroid/content/Intent;)V", &[JValue::Object(&chooser)])?;
+            Ok(())
+        })
+        .map_err(|e| e.to_string())
+    }
+
     pub(crate) fn show(&mut self, ui: &mut egui::Ui) {
         let status = self.status.lock().unwrap().clone();
         let elapsed = self.last_check.map_or(CHECK_INTERVAL, |last| last.elapsed());

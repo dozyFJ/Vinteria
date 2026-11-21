@@ -277,6 +277,7 @@ pub struct VinteriaApp {
     /// phone layout: dock tab (0 Projects, 1 Studio, 2 Settings, 3 Profile) and the section picked in the icon rail
     m_tab: usize,
     m_sec: usize,
+    m_export: mobile::MobileExport,
     /// waveform of the whole arrangement (signature it was rendered for, peaks), the render in flight and the one waiting
     song_wave: Option<(u64, Vec<f32>)>,
     song_rx: Option<Receiver<(u64, Vec<f32>)>>,
@@ -390,6 +391,7 @@ impl VinteriaApp {
             splash: std::time::Instant::now(),
             m_tab: 0,
             m_sec: 0,
+            m_export: Default::default(),
             song_wave: None,
             song_rx: None,
             song_pending: None,

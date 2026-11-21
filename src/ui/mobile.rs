@@ -3,7 +3,7 @@
 //! and the dock itself: profile avatar + Projects · Studio · Settings.
 use super::*;
 use crate::mixer::{NUM_CH, NUM_INSERTS};
-use crate::sequencer::{NUM_DRUMS, TICKS_PER_STEP};
+use crate::sequencer::{DRUM_NAMES, NUM_DRUMS, TICKS_PER_STEP};
 use egui::{Align2, FontId, Frame, Margin, Painter, Pos2, Rect, Response, RichText, Sense, Shape, Ui};
 
 const TOUCH: f32 = 44.0;
@@ -198,6 +198,8 @@ enum Icon {
     Play,
     Stop,
     Plus,
+    Session,
+    Share,
 }
 
 fn icon(p: &Painter, kind: Icon, c: Pos2, col: Color32) {
@@ -279,6 +281,25 @@ fn icon(p: &Painter, kind: Icon, c: Pos2, col: Color32) {
         }
         Icon::Stop => {
             p.rect_filled(Rect::from_center_size(c, vec2(11.0, 11.0)), 2.0, col);
+        }
+        Icon::Session => {
+            for y in 0..2 {
+                for x in 0..2 {
+                    let r = Rect::from_center_size(c + vec2(-4.5 + x as f32 * 9.0, -4.5 + y as f32 * 9.0), vec2(7.0, 7.0));
+                    p.rect_stroke(r, 1.5, s);
+                }
+            }
+            p.add(Shape::convex_polygon(vec![c + vec2(-6.5, -7.0), c + vec2(-2.5, -4.5), c + vec2(-6.5, -2.0)], col, Stroke::NONE));
+        }
+        Icon::Share => {
+            let a = c + vec2(6.0, -7.0);
+            let b = c + vec2(-6.0, 0.0);
+            let d = c + vec2(6.0, 7.0);
+            p.line_segment([a, b], Stroke::new(1.6, col));
+            p.line_segment([b, d], Stroke::new(1.6, col));
+            for q in [a, b, d] {
+                p.circle_filled(q, 3.0, col);
+            }
         }
         Icon::Plus => {
             p.line_segment([c + vec2(-7.0, 0.0), c + vec2(7.0, 0.0)], Stroke::new(2.2, col));
@@ -366,7 +387,33 @@ fn pulse_visuals(ui: &mut Ui) {
 }
 
 const PROJECT_SECTIONS: [(&str, Icon); 4] = [("Projects", Icon::Folder), ("Recent", Icon::Clock), ("Templates", Icon::Layout), ("Sounds", Icon::Wave)];
-const STUDIO_SECTIONS: [(&str, Icon); 5] = [("Steps", Icon::Steps), ("Piano", Icon::Keys), ("Playlist", Icon::Timeline), ("Mixer", Icon::Mixer), ("Tracks", Icon::Tracks)];
+const STUDIO_SECTIONS: [(&str, Icon); 6] = [("Steps", Icon::Steps), ("Piano", Icon::Keys), ("Session", Icon::Session), ("Playlist", Icon::Timeline), ("Mixer", Icon::Mixer), ("Tracks", Icon::Tracks)];
+const SEC_PLAYLIST: usize = 3;
+
+/// Export & Share sheet of the phone layout: renders on a worker thread, then hands the WAV to Android's share sheet.
+#[derive(Default)]
+pub(super) struct MobileExport {
+    open: bool,
+    song: bool,
+    share_after: bool,
+    rx: Option<Receiver<Result<PathBuf, String>>>,
+    status: String,
+    last: Option<PathBuf>,
+}
+
+fn export_dir() -> PathBuf {
+    #[cfg(target_os = "android")]
+    {
+        // shared Music folder: the file stays visible to players and other apps (Android 11+ lets an app add its own files here)
+        let d = PathBuf::from("/storage/emulated/0/Music/Winteria");
+        if std::fs::create_dir_all(&d).is_ok() {
+            return d;
+        }
+    }
+    let d = PathBuf::from("exports");
+    let _ = std::fs::create_dir_all(&d);
+    d
+}
 
 impl VinteriaApp {
     pub(super) fn is_mobile(&self) -> bool {
@@ -516,7 +563,15 @@ impl VinteriaApp {
                                 self.m_toggle_play();
                             }
                             ui.add_space(4.0);
-                            ui.add_sized([92.0, 36.0], egui::DragValue::new(&mut self.project.bpm).range(40.0..=300.0).speed(0.5).suffix(" BPM").max_decimals(1));
+                            let (r, resp) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::click());
+                            glass(ui.painter(), r, 20.0);
+                            icon(ui.painter(), Icon::Share, r.center(), ink());
+                            if resp.clicked() {
+                                self.m_export.open = !self.m_export.open;
+                                self.m_export.song = self.m_sec == SEC_PLAYLIST;
+                            }
+                            ui.add_space(4.0);
+                            ui.add_sized([84.0, 36.0], egui::DragValue::new(&mut self.project.bpm).range(40.0..=300.0).speed(0.5).suffix(" BPM").max_decimals(1));
                         });
                     }
                     t => {
@@ -628,7 +683,7 @@ impl VinteriaApp {
             self.shared.send(Cmd::Stop);
         } else {
             // the Playlist plays the song, every other screen loops the current pattern
-            self.project.song_mode = self.m_sec == 2;
+            self.project.song_mode = self.m_sec == SEC_PLAYLIST;
             self.shared.send(Cmd::Play);
         }
     }
@@ -752,10 +807,13 @@ impl VinteriaApp {
         match self.m_sec {
             0 => self.m_steps(ui),
             1 => self.m_piano(ui),
-            2 => self.m_playlist(ui),
-            3 => self.m_mixer(ui),
+            2 => self.m_session(ui),
+            3 => self.m_playlist(ui),
+            4 => self.m_mixer(ui),
             _ => self.m_tracks(ui),
         }
+        self.m_step_sheet(ui.ctx());
+        self.m_export_sheet(ui.ctx());
     }
 
     /// Pattern chips: tap to switch the pattern that the Steps and Piano screens edit.
@@ -822,17 +880,24 @@ impl VinteriaApp {
                     let y = rect.top() + 34.0 + row as f32 * (cell + 8.0);
                     let r = Rect::from_min_size(pos2(x, y), vec2(cell, cell));
                     let resp = ui.interact(r, ui.id().with(("step", lane, s)), Sense::click());
+                    if resp.long_touched() || resp.secondary_clicked() {
+                        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("m_step_edit"), (pi, lane, s)));
+                    }
                     let on = self.project.patterns[pi].drums[lane][s].on;
                     let p = ui.painter();
+                    let st = self.project.patterns[pi].drums[lane][s];
                     if on {
-                        p.rect_filled(r, 10.0, col);
+                        p.rect_filled(r, 10.0, col.linear_multiply(0.45 + 0.55 * st.vel as f32 / 127.0));
+                        if st.is_smart() {
+                            p.circle_filled(r.right_top() + vec2(-7.0, 7.0), 3.0, Color32::WHITE);
+                        }
                     } else {
                         glass(p, r, 10.0);
                     }
                     if playing && play_step == s {
                         p.rect_stroke(r.expand(2.0), 12.0, Stroke::new(2.0, p_accent()));
                     }
-                    if resp.clicked() {
+                    if resp.clicked() && !resp.long_touched() {
                         let st = &mut self.project.patterns[pi].drums[lane][s];
                         st.on = !st.on;
                         if st.on && st.vel == 0 {
@@ -866,7 +931,28 @@ impl VinteriaApp {
             }
         });
         ui.data_mut(|d| d.insert_temp(oct_id, oct));
+        ui.add_space(4.0);
+        let chord_id = egui::Id::new("m_piano_chords");
+        let mut chords: bool = ui.data(|d| d.get_temp(chord_id)).unwrap_or(false);
+        let names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+        ui.horizontal(|ui| {
+            let root = (self.project.key_root % 12) as usize;
+            if p_button(ui, &format!("Key {}", names[root]), false, vec2(80.0, 34.0)).clicked() {
+                self.project.key_root = ((root + 1) % 12) as u8;
+            }
+            let scale = self.project.key_scale.min(crate::theory::CHROMATIC);
+            let sname = crate::theory::SCALES[scale].0;
+            let short: String = sname.chars().take(11).collect();
+            if p_button(ui, &short, false, vec2(118.0, 34.0)).clicked() {
+                self.project.key_scale = (scale + 1) % crate::theory::SCALES.len();
+            }
+            if p_button(ui, "Chords", chords, vec2(84.0, 34.0)).clicked() {
+                chords = !chords;
+            }
+        });
+        ui.data_mut(|d| d.insert_temp(chord_id, chords));
         ui.add_space(6.0);
+        let (key_root, key_scale) = (self.project.key_root, self.project.key_scale);
         let base = (oct + 1) * 12;
         let keys = 24usize;
         let steps = self.project.patterns[pi].length_steps.max(16) as usize;
@@ -911,9 +997,14 @@ impl VinteriaApp {
             }
             for k in 0..keys {
                 let pitch = base + k as u8;
-                if matches!(pitch % 12, 1 | 3 | 6 | 8 | 10) {
-                    let x = rect.left() + label_w + k as f32 * kw;
-                    p.rect_filled(Rect::from_min_size(pos2(x, rect.top()), vec2(kw, rect.height())), 0.0, pick(0x22000000, 0x14000000));
+                let x = rect.left() + label_w + k as f32 * kw;
+                let col_r = Rect::from_min_size(pos2(x, rect.top()), vec2(kw, rect.height()));
+                if crate::theory::is_root(key_root, pitch) {
+                    p.rect_filled(col_r, 0.0, p_accent().linear_multiply(0.10));
+                } else if !crate::theory::in_scale(key_root, key_scale, pitch) {
+                    p.rect_filled(col_r, 0.0, pick(0x30000000, 0x1E000000));
+                } else if matches!(pitch % 12, 1 | 3 | 6 | 8 | 10) {
+                    p.rect_filled(col_r, 0.0, pick(0x14000000, 0x0C000000));
                 }
             }
             let notes = &self.project.patterns[pi].notes;
@@ -938,12 +1029,297 @@ impl VinteriaApp {
                         if let Some(i) = notes.iter().position(|n| n.pitch == pitch && n.start <= tick && tick < n.start + n.len.max(1)) {
                             notes.remove(i);
                         } else {
-                            notes.push(crate::piano_roll::Note { start: tick, len: TICKS_PER_STEP, pitch, vel: 100, track, slide: false, chance: 100, pan: 0, mute: false });
+                            // chord mode stacks thirds of the key's scale on the tapped (scale) tone
+                            let pitches = if chords {
+                                let tone = crate::theory::snap_to_scale(key_root, key_scale, pitch);
+                                crate::theory::stack_chord(key_root, key_scale, tone, 3)
+                            } else {
+                                vec![pitch]
+                            };
+                            let len = if chords { TICKS_PER_STEP * 4 } else { TICKS_PER_STEP };
+                            for pitch in pitches {
+                                notes.push(crate::piano_roll::Note { start: tick, len, pitch, vel: 100, track, slide: false, chance: 100, pan: 0, mute: false });
+                            }
                         }
                     }
                 }
             }
         });
+    }
+
+    /// Clip launcher in portrait: a row per scene, a column per track. Tap a clip to launch it on the next bar, tap a
+    /// running clip to stop its track; tap an empty MIDI cell to put the current pattern there; hold a clip to remove it.
+    fn m_session(&mut self, ui: &mut Ui) {
+        use crate::audio_engine::QUEUED_STOP;
+        use crate::session::MAX_LANES;
+        let lanes = self.project.arrangement.tracks.len().min(MAX_LANES);
+        ui.horizontal(|ui| {
+            if p_button(ui, "Stop all", true, vec2(100.0, 36.0)).clicked() {
+                self.shared.send(Cmd::StopAllClips);
+            }
+            if p_button(ui, "+ Scene", false, vec2(90.0, 36.0)).clicked() {
+                self.project.session.add_scene();
+            }
+            if p_button(ui, "- Scene", false, vec2(90.0, 36.0)).clicked() {
+                self.project.session.remove_scene();
+            }
+        });
+        ui.label(RichText::new("Tap: launch / stop  ·  empty cell: put the current pattern  ·  hold: remove").size(11.0).color(muted()));
+        ui.add_space(6.0);
+        if lanes == 0 {
+            ui.label(RichText::new("No tracks yet.").color(muted()));
+            return;
+        }
+        let blink = ((ui.input(|i| i.time) * 3.0) as i64) % 2 == 0;
+        let (cell_w, cell_h, head_w, head_h) = (86.0f32, 52.0f32, 48.0f32, 30.0f32);
+        let scenes = self.project.session.scenes;
+        egui::ScrollArea::both().id_salt("m_session").auto_shrink([false, false]).show(ui, |ui| {
+            let (rect, _) = ui.allocate_exact_size(vec2(head_w + lanes as f32 * (cell_w + 6.0), head_h + scenes as f32 * (cell_h + 6.0)), Sense::hover());
+            // track names across the top
+            for l in 0..lanes {
+                let x = rect.left() + head_w + l as f32 * (cell_w + 6.0);
+                let t = &self.project.arrangement.tracks[l];
+                let name: String = t.name.chars().take(9).collect();
+                ui.painter().circle_filled(pos2(x + 8.0, rect.top() + 12.0), 4.0, lane_col(l));
+                ui.painter().text(pos2(x + 16.0, rect.top() + 12.0), Align2::LEFT_CENTER, name, FontId::proportional(12.0), ink());
+            }
+            for sc in 0..scenes {
+                let y = rect.top() + head_h + sc as f32 * (cell_h + 6.0);
+                // scene launcher
+                let sr = Rect::from_min_size(pos2(rect.left(), y), vec2(head_w - 8.0, cell_h));
+                let sresp = ui.interact(sr, ui.id().with(("scene", sc)), Sense::click());
+                glass(ui.painter(), sr, 12.0);
+                icon(ui.painter(), Icon::Play, sr.center() + vec2(1.0, -6.0), ink());
+                ui.painter().text(sr.center() + vec2(0.0, 13.0), Align2::CENTER_CENTER, format!("{}", sc + 1), FontId::proportional(11.0), muted());
+                if sresp.clicked() {
+                    for c in self.project.session.clips.iter().filter(|c| c.scene == sc) {
+                        self.shared.send(Cmd::LaunchClip { lane: c.lane, pattern: c.pattern, audio: c.audio });
+                    }
+                }
+                for l in 0..lanes {
+                    let r = Rect::from_min_size(pos2(rect.left() + head_w + l as f32 * (cell_w + 6.0), y), vec2(cell_w, cell_h));
+                    let resp = ui.interact(r, ui.id().with(("slot", l, sc)), Sense::click());
+                    let clip = self.project.session.get(l, sc).copied();
+                    let p = ui.painter();
+                    match clip {
+                        Some(c) => {
+                            let code = c.code();
+                            let running = self.shared.session_run[l].load(Ordering::Relaxed) == code;
+                            let queue = self.shared.session_queue[l].load(Ordering::Relaxed);
+                            let queued = queue == code || (running && queue == QUEUED_STOP);
+                            let col = lane_col(l);
+                            p.rect_filled(r, 12.0, col.linear_multiply(if running { 0.95 } else { 0.55 }));
+                            if running || (queued && blink) {
+                                p.rect_stroke(r.expand(1.5), 13.0, Stroke::new(2.5, p_accent()));
+                            }
+                            let name = if c.audio { self.project.audio_pool.get(c.pattern).map(|s| s.name.clone()).unwrap_or_default() } else { self.project.patterns.get(c.pattern).map(|p| p.name.clone()).unwrap_or_default() };
+                            let short: String = name.chars().take(10).collect();
+                            icon(p, if running { Icon::Stop } else { Icon::Play }, r.left_top() + vec2(14.0, 16.0), Color32::WHITE);
+                            p.text(pos2(r.left() + 8.0, r.bottom() - 13.0), Align2::LEFT_CENTER, short, FontId::proportional(11.5), Color32::WHITE);
+                            if resp.long_touched() || resp.secondary_clicked() {
+                                self.project.session.clear(l, sc);
+                            } else if resp.clicked() {
+                                if running {
+                                    self.shared.send(Cmd::StopLane { lane: l });
+                                } else {
+                                    self.shared.send(Cmd::LaunchClip { lane: l, pattern: c.pattern, audio: c.audio });
+                                }
+                            }
+                        }
+                        None => {
+                            p.rect_filled(r, 12.0, p_bg());
+                            p.rect_stroke(r, 12.0, Stroke::new(1.0, glass_edge()));
+                            let midi = self.project.arrangement.tracks[l].kind != crate::arrangement::TrackKind::Audio;
+                            if midi {
+                                icon(p, Icon::Plus, r.center(), muted().linear_multiply(0.6));
+                                if resp.clicked() && self.project.current_pattern < self.project.patterns.len() {
+                                    self.project.session.set(l, sc, self.project.current_pattern, false);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(150));
+    }
+
+    /// Smart Step editor: hold a step to open it (velocity, pitch, pan, chance, slide).
+    fn m_step_sheet(&mut self, ctx: &egui::Context) {
+        let id = egui::Id::new("m_step_edit");
+        let Some((pi, lane, s)) = ctx.data(|d| d.get_temp::<(usize, usize, usize)>(id)) else { return };
+        if pi >= self.project.patterns.len() || lane >= NUM_DRUMS {
+            ctx.data_mut(|d| d.remove::<(usize, usize, usize)>(id));
+            return;
+        }
+        let mut close = false;
+        let w = (ctx.screen_rect().width() - 24.0).min(420.0);
+        egui::Area::new(egui::Id::new("m_step_sheet")).order(egui::Order::Foreground).anchor(Align2::CENTER_BOTTOM, [0.0, -150.0]).show(ctx, |ui| {
+            let (rect, _) = ui.allocate_exact_size(vec2(w, 372.0), Sense::click());
+            ui.painter().rect_filled(rect, 20.0, p_bg());
+            glass(ui.painter(), rect, 20.0);
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(16.0)));
+            pulse_visuals(&mut child);
+            let ui = &mut child;
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(format!("{}  ·  step {}", DRUM_NAMES[lane], s + 1)).size(17.0).strong().color(ink()));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if p_button(ui, "Done", true, vec2(80.0, 34.0)).clicked() {
+                        close = true;
+                    }
+                });
+            });
+            ui.add_space(8.0);
+            ui.spacing_mut().slider_width = ui.available_width() - 90.0;
+            let st = &mut self.project.patterns[pi].drums[lane][s];
+            st.on = true;
+            let mut vel = st.vel as i32;
+            let mut pitch = st.pitch as i32;
+            let mut pan = st.pan as i32;
+            let mut prob = st.prob as i32;
+            for (label, v, range) in [("Velocity", &mut vel, 1..=127), ("Pitch", &mut pitch, -24..=24), ("Pan", &mut pan, -100..=100), ("Chance %", &mut prob, 1..=100)] {
+                ui.label(RichText::new(label).size(12.0).color(muted()));
+                ui.add(egui::Slider::new(v, range));
+                ui.add_space(4.0);
+            }
+            st.vel = vel as u8;
+            st.pitch = pitch as i8;
+            st.pan = pan as i8;
+            st.prob = prob as u8;
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if p_button(ui, "Slide", st.slide, vec2(90.0, 34.0)).clicked() {
+                    st.slide = !st.slide;
+                }
+                if p_button(ui, "Reset", false, vec2(90.0, 34.0)).clicked() {
+                    *st = crate::sequencer::Step::new(true, 100);
+                }
+                if p_button(ui, "Clear", false, vec2(90.0, 34.0)).clicked() {
+                    st.on = false;
+                    close = true;
+                }
+            });
+        });
+        if close {
+            ctx.data_mut(|d| d.remove::<(usize, usize, usize)>(id));
+        }
+    }
+
+    /// Export & Share: render the song (Playlist) or the current pattern to WAV, then share it.
+    fn m_export_sheet(&mut self, ctx: &egui::Context) {
+        // collect a finished render
+        if let Some(rx) = &self.m_export.rx {
+            if let Ok(res) = rx.try_recv() {
+                self.m_export.rx = None;
+                match res {
+                    Ok(path) => {
+                        self.m_export.status = format!("Saved: {}", path.display());
+                        self.m_export.last = Some(path.clone());
+                        if self.m_export.share_after {
+                            self.m_share(&path);
+                        }
+                    }
+                    Err(e) if e.contains("silent") => self.m_export.status = "Nothing to export yet: this is silent. Add some steps or notes first.".into(),
+                    Err(e) => self.m_export.status = format!("Export failed: {e}"),
+                }
+            } else {
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            }
+        }
+        if !self.m_export.open {
+            return;
+        }
+        let w = (ctx.screen_rect().width() - 24.0).min(420.0);
+        let busy = self.m_export.rx.is_some();
+        egui::Area::new(egui::Id::new("m_export_sheet")).order(egui::Order::Foreground).anchor(Align2::CENTER_BOTTOM, [0.0, -150.0]).show(ctx, |ui| {
+            let (rect, _) = ui.allocate_exact_size(vec2(w, 250.0), Sense::click());
+            ui.painter().rect_filled(rect, 20.0, p_bg());
+            glass(ui.painter(), rect, 20.0);
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(16.0)));
+            pulse_visuals(&mut child);
+            let ui = &mut child;
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Export & share").size(18.0).strong().color(ink()));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if p_button(ui, "Close", false, vec2(80.0, 34.0)).clicked() {
+                        self.m_export.open = false;
+                    }
+                });
+            });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                let half = (ui.available_width() - 8.0) / 2.0;
+                if p_button(ui, "Whole song", self.m_export.song, vec2(half, 36.0)).clicked() {
+                    self.m_export.song = true;
+                }
+                if p_button(ui, "This pattern", !self.m_export.song, vec2(half, 36.0)).clicked() {
+                    self.m_export.song = false;
+                }
+            });
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                let half = (ui.available_width() - 8.0) / 2.0;
+                if p_button(ui, if busy { "Rendering..." } else { "Export & share" }, true, vec2(half, 42.0)).clicked() && !busy {
+                    self.m_start_export(true);
+                }
+                if p_button(ui, "Save WAV", false, vec2(half, 42.0)).clicked() && !busy {
+                    self.m_start_export(false);
+                }
+            });
+            ui.add_space(10.0);
+            if busy {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(RichText::new("Rendering the WAV...").size(12.0).color(muted()));
+                });
+            } else if !self.m_export.status.is_empty() {
+                ui.label(RichText::new(&self.m_export.status).size(11.5).color(muted()));
+                if let Some(path) = self.m_export.last.clone() {
+                    if cfg!(target_os = "android") && p_button(ui, "Share again", false, vec2(130.0, 34.0)).clicked() {
+                        self.m_share(&path);
+                    }
+                }
+            }
+        });
+    }
+
+    fn m_start_export(&mut self, share: bool) {
+        let mut p = self.project.clone();
+        p.song_mode = self.m_export.song;
+        let settings = crate::audio_engine::export::ExportSettings {
+            sample_rate: 44100,
+            depth: crate::audio_engine::export::BitDepth::Pcm16,
+            bars: crate::audio_engine::export::default_bars(&p),
+            tail_secs: 2.0,
+        };
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let clean: String = p.name.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
+        let path = export_dir().join(format!("{}-{}.wav", if clean.is_empty() { "Winteria".to_string() } else { clean }, stamp % 1_000_000));
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        std::thread::spawn(move || {
+            let res = crate::audio_engine::export::export(&p, &settings, &path).map(|_| path);
+            let _ = tx.send(res);
+        });
+        self.m_export.rx = Some(rx);
+        self.m_export.share_after = share;
+        self.m_export.status.clear();
+    }
+
+    fn m_share(&mut self, path: &std::path::Path) {
+        #[cfg(target_os = "android")]
+        {
+            let res = match &self.android_updater {
+                Some(u) => u.share_file(&path.to_string_lossy(), "audio/wav"),
+                None => Err("no activity".into()),
+            };
+            if let Err(e) = res {
+                self.m_export.status = format!("Saved: {}  ·  share failed: {e}", path.display());
+            }
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            self.m_export.status = format!("Saved: {}", path.display());
+        }
     }
 
     fn m_playlist(&mut self, ui: &mut Ui) {
