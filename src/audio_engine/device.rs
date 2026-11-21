@@ -3,9 +3,7 @@ use super::{Cmd, Engine};
 use crate::mixer::NUM_STRIPS;
 use crate::project::Project;
 use arc_swap::ArcSwap;
-#[cfg(not(target_os = "android"))]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-#[cfg(not(target_os = "android"))]
 use cpal::{BufferSize, SampleFormat, SampleRate, StreamConfig};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
@@ -92,7 +90,6 @@ impl Shared {
     }
 }
 
-#[cfg(not(target_os = "android"))]
 mod io {
     use super::*;
 
@@ -125,13 +122,20 @@ mod io {
             let default = cpal::default_host().default_output_device().and_then(|d| d.name().ok());
             let name = default.or_else(|| a.devices.first().cloned()).unwrap_or_default();
             // 512 frames: a safe margin so other programs / a busy window do not starve the callback (crackling)
-            a.open(&name, 0, 512);
+            let preferred_rate = if cfg!(target_os = "android") { 48000 } else { 0 };
+            a.open(&name, preferred_rate, 512);
             a
         }
 
         pub fn refresh_devices(&mut self) {
             let host = cpal::default_host();
             self.devices = host.output_devices().map(|it| it.filter_map(|d| d.name().ok()).collect()).unwrap_or_default();
+            #[cfg(target_os = "android")]
+            if let Some(name) = host.default_output_device().and_then(|device| device.name().ok()) {
+                if !self.devices.contains(&name) {
+                    self.devices.insert(0, name);
+                }
+            }
         }
 
         pub fn has_stream(&self) -> bool {
@@ -148,6 +152,10 @@ mod io {
 
         fn find_device(name: &str) -> Option<cpal::Device> {
             let host = cpal::default_host();
+            #[cfg(target_os = "android")]
+            if let Some(device) = host.default_output_device().filter(|device| device.name().is_ok_and(|default| default == name)) {
+                return Some(device);
+            }
             host.output_devices().ok()?.find(|d| d.name().map(|n| n == name).unwrap_or(false))
         }
 
@@ -361,30 +369,4 @@ mod io {
     }
 
 }
-#[cfg(not(target_os = "android"))]
 pub use io::AudioIo;
-
-/// Android: no audio device in the first beta (the interface works, nothing is played).
-#[cfg(target_os = "android")]
-pub struct AudioIo {
-    pub shared: Arc<Shared>,
-    pub devices: Vec<String>,
-    pub device_name: String,
-    pub sample_rate: u32,
-    pub rates: Vec<u32>,
-    pub buffer_frames: u32,
-    pub error: Option<String>,
-}
-
-#[cfg(target_os = "android")]
-impl AudioIo {
-    pub fn new(shared: Arc<Shared>) -> Self {
-        AudioIo { shared, devices: vec![], device_name: String::new(), sample_rate: 48000, rates: vec![], buffer_frames: 0, error: Some("Audio is not available in the first Android beta".into()) }
-    }
-    pub fn refresh_devices(&mut self) {}
-    pub fn has_stream(&self) -> bool {
-        false
-    }
-    pub fn poll_error(&mut self) {}
-    pub fn open(&mut self, _name: &str, _want_rate: u32, _buffer_frames: u32) {}
-}

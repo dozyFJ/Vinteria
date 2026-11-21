@@ -219,7 +219,7 @@ pub fn show(ui: &mut Ui, project: &mut Project, live_track: &mut Track, roll_tra
             // instruments
             let insts: Vec<(Track, &str, &str, usize)> = vec![
                 (Track::Drums, "Drums (MIDI)", "Kick, Snare, Clap, Hi-Hat, Perc", 0),
-                (Track::Wavetable, "Vinteria Synth", "one synth, many presets", 7),
+                (Track::Wavetable, "Winteria Synth", "one synth, many presets", 7),
                 (Track::Sampler, "808 Sampler", "play any WAV on the keys", 9),
             ];
             let shown_i: Vec<_> = insts.iter().filter(|i| (st.cat == 0 || st.cat == 1) && matches_q(&q, i.1, "Instruments")).collect();
@@ -256,7 +256,7 @@ pub fn show(ui: &mut Ui, project: &mut Project, live_track: &mut Track, roll_tra
                     let n_k = kinds.len();
                     grid(ui, |ui| section_title(ui, cat, n_k), |ui| {
                         for k in kinds {
-                            let r = card(ui, k.name(), cat, if k.is_signature() { CYAN() } else { cat_color(cat) }, st.pick == Some(Pick::Fx(k)), if k.is_signature() { Some("VINTERIA") } else { Some("EFFECT") });
+                            let r = card(ui, k.name(), cat, if k.is_signature() { CYAN() } else { cat_color(cat) }, st.pick == Some(Pick::Fx(k)), if k.is_signature() { Some("WINTERIA") } else { Some("EFFECT") });
                             if r.clicked() {
                                 st.pick = Some(Pick::Fx(k));
                                 if !st.slots.iter().any(|s| s.kind == k) {

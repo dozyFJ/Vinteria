@@ -284,7 +284,7 @@ pub(super) fn show(app: &mut VinteriaApp, ui: &mut Ui) {
     ui.painter().rect_filled(r, corner(), INSET());
     ui.painter().rect_stroke(r, corner(), Stroke::new(border_w(), border()));
     ui.painter().text(r.center(), Align2::CENTER_CENTER, "4/4", FontId::proportional(14.0), TEXT());
-    resp.on_hover_text("Time signature: Vinteria counts in 4/4");
+    resp.on_hover_text("Time signature: Winteria counts in 4/4");
     // PAT / SONG
     egui::Frame::none().fill(PANEL2()).rounding(0.0).stroke(Stroke::new(border_w(), border())).inner_margin(egui::Margin::symmetric(2.0, 2.0)).show(ui, |ui| {
         ui.spacing_mut().item_spacing.x = 0.0;

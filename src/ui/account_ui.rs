@@ -1,5 +1,7 @@
 //! Account panel: a left panel of its own (apart from the Browser) with the Google profile and the local storage of projects.
 use super::{theme::*, VinteriaApp};
+#[cfg(target_os = "android")]
+use crate::rfd;
 use crate::google_auth as g;
 use egui::{pos2, vec2, Align2, FontId, RichText, Sense, Stroke};
 use std::path::PathBuf;
@@ -92,7 +94,7 @@ impl VinteriaApp {
                         ui.horizontal_wrapped(|ui| {
                             if ui.button("Open folder").clicked() { let _ = std::process::Command::new("explorer").arg(&dir).spawn(); }
                             if ui.button("Change...").on_hover_text("Pick another folder for the projects (e.g. a cloud drive folder)").clicked() {
-                                if let Some(d) = rfd::FileDialog::new().set_title("Folder for Vinteria Daw projects").pick_folder() {
+                                if let Some(d) = rfd::FileDialog::new().set_title("Folder for Winteria DAW projects").pick_folder() {
                                     set_folder = Some(Some(d));
                                 }
                             }

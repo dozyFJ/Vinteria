@@ -1,4 +1,4 @@
-# Vinteria Daw
+# Winteria DAW
 
 DAW written from scratch in Rust: own audio engine, synths, step sequencer, piano roll, arrangement, mixer, project files, WAV export.
 
@@ -10,7 +10,7 @@ Existing `.synthesia` projects remain compatible.
 - `src/instruments/`: synths, drums and sampler.
 - `src/project.rs`: project persistence, patterns, scenes and sample loading.
 - `src/arrangement.rs`, `src/session.rs`: timeline clips and clip launcher.
-- `src/ui/`: desktop/mobile interface, editors and shared theme.
+- `src/ui/`: shared desktop and Android interface, editors and shared theme.
 
 ## Stack (and why)
 The machine has no MSVC / g++ / CMake / JUCE, so C++/JUCE was not possible. Chosen instead:
@@ -25,6 +25,26 @@ cargo test                     :: unit tests (engine, export round-trip, save/lo
 cargo run --release -- --play-test   :: headless test through the real audio device
 ```
 `Cargo.lock` pins crates that would otherwise need a full MinGW `dlltool`; `vendor/webbrowser` is a no-op stub for the same reason.
+
+## Build (Android)
+
+Install Android SDK Platform 34, Build Tools 34.0.0, NDK r26d, and JDK. Set
+`ANDROID_HOME` and `ANDROID_NDK_HOME` to the SDK and NDK directories.
+
+```sh
+rustup target add aarch64-linux-android
+cargo install cargo-apk --version 0.10.0 --locked
+cargo apk build --lib
+```
+
+The APK is at `target/debug/apk/Winteria.apk` and targets 64-bit ARM devices
+running Android 8.0 or later. For a release build, set
+`CARGO_APK_RELEASE_KEYSTORE` and `CARGO_APK_RELEASE_KEYSTORE_PASSWORD` and add
+`--release`.
+
+Android runs the desktop interface in landscape with audio playback via Oboe.
+Projects and WAV exports are saved in app storage. External file selection,
+microphone recording, and MIDI input remain desktop features.
 
 ## Keys
 Desktop starts maximized. The horizontal navigation below the header opens

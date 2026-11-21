@@ -343,13 +343,13 @@ pub fn desktop_main() -> eframe::Result<()> {
     let win_size = forced.unwrap_or([1440.0, 900.0]);
     let min_size = if forced.is_some() { [200.0, 200.0] } else { [1100.0, 720.0] };
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size(win_size).with_min_inner_size(min_size).with_title("Vinteria Daw").with_decorations(false).with_resizable(true).with_maximized(forced.is_none()).with_icon(std::sync::Arc::new(make_icon())),
+        viewport: egui::ViewportBuilder::default().with_inner_size(win_size).with_min_inner_size(min_size).with_title("Winteria DAW").with_decorations(false).with_resizable(true).with_maximized(forced.is_none()).with_icon(std::sync::Arc::new(make_icon())),
         ..Default::default()
     };
-    eframe::run_native("Vinteria Daw", options, Box::new(|cc| Ok(Box::new(ui::VinteriaApp::new(cc)))))
+    eframe::run_native("Winteria DAW", options, Box::new(|cc| Ok(Box::new(ui::VinteriaApp::new(cc)))))
 }
 
-/// Android entry point (the first Android beta shows the interface only: no audio device, MIDI or file dialogs yet).
+/// Launch the shared DAW interface from Android’s native activity.
 #[cfg(target_os = "android")]
 #[no_mangle]
 fn android_main(app: android_activity::AndroidApp) {
@@ -363,17 +363,21 @@ fn android_main(app: android_activity::AndroidApp) {
     options.event_loop_builder = Some(Box::new(move |builder| {
         builder.with_android_app(app);
     }));
-    let _ = eframe::run_native("Vinteria Daw", options, Box::new(|cc| Ok(Box::new(ui::VinteriaApp::new(cc)))));
+    let _ = eframe::run_native("Winteria DAW", options, Box::new(|cc| Ok(Box::new(ui::VinteriaApp::new(cc)))));
 }
 
-/// File dialogs do not exist on Android yet: a stand-in with the same calls that never picks anything.
+/// Route named saves to private app storage until Android file pickers are available.
 #[cfg(target_os = "android")]
 pub mod rfd {
     use std::path::{Path, PathBuf};
-    pub struct FileDialog;
+    #[derive(Default)]
+    pub struct FileDialog {
+        directory: PathBuf,
+        file_name: Option<String>,
+    }
     impl FileDialog {
         pub fn new() -> Self {
-            FileDialog
+            Self::default()
         }
         pub fn add_filter(self, _name: &str, _ext: &[&str]) -> Self {
             self
@@ -381,17 +385,29 @@ pub mod rfd {
         pub fn set_title(self, _t: impl Into<String>) -> Self {
             self
         }
-        pub fn set_directory(self, _d: impl AsRef<Path>) -> Self {
+        pub fn set_directory(mut self, directory: impl AsRef<Path>) -> Self {
+            self.directory = directory.as_ref().to_path_buf();
             self
         }
-        pub fn set_file_name(self, _n: impl Into<String>) -> Self {
+        pub fn set_file_name(mut self, name: impl Into<String>) -> Self {
+            self.file_name = Some(name.into());
             self
         }
         pub fn pick_file(self) -> Option<PathBuf> {
             None
         }
         pub fn save_file(self) -> Option<PathBuf> {
-            None
+            let name = self.file_name?;
+            let name = Path::new(&name).file_name()?;
+            let path = self.directory.join(name);
+            if !path.exists() {
+                return Some(path);
+            }
+
+            let stem = path.file_stem()?.to_str()?;
+            let extension = path.extension()?.to_str()?;
+            (2..).map(|number| self.directory.join(format!("{stem}-{number}.{extension}")))
+                .find(|candidate| !candidate.exists())
         }
         pub fn pick_folder(self) -> Option<PathBuf> {
             None

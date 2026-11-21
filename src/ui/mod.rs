@@ -16,7 +16,6 @@ pub mod session_ui;
 pub mod theme;
 pub mod track_ui;
 pub mod widgets;
-mod mobile;
 mod navigation;
 mod account_ui;
 mod transport_ui;
@@ -133,14 +132,6 @@ fn hub_dir() -> PathBuf {
         let p = PathBuf::from(s.trim());
         if !s.trim().is_empty() && (p.is_dir() || std::fs::create_dir_all(&p).is_ok()) {
             return p;
-        }
-    }
-    #[cfg(target_os = "android")]
-    {
-        // shared storage, so the phone and a synced folder see the same projects (needs the "all files" permission)
-        let d = PathBuf::from("/storage/emulated/0/Documents/WYNTERIA Projects");
-        if std::fs::create_dir_all(&d).is_ok() {
-            return d;
         }
     }
     let base = std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
@@ -281,10 +272,6 @@ pub struct VinteriaApp {
     last_autosave: std::time::Instant,
     /// start of the logo splash shown when the program opens
     splash: std::time::Instant,
-    /// tab of the phone layout
-    m_tab: usize,
-    /// true when the user entered a project (DAW screen); false = hub/launcher
-    m_daw: bool,
     /// waveform of the whole arrangement (signature it was rendered for, peaks), the render in flight and the one waiting
     song_wave: Option<(u64, Vec<f32>)>,
     song_rx: Option<Receiver<(u64, Vec<f32>)>>,
@@ -389,8 +376,6 @@ impl VinteriaApp {
             show_projects: false,
             hub_open: false,
             splash: std::time::Instant::now(),
-            m_tab: 0,
-            m_daw: false,
             song_wave: None,
             song_rx: None,
             song_pending: None,
@@ -763,7 +748,7 @@ impl VinteriaApp {
             self.save_project(false);
         }
         let cmd = "timeout /t 2 /nobreak >nul & cargo build --release & start \"\" target\\release\\VinteriaDaw.exe";
-        match std::process::Command::new("cmd").args(["/C", "start", "Vinteria Daw rebuild", "cmd", "/C", cmd]).spawn() {
+        match std::process::Command::new("cmd").args(["/C", "start", "Winteria DAW rebuild", "cmd", "/C", cmd]).spawn() {
             Ok(_) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             Err(e) => self.status = format!("Restart failed: {e}"),
         }
@@ -817,12 +802,12 @@ impl VinteriaApp {
         // one column, scrolling down: a wide horizontal card for every project
         egui::CentralPanel::default().frame(egui::Frame::none().fill(BG()).inner_margin(egui::Margin::symmetric(mx, 16.0))).show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("Vinteria Daw").size(26.0).strong().color(TEAL()));
+                ui.label(RichText::new("Winteria DAW").size(26.0).strong().color(TEAL()));
                 ui.label(RichText::new(" BETA 1 ").size(11.0).strong().color(Color32::WHITE).background_color(CYAN()));
-                ui.label(RichText::new(format!("v{}  -  Vinteria Studio  -  project hub", env!("CARGO_PKG_VERSION"))).size(14.0).color(DIM()));
+                ui.label(RichText::new(format!("v{}  -  Winteria Studio  -  project hub", env!("CARGO_PKG_VERSION"))).size(14.0).color(DIM()));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Open file...").clicked() {
-                        pick = rfd::FileDialog::new().add_filter("Vinteria Daw project (*.wd)", &["wd", "vpd", "synthesia"]).pick_file().map(Some);
+                        pick = rfd::FileDialog::new().add_filter("Winteria DAW project (*.wd)", &["wd", "vpd", "synthesia"]).pick_file().map(Some);
                     }
                     if self.path.is_some() && ui.button("Back to the program").clicked() {
                         resume = true;
@@ -832,7 +817,7 @@ impl VinteriaApp {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(format!("Sync folder: {}", hub_dir().display())).size(11.0).color(DIM()));
                 if ui.small_button("Change...").on_hover_text("Pick one folder for the PC and the phone (Google Drive / OneDrive / Syncthing): projects saved there show up on both").clicked() {
-                    if let Some(dir) = rfd::FileDialog::new().set_title("Sync folder for Vinteria Daw projects").pick_folder() {
+                    if let Some(dir) = rfd::FileDialog::new().set_title("Sync folder for Winteria DAW projects").pick_folder() {
                         set_sync_folder(Some(&dir));
                         self.hub_cache = None;
                     }
@@ -928,7 +913,12 @@ impl VinteriaApp {
     }
 
     fn open_project(&mut self) {
-        let Some(path) = rfd::FileDialog::new().add_filter("Vinteria Daw project (*.wd)", &["wd", "vpd", "synthesia"]).pick_file() else { return };
+        if cfg!(target_os = "android") {
+            self.hub_open = true;
+            return;
+        }
+
+        let Some(path) = rfd::FileDialog::new().add_filter("Winteria DAW project (*.wd)", &["wd", "vpd", "synthesia"]).pick_file() else { return };
         self.open_path(path);
     }
 
@@ -953,7 +943,7 @@ impl VinteriaApp {
 
     fn save_project(&mut self, save_as: bool) {
         let path = if save_as || self.path.is_none() {
-            rfd::FileDialog::new().add_filter("Vinteria Daw project (*.wd)", &["wd"]).set_directory(hub_dir()).set_file_name(format!("{}.wd", self.project.name)).save_file()
+            rfd::FileDialog::new().add_filter("Winteria DAW project (*.wd)", &["wd"]).set_directory(hub_dir()).set_file_name(format!("{}.wd", self.project.name)).save_file()
         } else {
             self.path.clone()
         };
@@ -1667,7 +1657,7 @@ impl VinteriaApp {
     fn help_window(&mut self, ctx: &egui::Context) {
         let mut open = self.show_help;
         egui::Window::new("Keyboard shortcuts").open(&mut open).default_width(420.0).show(ctx, |ui| {
-            ui.label(RichText::new(format!("Vinteria Daw  Beta 1  (v{})  -  Vinteria Studio", env!("CARGO_PKG_VERSION"))).strong().color(TEAL()));
+            ui.label(RichText::new(format!("Winteria DAW  Beta 1  (v{})  -  Winteria Studio", env!("CARGO_PKG_VERSION"))).strong().color(TEAL()));
             ui.label(RichText::new("Wave Audio Synthesis Digital - a DAW written from scratch: own audio engine, synths, sequencer, piano roll, playlist, mixer").size(11.0).color(DIM()));
             ui.add_space(6.0);
             let rows = [
@@ -2131,15 +2121,6 @@ impl eframe::App for VinteriaApp {
         }
         // every track with a built-in synth plays its own copy of the plugin's settings
         self.project.adopt_track_params();
-        if self.hub_open && self.is_mobile() {
-            self.hub_open = false;
-            self.m_daw = false;
-            self.m_tab = 0;
-        }
-        if self.is_mobile() {
-            self.mobile_ui(ctx);
-            return;
-        }
         // the selected Playlist track is the one whose sampler plays live notes
         if self.arr.sel_lane != self.sent_lane {
             self.sent_lane = self.arr.sel_lane;
@@ -2189,6 +2170,19 @@ impl eframe::App for VinteriaApp {
         }
 
         egui::TopBottomPanel::top("transport").frame(egui::Frame::none().fill(BG()).inner_margin(egui::Margin::symmetric(16.0, 10.0))).show(ctx, |ui| {
+            if cfg!(target_os = "android") {
+                egui::ScrollArea::horizontal().id_salt("android_menu_bar").show(ui, |ui| {
+                    ui.horizontal(|ui| self.header_brand(ui));
+                });
+                egui::ScrollArea::horizontal().id_salt("android_transport_bar").show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        self.transport(ui);
+                        transport_ui::show_status(self, ui);
+                    });
+                });
+                return;
+            }
+
             let wide = ui.available_width() >= 1750.0;
             if !wide {
                 ui.horizontal(|ui| { self.header_brand(ui); });
@@ -2856,7 +2850,7 @@ impl eframe::App for VinteriaApp {
             egui::Window::new("Projects").open(&mut open).default_size([520.0, 360.0]).show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     if ui.button("Open file...").clicked() {
-                        pick = rfd::FileDialog::new().add_filter("Vinteria Daw project (*.wd)", &["wd", "vpd", "synthesia"]).pick_file();
+                        pick = rfd::FileDialog::new().add_filter("Winteria DAW project (*.wd)", &["wd", "vpd", "synthesia"]).pick_file();
                     }
                     ui.label(RichText::new(format!("Current: {}", self.project.name)).color(DIM()));
                 });

@@ -21,7 +21,7 @@ impl Inst {
         match self {
             Inst::Poly => "Poly Synth",
             Inst::Bass => "808 Bass",
-            Inst::Wavetable => "Vinteria Synth",
+            Inst::Wavetable => "Winteria Synth",
             Inst::Analog => "Analog",
             Inst::Sampler => "808 Sampler",
         }
@@ -508,8 +508,8 @@ fn wavetable_panel(ui: &mut Ui, project: &mut Project) {
                     // a fixed-width logo block: the name must not push the master boxes out of the panel
                     ui.set_width(150.0);
                     ui.add_space(10.0);
-                    ui.label(egui::RichText::new("Vinteria Daw").size(24.0).strong().color(TEAL()));
-                    ui.label(egui::RichText::new("VINTERIA WAVETABLE").size(10.0).color(DIM()));
+                    ui.label(egui::RichText::new("Winteria DAW").size(24.0).strong().color(TEAL()));
+                    ui.label(egui::RichText::new("WINTERIA WAVETABLE").size(10.0).color(DIM()));
                 });
                 ui.add_space(8.0);
                 mbox(ui, "MASTER ENVELOPE", |ui| {

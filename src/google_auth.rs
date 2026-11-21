@@ -211,7 +211,7 @@ fn run(cfg: &Config) -> Result<Profile, String> {
             email: info["email"].as_str().unwrap_or("").to_string(),
         })
     })();
-    let body = if result.is_ok() { "Signed in. You can close this tab and return to Vinteria." } else { "Sign-in failed. Return to Vinteria for details." };
+    let body = if result.is_ok() { "Signed in. You can close this tab and return to Winteria." } else { "Sign-in failed. Return to Winteria for details." };
     let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n<html><body style=\"font-family:sans-serif;padding:40px\"><h2>{body}</h2></body></html>");
     result
 }

@@ -271,7 +271,7 @@ fn instruments(ui: &mut Ui, c: &mut Ctx, q: &str) {
     }
     for (k, inst) in [Inst::Wavetable, Inst::Sampler].into_iter().enumerate() {
         let (title, sub) = match inst {
-            Inst::Wavetable => ("Vinteria Synth", "one synth, many presets"),
+            Inst::Wavetable => ("Winteria Synth", "one synth, many presets"),
             _ => (inst.title(), inst.subtitle()),
         };
         if !hit(title, sub) {
@@ -298,7 +298,7 @@ fn effects(ui: &mut Ui, c: &mut Ctx, q: &str) {
     let target = if sel == NUM_INSERTS { "Master".to_string() } else { format!("Insert {}", sel + 1) };
     hint(ui, &format!("click: add to {target} (selected in the Mixer)"));
     c.project.insert_fx.resize_with(NUM_INSERTS, Vec::new);
-    for (title, sig) in [("Essentials", false), ("Vinteria", true)] {
+    for (title, sig) in [("Essentials", false), ("Winteria", true)] {
         let kinds: Vec<FxKind> = crate::fx::ALL.into_iter().filter(|k| k.is_signature() == sig && (q.is_empty() || k.name().to_lowercase().contains(q) || k.category().to_lowercase().contains(q))).collect();
         if kinds.is_empty() {
             continue;

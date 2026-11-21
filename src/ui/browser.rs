@@ -166,7 +166,7 @@ pub fn show(ui: &mut Ui, c: &mut Ctx) {
             }
             for (k, inst) in [Inst::Wavetable, Inst::Sampler].into_iter().enumerate() {
                 let (title, sub) = match inst {
-                    Inst::Wavetable => ("Vinteria Synth", "one synth, many presets"),
+                    Inst::Wavetable => ("Winteria Synth", "one synth, many presets"),
                     _ => (inst.title(), inst.subtitle()),
                 };
                 if !hit(title, sub) {

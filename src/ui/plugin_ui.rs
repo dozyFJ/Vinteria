@@ -209,7 +209,7 @@ fn header(ui: &mut Ui, slot: &mut FxSlot) {
         ui.label(RichText::new(slot.kind.name()).strong().size(15.0));
         ui.label(RichText::new(slot.kind.category()).small().color(DIM()));
         if slot.kind.is_signature() {
-            ui.label(RichText::new("VINTERIA").small().color(CYAN()));
+            ui.label(RichText::new("WINTERIA").small().color(CYAN()));
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let presets = slot.kind.presets();
