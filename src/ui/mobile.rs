@@ -1354,8 +1354,8 @@ impl VinteriaApp {
         };
         let mut step_w = ui.data(|d| d.get_temp::<f32>(zoom_id)).unwrap_or(default_step_w);
         let mut zoom_changed = false;
-        let keys_id = egui::Id::new("m_piano_bottom_keys");
-        let mut bottom_keys = portrait && ui.data(|d| d.get_temp::<bool>(keys_id)).unwrap_or(true);
+        let velocity_id = egui::Id::new(("m_piano_velocity", portrait));
+        let mut show_velocity = ui.data(|d| d.get_temp::<bool>(velocity_id)).unwrap_or(portrait);
         let mut close = false;
         mobile_scroll(egui::ScrollArea::horizontal())
             .id_salt(("m_piano_toolbar", drawer.is_some(), portrait))
@@ -1409,8 +1409,8 @@ impl VinteriaApp {
                         step_w = (step_w * 1.25).min(72.0);
                         zoom_changed = true;
                     }
-                    if portrait && p_button(ui, "Keys", bottom_keys, vec2(58.0, 44.0)).clicked() {
-                        bottom_keys = !bottom_keys;
+                    if p_button(ui, "Velocity", show_velocity, vec2(76.0, 44.0)).clicked() {
+                        show_velocity = !show_velocity;
                     }
                     ui.menu_button(format!("Key {}", names[(self.project.key_root % 12) as usize]), |ui| {
                         for (index, name) in names.iter().enumerate() {
@@ -1447,9 +1447,7 @@ impl VinteriaApp {
             if zoom_changed {
                 d.insert_temp(zoom_id, step_w);
             }
-            if portrait {
-                d.insert_temp(keys_id, bottom_keys);
-            }
+            d.insert_temp(velocity_id, show_velocity);
         });
         ui.add_space(3.0);
         ui.add(egui::Label::new(RichText::new("Double-tap to delete · Drag to move")
@@ -1459,7 +1457,7 @@ impl VinteriaApp {
         let high_pitch = 127_u8;
         let rows = usize::from(high_pitch) + 1;
         let row_h = 24.0;
-        let kb_h = if bottom_keys { (ui.available_height() * 0.20).clamp(34.0, 58.0) } else { 0.0 };
+        let velocity_h = if show_velocity { (ui.available_height() * 0.22).clamp(54.0, 105.0) } else { 0.0 };
         let track = self.project.arrangement.tracks.get(self.arr.sel_lane).and_then(|track| track.instrument)
             .or_else(|| self.project.patterns[pi].notes.first().map(|note| note.track)).unwrap_or(Track::Synth);
         let held_id = egui::Id::new("m_piano_held");
@@ -1469,7 +1467,7 @@ impl VinteriaApp {
         let play_step = (pos / TICKS_PER_STEP) as usize % steps;
         let cursor = if playing { Some(play_step) } else { record_step.map(|step| step % steps) };
         let timeline_height = 23.0;
-        let view_h = (ui.available_height() - kb_h - if bottom_keys { 12.0 } else { 4.0 }).max(timeline_height + 1.0);
+        let view_h = (ui.available_height() - velocity_h - if show_velocity { 12.0 } else { 4.0 }).max(timeline_height + 1.0);
         let (viewport, _) = ui.allocate_exact_size(vec2(ui.available_width(), view_h), Sense::hover());
         let grid = Rect::from_min_max(viewport.min + vec2(ruler_width, timeline_height), viewport.max);
         let mut grid_ui = ui.new_child(egui::UiBuilder::new().max_rect(grid));
@@ -1586,22 +1584,23 @@ impl VinteriaApp {
                 {
                     remove = Some(index);
                 } else if note_response.clicked() || handle.clicked() {
-                    audition = Some((note.track, note.pitch));
+                    audition = Some((note.track, note.pitch, note.vel));
                 }
             }
             if let Some((index, len, pitch)) = edit {
                 let note = &mut self.project.patterns[pi].notes[index];
                 let moved = note.pitch != pitch;
                 let track = note.track;
+                let velocity = note.vel;
                 note.len = len;
                 note.pitch = pitch;
                 if moved {
-                    self.m_preview_piano_notes(ui.ctx(), track, vec![pitch]);
+                    self.m_preview_piano_notes(ui.ctx(), track, vec![pitch], velocity);
                 }
             } else if let Some(index) = remove {
                 self.project.patterns[pi].notes.remove(index);
-            } else if let Some((track, pitch)) = audition {
-                self.m_preview_piano_notes(ui.ctx(), track, vec![pitch]);
+            } else if let Some((track, pitch, velocity)) = audition {
+                self.m_preview_piano_notes(ui.ctx(), track, vec![pitch], velocity);
             } else if resp.clicked() {
                 if let Some(pt) = resp.interact_pointer_pos() {
                     let row = (((pt.y - rect.top()) / row_h) as usize).min(rows - 1);
@@ -1628,7 +1627,7 @@ impl VinteriaApp {
                         true
                     });
                     if !pitches.is_empty() {
-                        self.m_preview_piano_notes(ui.ctx(), track, pitches);
+                        self.m_preview_piano_notes(ui.ctx(), track, pitches, 100);
                     }
                 }
             }
@@ -1686,45 +1685,11 @@ impl VinteriaApp {
                 format!("{}.{}", step / 16 + 1, (step % 16) / 4 + 1), FontId::proportional(11.0),
                 if step % 16 == 0 { ink() } else { muted() });
         }
-        if bottom_keys {
+        if show_velocity {
             ui.add_space(4.0);
+            self.m_piano_velocity(ui, pi, out.inner.x, grid.left(), step_w, velocity_h);
         }
-        let (keyboard, resp) = ui.allocate_exact_size(vec2(ui.available_width(), kb_h.max(0.0)), if bottom_keys { Sense::click_and_drag() } else { Sense::hover() });
-        let whites = [0, 2, 4, 5, 7, 9, 11];
-        let blacks = [(1, 1), (2, 3), (4, 6), (5, 8), (6, 10)];
-        let kw = keyboard.width() / whites.len() as f32;
-        let black_rect = |boundary: usize| {
-            Rect::from_center_size(
-                pos2(keyboard.left() + boundary as f32 * kw, keyboard.top() + kb_h * 0.34),
-                vec2(kw * 0.58, kb_h * 0.68))
-        };
-        let p = ui.painter_at(keyboard);
-        let pressed = if !bottom_keys {
-            None
-        } else if resp.is_pointer_button_down_on() {
-            resp.interact_pointer_pos().filter(|pt| keyboard.contains(*pt)).map(|pt| {
-                let key = ((pt.x - keyboard.left()) / kw) as usize;
-                let offset = blacks.iter().find(|&&(boundary, _)| black_rect(boundary).contains(pt))
-                    .map_or(whites[key.min(whites.len() - 1)], |&(_, semitone)| semitone);
-                base + offset
-            })
-        } else {
-            None
-        };
-        for (key, semitone) in whites.into_iter().enumerate().filter(|_| bottom_keys) {
-            let pitch = base + semitone;
-            let rect = Rect::from_min_size(pos2(keyboard.left() + key as f32 * kw, keyboard.top()), vec2(kw, kb_h));
-            p.rect_filled(rect.shrink(0.5), 3.0, if pressed == Some(pitch) { lane_col(3) } else { pick(0xFFF2F2F2, 0xFFD2D8D8) });
-            if semitone == 0 {
-                p.text(rect.center_bottom() - vec2(0.0, 5.0), Align2::CENTER_BOTTOM, format!("C{}", i16::from(oct) - 1),
-                    FontId::proportional(11.0), Color32::from_gray(60));
-            }
-        }
-        for (boundary, semitone) in blacks.into_iter().filter(|_| bottom_keys) {
-            let color = if pressed == Some(base + semitone) { lane_col(3) } else { Color32::from_gray(29) };
-            p.rect_filled(black_rect(boundary), 3.0, color);
-        }
-        let pressed = pressed.or(side_pressed).map(|pitch| (track, pitch));
+        let pressed = side_pressed.map(|pitch| (track, pitch));
         if pressed != held {
             if let Some((track, pitch)) = held {
                 self.shared.send(Cmd::NoteOff { track, pitch });
@@ -1762,12 +1727,66 @@ impl VinteriaApp {
         close
     }
 
-    fn m_preview_piano_notes(&self, ctx: &egui::Context, track: Track, pitches: Vec<u8>) {
+    fn m_piano_velocity(&mut self, ui: &mut Ui, pattern: usize, origin_x: f32, grid_left: f32, step_w: f32, height: f32) {
+        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+        let ruler = Rect::from_min_max(rect.min, pos2(grid_left, rect.bottom()));
+        let painter = ui.painter_at(ruler);
+        painter.rect_filled(ruler, 3.0, bar_fill());
+        painter.text(ruler.center(), Align2::CENTER_CENTER, "Vel", FontId::proportional(12.0), ink());
+
+        let plot = Rect::from_min_max(pos2(grid_left, rect.top()), rect.max);
+        let painter = ui.painter_at(plot);
+        painter.rect_filled(plot, 3.0, p_bg());
+        let range = plot.shrink2(vec2(0.0, 4.0));
+        for velocity in [32, 64, 96] {
+            let y = range.bottom() - f32::from(velocity as u8) / 127.0 * range.height();
+            painter.hline(plot.x_range(), y, Stroke::new(0.5, glass_edge()));
+        }
+
+        let notes = &mut self.project.patterns[pattern].notes;
+        let mut columns = std::collections::BTreeMap::<u32, Vec<usize>>::new();
+        for (index, note) in notes.iter().enumerate() {
+            columns.entry(note.start / TICKS_PER_STEP).or_default().push(index);
+        }
+        for (step, indices) in columns {
+            let left = origin_x + step as f32 * step_w;
+            if left + step_w <= plot.left() || left >= plot.right() {
+                continue;
+            }
+            let width = step_w / indices.len() as f32;
+            for (offset, index) in indices.into_iter().enumerate() {
+                let note = &mut notes[index];
+                let x = left + offset as f32 * width;
+                let hit = Rect::from_min_size(pos2(x, plot.top()), vec2(width, plot.height())).intersect(plot);
+                if !hit.is_positive() {
+                    continue;
+                }
+                let response = ui.interact(hit, ui.id().with(("piano_velocity", pattern, index)), Sense::click_and_drag())
+                    .on_hover_cursor(egui::CursorIcon::ResizeVertical);
+                let mut velocity = note.vel;
+                if response.dragged() || response.drag_stopped() || response.clicked() {
+                    if let Some(point) = response.interact_pointer_pos() {
+                        velocity = ((range.bottom() - point.y) / range.height() * 127.0).round().clamp(1.0, 127.0) as u8;
+                        if response.drag_stopped() || response.clicked() {
+                            note.vel = velocity;
+                        }
+                    }
+                }
+                let top = range.bottom() - f32::from(velocity) / 127.0 * range.height();
+                let inset = (width * 0.16).min(2.0);
+                let bar = Rect::from_min_max(pos2(x + inset, top), pos2(x + width - inset, range.bottom()));
+                painter.rect_filled(bar, 2.0, if response.hovered() || response.dragged() { p_accent() } else { lane_col(3) });
+                response.on_hover_text(format!("Velocity {velocity}"));
+            }
+        }
+    }
+
+    fn m_preview_piano_notes(&self, ctx: &egui::Context, track: Track, pitches: Vec<u8>, vel: u8) {
         self.m_stop_note_preview(ctx);
         let lane = self.arr.sel_lane;
         self.shared.send(Cmd::SetLiveLane(lane));
         for &pitch in &pitches {
-            self.shared.send(Cmd::NoteOn { track, pitch, vel: 100 });
+            self.shared.send(Cmd::NoteOn { track, pitch, vel });
         }
         let until = ctx.input(|input| input.time) + 0.17;
         ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_piano_preview"), (until, lane, track, pitches)));
