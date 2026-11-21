@@ -1463,19 +1463,7 @@ impl VinteriaApp {
         let initialized = egui::Id::new((grid_id, "initialized"));
         let mut scroll = mobile_scroll(egui::ScrollArea::both()).id_salt(grid_id)
             .max_height(grid.height()).auto_shrink([false, false]);
-        // follow the playhead through a long pattern
-        let piano_x_id = egui::Id::new((grid_id, "offset_x"));
-        let piano_shown_x = ui.data(|d| d.get_temp::<f32>(piano_x_id)).unwrap_or(0.0);
-        if playing {
-            // glide along: keep the playhead within the left 70 % of the view instead of turning pages
-            let local = pos % (steps as u32 * TICKS_PER_STEP).max(1);
-            let head = local as f32 / TICKS_PER_STEP as f32 * step_w;
-            if head < piano_shown_x {
-                scroll = scroll.horizontal_scroll_offset((head - step_w).max(0.0));
-            } else if head > piano_shown_x + grid.width() * 0.7 {
-                scroll = scroll.horizontal_scroll_offset(head - grid.width() * 0.7);
-            }
-        }
+        // no auto-follow: the view stays where the user scrolled it, only the playhead line moves
         let first_view = !ui.data(|d| d.get_temp::<bool>(initialized)).unwrap_or(false);
         if first_view || oct != previous_oct {
             scroll = scroll.vertical_scroll_offset(f32::from(high_pitch - base - 11) * row_h);
@@ -1649,7 +1637,6 @@ impl VinteriaApp {
             }
             rect.min
         });
-        ui.data_mut(|d| d.insert_temp(piano_x_id, out.state.offset.x));
         // keys down the left side, one per row of the grid (like the PC piano roll): press one to hear it (and record it)
         let ruler = Rect::from_min_max(pos2(viewport.left(), grid.top()), pos2(grid.left() - 2.0, grid.bottom()));
         let side = ui.interact(ruler, ui.id().with(("m_piano_side_keys", pi)), Sense::click_and_drag());
