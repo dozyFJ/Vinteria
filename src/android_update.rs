@@ -6,7 +6,7 @@ use jni::objects::{JByteArray, JObject, JValue};
 use jni::{JNIEnv, JavaVM};
 use serde::Deserialize;
 
-const FEED: &str = "https://raw.githubusercontent.com/dozyFJ/winteria-updates/main/";
+const FEED: &str = "https://raw.githubusercontent.com/dozyFJ/pulse-updates/winteria/";
 const CHECK_INTERVAL: Duration = Duration::from_secs(600);
 const MAX_MANIFEST_BYTES: usize = 16 * 1024;
 
