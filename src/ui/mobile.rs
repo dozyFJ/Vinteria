@@ -566,6 +566,8 @@ impl VinteriaApp {
         step("background");
         doodle_background(ctx);
         step("header");
+        let screen = ctx.screen_rect();
+        let portrait = screen.width() < screen.height();
         let full_view = self.m_tab == 1
             && ctx.data(|d| d.get_temp::<bool>(egui::Id::new("m_studio_full_view"))).unwrap_or(false);
         if self.m_tab == 1 {
@@ -577,8 +579,11 @@ impl VinteriaApp {
                             ctx.data_mut(|d| d.remove::<bool>(egui::Id::new("m_studio_full_view")));
                         }
                     });
-            } else if ctx.screen_rect().width() < ctx.screen_rect().height() {
-                self.m_studio_dock(ctx);
+            } else if portrait {
+                self.m_studio_portrait_header(ctx);
+                if self.m_tab == 1 {
+                    self.m_studio_dock(ctx);
+                }
             } else {
                 self.m_studio_sidebar(ctx);
             }
@@ -591,7 +596,11 @@ impl VinteriaApp {
         }
         if self.m_tab == 1 && self.m_sec == SEC_PLAYLIST {
             if !full_view {
-                self.m_browser_sidebar(ctx);
+                if portrait {
+                    self.m_browser_bottom_sheet(ctx);
+                } else {
+                    self.m_browser_sidebar(ctx);
+                }
             }
         } else {
             ctx.data_mut(|d| {
@@ -725,7 +734,33 @@ impl VinteriaApp {
                 self.m_studio_orientation_button(ui, ctx, width);
                 ui.separator();
                 mobile_scroll(egui::ScrollArea::vertical()).id_salt("m_studio_controls")
-                    .auto_shrink([false, false]).show(ui, |ui| self.m_studio_controls(ui, ctx, width));
+                    .auto_shrink([false, false]).show(ui, |ui| self.m_studio_controls(ui, ctx, width, false));
+            });
+    }
+
+    fn m_studio_portrait_header(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::top("m_studio_portrait_header").show_separator_line(false)
+            .frame(Frame::none().fill(bar_fill()).inner_margin(Margin::symmetric(6.0, 4.0)))
+            .show(ctx, |ui| {
+                pulse_visuals(ui);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    let width = 32.0;
+                    if self.m_studio_exit(ui, ctx, width) {
+                        return;
+                    }
+                    self.m_studio_orientation_button(ui, ctx, width);
+                    self.m_studio_full_view_button(ui, ctx, width);
+                    let folder = self.m_sec == SEC_PLAYLIST;
+                    let reserved = if folder { 81.0 } else { 45.0 };
+                    let title_width = (ui.available_width() - reserved).max(1.0);
+                    ui.add_sized([title_width, 32.0], egui::Label::new(RichText::new(&self.project.name)
+                        .strong().size(14.0).color(ink())).truncate());
+                    self.m_studio_tempo(ui, 41.0);
+                    if folder {
+                        self.m_studio_browser_button(ui, ctx, width);
+                    }
+                });
             });
     }
 
@@ -738,16 +773,10 @@ impl VinteriaApp {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 5.0;
                     let width = 38.0;
-                    if self.m_studio_exit(ui, ctx, width) {
-                        return;
-                    }
-                    self.m_studio_orientation_button(ui, ctx, width);
-                    ui.separator();
                     mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_studio_port_controls")
                         .auto_shrink([false, true]).show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                self.m_studio_full_view_button(ui, ctx, width);
-                                self.m_studio_controls(ui, ctx, width);
+                                self.m_studio_controls(ui, ctx, width, true);
                             });
                         });
                 });
@@ -788,7 +817,7 @@ impl VinteriaApp {
         }
     }
 
-    fn m_studio_controls(&mut self, ui: &mut Ui, ctx: &egui::Context, width: f32) {
+    fn m_studio_controls(&mut self, ui: &mut Ui, ctx: &egui::Context, width: f32, portrait: bool) {
         let playing = self.playing();
         if studio_icon(ui, width, Icon::Rewind, false, "Return to start").clicked() {
             self.return_to_start(ctx, playing);
@@ -810,15 +839,9 @@ impl VinteriaApp {
                 self.m_toggle_play(ctx);
             }
         }
-        let tempo = egui::Button::new(RichText::new(format!("{:.0}", self.project.bpm)).size(12.0))
-            .wrap_mode(egui::TextWrapMode::Extend).min_size(vec2(width, 28.0));
-        ui.scope(|ui| {
-            ui.spacing_mut().button_padding.x = 3.0;
-            egui::menu::menu_custom_button(ui, tempo, |ui| {
-                ui.add(egui::DragValue::new(&mut self.project.bpm)
-                    .range(40.0..=300.0).speed(0.5).suffix(" BPM").max_decimals(1));
-            }).response.on_hover_text(format!("Tempo in BPM · {}", self.project.name));
-        });
+        if !portrait {
+            self.m_studio_tempo(ui, width);
+        }
         if studio_icon(ui, width, Icon::Share, false, "Export or share").clicked() {
             self.m_export.open = !self.m_export.open;
             self.m_export.song = self.m_sec == SEC_PLAYLIST;
@@ -833,17 +856,33 @@ impl VinteriaApp {
                 });
             }
         }
-        if self.m_sec == SEC_PLAYLIST {
-            let id = egui::Id::new("m_browser_open");
-            let open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
-            if studio_icon(ui, width, Icon::Folder, open, "Toggle browser").clicked() {
-                ctx.data_mut(|d| {
-                    d.insert_temp(id, !open);
-                    if open {
-                        d.remove::<(usize, u32)>(egui::Id::new("m_audio_clip_target"));
-                    }
-                });
-            }
+        if !portrait && self.m_sec == SEC_PLAYLIST {
+            self.m_studio_browser_button(ui, ctx, width);
+        }
+    }
+
+    fn m_studio_tempo(&mut self, ui: &mut Ui, width: f32) {
+        let tempo = egui::Button::new(RichText::new(format!("{:.0}", self.project.bpm)).size(12.0))
+            .wrap_mode(egui::TextWrapMode::Extend).min_size(vec2(width, 28.0));
+        ui.scope(|ui| {
+            ui.spacing_mut().button_padding.x = 3.0;
+            egui::menu::menu_custom_button(ui, tempo, |ui| {
+                ui.add(egui::DragValue::new(&mut self.project.bpm)
+                    .range(40.0..=300.0).speed(0.5).suffix(" BPM").max_decimals(1));
+            }).response.on_hover_text(format!("Tempo in BPM · {}", self.project.name));
+        });
+    }
+
+    fn m_studio_browser_button(&self, ui: &mut Ui, ctx: &egui::Context, width: f32) {
+        let id = egui::Id::new("m_browser_open");
+        let open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+        if studio_icon(ui, width, Icon::Folder, open, "Toggle browser").clicked() {
+            ctx.data_mut(|d| {
+                d.insert_temp(id, !open);
+                if open {
+                    d.remove::<(usize, u32)>(egui::Id::new("m_audio_clip_target"));
+                }
+            });
         }
     }
 
@@ -1366,27 +1405,45 @@ impl VinteriaApp {
         let shown = ctx.animate_bool(animation, true);
         let full = ctx.data(|d| d.get_temp::<bool>(full_id)).unwrap_or(false);
         let screen = ctx.screen_rect();
-        let width = if full { screen.width() } else { (screen.width() * 0.74).max(screen.width().min(320.0)) }.max(1.0);
-        let height = screen.height().max(1.0);
-        let open_at = pos2(screen.left() - (1.0 - shown) * width, screen.top());
+        let portrait = screen.height() >= screen.width();
+        let bottom_sheet = portrait && !full;
+        let width = if full || portrait {
+            screen.width()
+        } else {
+            (screen.width() * 0.74).max(screen.width().min(320.0))
+        }.max(1.0);
+        let height = (screen.height() * if bottom_sheet { 0.76 } else { 1.0 }).max(1.0);
+        let open_at = if portrait {
+            pos2(screen.left(), screen.bottom() - shown * height)
+        } else {
+            pos2(screen.left() - (1.0 - shown) * width, screen.top())
+        };
         let mut close = false;
         egui::Area::new(egui::Id::new("m_piano_drawer"))
             .fixed_pos(open_at).constrain(false).movable(false).order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-                ui.painter().rect_filled(rect, 0.0, p_bg());
-                ui.painter().line_segment([rect.right_top(), rect.right_bottom()], Stroke::new(1.0, outline()));
+                ui.painter().rect_filled(rect, if bottom_sheet { 12.0 } else { 0.0 }, p_bg());
+                if !portrait {
+                    ui.painter().line_segment([rect.right_top(), rect.right_bottom()], Stroke::new(1.0, outline()));
+                }
                 let content = rect.shrink2(vec2(9.0, 7.0));
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(content));
                 child.set_clip_rect(rect.intersect(screen));
                 pulse_visuals(&mut child);
+                if bottom_sheet {
+                    let (handle, grip) = child.allocate_exact_size(vec2(child.available_width(), 14.0), Sense::drag());
+                    let mark = Rect::from_center_size(handle.center(), vec2(34.0, 3.0));
+                    child.painter().rect_filled(mark, 2.0, muted());
+                    close = grip.drag_delta().y > 18.0;
+                }
                 child.horizontal(|ui| {
                     let t = (ui.available_width() - 183.0).max(1.0);
                     ui.add_sized([t, 32.0], egui::Label::new(RichText::new("Piano Roll").size(17.0).strong()).truncate());
                     if p_button(ui, if full { "Restore" } else { "Full view" }, false, vec2(92.0, 32.0)).clicked() {
                         ui.data_mut(|d| d.insert_temp(full_id, !full));
                     }
-                    close = p_button(ui, "Done", true, vec2(68.0, 32.0)).clicked();
+                    close |= p_button(ui, "Done", true, vec2(68.0, 32.0)).clicked();
                 });
                 self.m_piano_editor(&mut child, pattern);
             });
@@ -1689,6 +1746,37 @@ impl VinteriaApp {
         {
             self.m_export.status = format!("Saved: {}", path.display());
         }
+    }
+
+    fn m_browser_bottom_sheet(&mut self, ctx: &egui::Context) {
+        let id = egui::Id::new("m_browser_open");
+        let open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+        let height = (ctx.screen_rect().height() * 0.39).min(360.0);
+        egui::TopBottomPanel::bottom("m_browser_bottom_sheet")
+            .show_separator_line(false)
+            .exact_height(height)
+            .frame(Frame::none().fill(p_bg()).stroke(Stroke::new(1.0, outline())).rounding(12.0).inner_margin(9.0))
+            .show_animated(ctx, open, |ui| {
+                pulse_visuals(ui);
+                let (handle, grip) = ui.allocate_exact_size(vec2(ui.available_width(), 14.0), Sense::drag());
+                let mark = Rect::from_center_size(handle.center(), vec2(34.0, 3.0));
+                ui.painter().rect_filled(mark, 2.0, muted());
+                let mut close = grip.drag_delta().y > 18.0;
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Browser").size(17.0).strong().color(ink()));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        close |= p_button(ui, "Close", false, vec2(62.0, 32.0)).clicked();
+                    });
+                });
+                if close {
+                    ctx.data_mut(|d| {
+                        d.insert_temp(id, false);
+                        d.remove::<(usize, u32)>(egui::Id::new("m_audio_clip_target"));
+                    });
+                } else {
+                    self.m_browser_items(ui);
+                }
+            });
     }
 
     fn m_browser_sidebar(&mut self, ctx: &egui::Context) {
