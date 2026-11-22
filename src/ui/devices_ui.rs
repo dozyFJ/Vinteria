@@ -53,7 +53,7 @@ fn show(ui: &mut Ui, p: &mut Project, st: &mut ArrState, dc: &mut DetailCtx, plu
                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                         egui::ScrollArea::vertical().id_salt("clip_options_scroll").max_height(166.0)
                             .auto_shrink([false, false]).show(ui, |ui| {
-                                super::arrangement_ui::clip_options(ui, p, st, lib, i, playhead);
+                                super::arrangement_ui::clip_options(ui, p, st, lib, i, playhead, false);
                             });
                     });
                 });
@@ -634,7 +634,7 @@ pub fn dock(
                             if let Some(i) = clip {
                                 egui::Frame::none().fill(PANEL2()).rounding(card()).stroke(Stroke::new(1.0, border())).inner_margin(10.0).show(ui, |ui| {
                                     ui.set_width(280.0);
-                                    super::arrangement_ui::clip_options(ui, p, st, lib, i, playhead);
+                                    super::arrangement_ui::clip_options(ui, p, st, lib, i, playhead, false);
                                 });
                             }
                             // the sample editor of an audio track lives in the Track tab now

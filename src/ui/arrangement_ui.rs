@@ -526,9 +526,9 @@ fn split_clip(project: &mut Project, i: usize, at: u32) -> bool {
 const TOP_H: f32 = 0.0;
 
 /// Shared clip controls, used by the context menu and the Device chain.
-pub fn clip_options(ui: &mut Ui, project: &mut Project, st: &mut ArrState, lib: &mut Library, i: usize, at: u32) {
+pub fn clip_options(ui: &mut Ui, project: &mut Project, st: &mut ArrState, lib: &mut Library, i: usize, at: u32, mobile: bool) {
     if i >= project.arrangement.clips.len() { return; }
-                ui.set_min_width(250.0);
+                if !mobile { ui.set_min_width(250.0); }
                 let c = project.arrangement.clips[i];
                 let lane = c.lane;
                 let tname = project.arrangement.tracks.get(lane).map(|t| t.name.clone()).unwrap_or_default();
@@ -620,7 +620,7 @@ pub fn clip_options(ui: &mut Ui, project: &mut Project, st: &mut ArrState, lib: 
                             project.arrangement.clips[i].reverse = rev;
                         }
                         let mut mu = c.mute;
-                        if ui.checkbox(&mut mu, "Mute  Ctrl+M").changed() {
+                        if ui.checkbox(&mut mu, if mobile { "Mute clip" } else { "Mute  Ctrl+M" }).changed() {
                             project.arrangement.clips[i].mute = mu;
                         }
                     });
@@ -669,7 +669,7 @@ pub fn clip_options(ui: &mut Ui, project: &mut Project, st: &mut ArrState, lib: 
                 ui.separator();
 
                 // ---- cut, copy, convert ----
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     if ui.button("Split here").on_hover_text("Cut the clip in two at this grid position").clicked() {
                         split_clip(project, i, at);
                         ui.close_menu();
@@ -685,7 +685,9 @@ pub fn clip_options(ui: &mut Ui, project: &mut Project, st: &mut ArrState, lib: 
                         ui.close_menu();
                     }
                 });
-                ui.label(egui::RichText::new("drag: move  -  Ctrl/Alt+drag: copy  -  Shift+click: several  -  Delete: remove").size(10.0).color(DIM()));
+                if !mobile {
+                    ui.label(egui::RichText::new("drag: move  -  Ctrl/Alt+drag: copy  -  Shift+click: several  -  Delete: remove").size(10.0).color(DIM()));
+                }
                 if !c.audio {
                     ui.menu_button("Convert", |ui| {
                         if ui.button("Split by channel -> MIDI tracks").clicked() {

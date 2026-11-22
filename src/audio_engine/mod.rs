@@ -477,6 +477,7 @@ impl Engine {
             self.song_tick = if let Some((s, _)) = Self::context_range(&self.project) {
                 s
             } else if self.project.song_mode && self.project.loop_on {
+                self.resume_audio_at_seek = true;
                 self.project.loop_start * TICKS_PER_BAR
             } else {
                 0
@@ -689,6 +690,7 @@ impl Engine {
             if self.song_tick >= loop_ticks {
                 if ctx_range.is_some() || proj.loop_on || self.live_loop {
                     self.song_tick = loop_start;
+                    self.resume_audio_at_seek = true;
                     // cut notes at the loop point so they do not hang into the restart
                     self.release_everything();
                     self.stop_audio_clips();

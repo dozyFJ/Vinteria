@@ -403,3 +403,12 @@ Browser открывается слева рядом с Playlist в обеих �
 ### Android 1.0.67
 
 - Piano Roll labels the length button “+1 beat” and adds a quarter note of empty grid per tap, capped by the next clip or the pattern length limit.
+
+### Android 1.0.68
+
+- Piano Roll keeps playback, stop and close visible, with recording and full view in Tools. Tools toggles a horizontally scrollable row for grid, octave, zoom, scale, and other editing options. Grid snap persists independently of zoom.
+- “+1 beat” extends the selected MIDI clip from either Piano Roll entry point when that clip uses the edited pattern.
+- Drag on the Playlist ruler to loop whole bars. Tap still seeks; use Clear loop in Playlist options or hold the ruler to turn looping off. Audio crossing the loop start resumes on each pass.
+- Tap or drag the Piano Roll ruler to select notes by beat. Clone shifts the notes by the selected beat range. Tools → Slide marks new notes or toggles glide on an existing note.
+- Audio clip settings use touch-sized controls and omit desktop shortcut hints in the mobile sheet. The Piano Roll keyboard and grid use softer theme colors.
+- Clone replaces the two main selection and duplication buttons. Select notes remains in Tools. Undo and Redo are in Piano Roll, and individual note and velocity edits register undo steps.
