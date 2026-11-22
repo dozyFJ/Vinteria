@@ -45,6 +45,9 @@ jobs:
         run: cargo install cargo-apk --locked
 
       - name: Build dev APK
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
           export ANDROID_HOME="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
@@ -52,10 +55,19 @@ jobs:
           # separate app: other package id and name, so it never replaces the real Winteria
           sed -i 's/^package = "com.winteria.daw"$/package = "com.winteria.daw.dev"/; s/^label = "Winteria"$/label = "Winteria Dev"/' Cargo.toml
           grep -n '^package = \|^label = ' Cargo.toml
-          keytool -genkeypair -keystore "$RUNNER_TEMP/dev.keystore" -storetype PKCS12 -storepass android -keypass android \
-            -alias dev -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Winteria Dev"
+          # one key for every build, so each Dev APK installs over the previous one:
+          # the release key from the repo secrets; only without them a throw-away key (then reinstall is needed)
+          if [ -n "$KEYSTORE_B64" ] && [ -n "$KEYSTORE_PASSWORD" ]; then
+            printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/dev.keystore"
+            export CARGO_APK_RELEASE_KEYSTORE_PASSWORD="$KEYSTORE_PASSWORD"
+            echo "signing with the release key from the secrets"
+          else
+            echo "::warning::ANDROID_KEYSTORE_B64 / ANDROID_KEYSTORE_PASSWORD are missing, using a throw-away key"
+            keytool -genkeypair -keystore "$RUNNER_TEMP/dev.keystore" -storetype PKCS12 -storepass android -keypass android \
+              -alias dev -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Winteria Dev"
+            export CARGO_APK_RELEASE_KEYSTORE_PASSWORD=android
+          fi
           export CARGO_APK_RELEASE_KEYSTORE="$RUNNER_TEMP/dev.keystore"
-          export CARGO_APK_RELEASE_KEYSTORE_PASSWORD=android
           ./tools/build-android.sh --release
           version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
           mkdir -p out && cp target/release/apk/Winteria.apk "out/WinteriaDev-$version.apk"

@@ -179,7 +179,7 @@ public final class WinteriaActivity extends NativeActivity {
         }
     }
 
-    private final class PackCounter {
+    private static final class PackCounter {
         int files;
         int skipped;
         long bytes;
@@ -229,8 +229,9 @@ public final class WinteriaActivity extends NativeActivity {
                     text = "Pack \"" + destination.getName() + "\": " + count.files + " WAV file(s)"
                         + (count.skipped == 0 ? "." : ", skipped " + count.skipped + " other or oversized file(s).");
                 }
-            } catch (IOException | RuntimeException failure) {
-                text = "Pack import failed: " + failure.getMessage();
+            } catch (Throwable failure) {
+                // never let an import error take the app down
+                text = "Pack import failed: " + failure;
             } finally {
                 if (staging != null) {
                     deleteRecursively(staging);

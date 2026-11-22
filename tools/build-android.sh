@@ -45,7 +45,7 @@ if [[ -n "${WINTERIA_ECJ_JAR:-}" ]]; then
 else
     javac --release 8 -classpath "$platform" -d "$assembly/classes" "$activity"
 fi
-"$build_tools/d8" --min-api 26 --lib "$platform" --output "$assembly" "$assembly/classes/com/winteria/daw/WinteriaActivity.class"
+find "$assembly/classes" -name "*.class" -print0 | xargs -0 "$build_tools/d8" --min-api 26 --lib "$platform" --output "$assembly"
 
 cargo apk build "${build_args[@]}" --target-dir "$target_dir"
 apk="$target_dir/$profile/apk/Winteria.apk"
