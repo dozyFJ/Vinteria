@@ -758,14 +758,14 @@ impl VinteriaApp {
             .frame(Frame::none().fill(bar_fill()).inner_margin(Margin { left: 6.0, right: 6.0, top: 6.0, bottom: 12.0 }))
             .show(ctx, |ui| {
                 mobile_visuals(ui);
-                // in the Playlist a swipe up on the dock pulls up the mixer sheet (the buttons only take taps)
+                // in the Playlist a swipe up on the dock pulls up the selected track's settings (the buttons only take taps)
                 if self.m_sec == SEC_PLAYLIST {
                     let area = ui.max_rect().expand2(vec2(6.0, 6.0));
                     let swipe = ui.interact(area, egui::Id::new("m_dock_swipe"), Sense::drag());
                     if swipe.drag_stopped() && swipe.drag_delta().y < 0.0 || swipe.dragged() && ui.input(|i| {
                         i.pointer.press_origin().zip(i.pointer.interact_pos()).is_some_and(|(a, b)| a.y - b.y > 24.0)
                     }) {
-                        ctx.data_mut(|d| d.insert_temp(egui::Id::new(MIXER_SHEET), true));
+                        ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_track_sheet_open"), true));
                     }
                     let grip = Rect::from_center_size(pos2(area.center().x, area.top() + 4.0), vec2(36.0, 4.0));
                     ui.painter().rect_filled(grip, 2.0, outline());
@@ -784,16 +784,25 @@ impl VinteriaApp {
             });
     }
 
-    /// Playlist: the mixer as a bottom sheet (swipe the dock up to open, swipe the grip down or tap above to close)
+    /// Playlist: the mixer as a right side bar, full height. A swipe from the right edge pulls it in; a swipe to the
+    /// right on it or a tap on the dimmed rest closes it.
     fn m_mixer_sheet(&mut self, ctx: &egui::Context) {
         let open_id = egui::Id::new(MIXER_SHEET);
-        let open = ctx.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false) && self.m_sec == SEC_PLAYLIST;
+        let screen = ctx.screen_rect();
+        let mut open = ctx.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false) && self.m_sec == SEC_PLAYLIST;
+        if !open && self.m_sec == SEC_PLAYLIST && !egui::DragAndDrop::has_any_payload(ctx) {
+            let edge = ctx.input(|i| i.pointer.press_origin().zip(i.pointer.interact_pos())
+                .is_some_and(|(a, b)| a.x > screen.right() - 22.0 && a.x - b.x > 36.0 && (a.y - b.y).abs() < a.x - b.x));
+            if edge {
+                open = true;
+                ctx.data_mut(|d| d.insert_temp(open_id, true));
+            }
+        }
         let t = ctx.animate_bool_with_time(open_id.with("anim"), open, 0.18);
         if t <= 0.0 {
             return;
         }
-        let screen = ctx.screen_rect();
-        let height = (screen.height() * 0.62).max(300.0).min(screen.height() - 60.0);
+        let width = (screen.width() * 0.86).min(360.0);
         let mut close = false;
         egui::Area::new(open_id.with("scrim")).order(egui::Order::Middle).fixed_pos(screen.min)
             .show(ctx, |ui| {
@@ -801,24 +810,26 @@ impl VinteriaApp {
                 ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha((120.0 * t) as u8));
                 close |= resp.clicked();
             });
-        egui::Area::new(open_id.with("sheet")).order(egui::Order::Foreground)
-            .fixed_pos(pos2(screen.left(), screen.bottom() - height * t))
+        egui::Area::new(open_id.with("panel")).order(egui::Order::Foreground)
+            .fixed_pos(pos2(screen.right() - width * t, screen.top()))
             .show(ctx, |ui| {
-                let rect = Rect::from_min_size(ui.max_rect().min, vec2(screen.width(), height));
-                ui.allocate_rect(rect, Sense::hover());
-                ui.painter().rect_filled(rect, egui::Rounding { nw: 18.0, ne: 18.0, ..Default::default() }, bar_fill());
-                // grip: drag it down (or tap it) to close
-                let head = Rect::from_min_size(rect.min, vec2(rect.width(), 40.0));
-                let grip = ui.interact(head, open_id.with("grip"), Sense::click_and_drag());
-                ui.painter().rect_filled(Rect::from_center_size(pos2(head.center().x, head.top() + 10.0), vec2(40.0, 5.0)), 2.5, outline());
-                ui.painter().text(pos2(head.left() + 16.0, head.top() + 26.0), Align2::LEFT_CENTER, "Mixer",
-                    FontId::proportional(15.0), ink());
-                if grip.clicked() || grip.drag_stopped() && grip.drag_delta().y >= 0.0 || grip.dragged() && ui.input(|i| {
-                    i.pointer.press_origin().zip(i.pointer.interact_pos()).is_some_and(|(a, b)| b.y - a.y > 40.0)
+                let rect = Rect::from_min_size(ui.max_rect().min, vec2(width, screen.height()));
+                let back = ui.allocate_rect(rect, Sense::drag());
+                ui.painter().rect_filled(rect, egui::Rounding { nw: 16.0, sw: 16.0, ..Default::default() }, bar_fill());
+                if back.drag_stopped() && back.drag_delta().x > 0.0 || back.dragged() && ui.input(|i| {
+                    i.pointer.press_origin().zip(i.pointer.interact_pos()).is_some_and(|(a, b)| b.x - a.x > 50.0)
                 }) {
                     close = true;
                 }
-                let body = Rect::from_min_max(pos2(rect.left() + 8.0, head.bottom()), pos2(rect.right() - 8.0, rect.bottom() - 10.0));
+                let head = Rect::from_min_size(rect.min + vec2(14.0, 10.0), vec2(rect.width() - 28.0, 36.0));
+                ui.painter().text(head.left_center(), Align2::LEFT_CENTER, "Mixer", FontId::proportional(17.0), ink());
+                let close_rect = Rect::from_center_size(pos2(head.right() - 16.0, head.center().y), vec2(36.0, 36.0));
+                let mut head_ui = ui.new_child(egui::UiBuilder::new().max_rect(close_rect));
+                mobile_visuals(&mut head_ui);
+                if p_button(&mut head_ui, "×", false, vec2(36.0, 36.0)).clicked() {
+                    close = true;
+                }
+                let body = Rect::from_min_max(pos2(rect.left() + 8.0, head.bottom() + 8.0), pos2(rect.right() - 8.0, rect.bottom() - 12.0));
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body));
                 child.set_clip_rect(body.intersect(screen));
                 mobile_visuals(&mut child);
@@ -2018,18 +2029,49 @@ impl VinteriaApp {
         } else {
             (screen.width() * 0.76).max(screen.width().min(364.0))
         };
-        let origin = pos2(screen.left() - (1.0 - shown) * width, screen.top());
+        // portrait: a bottom sheet (swipe the dock up / tap a track name twice), landscape: a drawer from the left
+        let portrait = screen.width() < screen.height();
+        let sheet_h = (screen.height() * 0.78).min(screen.height() - 40.0);
+        let origin = if portrait {
+            pos2(screen.left(), screen.bottom() - sheet_h * shown)
+        } else {
+            pos2(screen.left() - (1.0 - shown) * width, screen.top())
+        };
         let mut done = false;
+        if portrait {
+            egui::Area::new(id.with("scrim")).order(egui::Order::Middle).fixed_pos(screen.min)
+                .show(ctx, |ui| {
+                    let (rect, resp) = ui.allocate_exact_size(screen.size(), Sense::click());
+                    ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha((120.0 * shown) as u8));
+                    done |= resp.clicked();
+                });
+        }
         egui::Area::new(id.with("drawer"))
             .fixed_pos(origin).constrain(false).movable(false).order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                let (rect, _) = ui.allocate_exact_size(vec2(width, screen.height()), Sense::hover());
-                ui.painter().rect_filled(rect, 0.0, p_bg());
-                let mut content = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(9.0)));
+                let size = if portrait { vec2(width, sheet_h) } else { vec2(width, screen.height()) };
+                let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+                let mut inner = rect.shrink(9.0);
+                if portrait {
+                    ui.painter().rect_filled(rect, egui::Rounding { nw: 18.0, ne: 18.0, ..Default::default() }, p_bg());
+                    // grip: swipe it down (or tap it) to close
+                    let head = Rect::from_min_size(rect.min, vec2(rect.width(), 22.0));
+                    let grip = ui.interact(head, id.with("grip"), Sense::click_and_drag());
+                    ui.painter().rect_filled(Rect::from_center_size(pos2(head.center().x, head.top() + 10.0), vec2(40.0, 5.0)), 2.5, outline());
+                    if grip.clicked() || grip.drag_stopped() && grip.drag_delta().y >= 0.0 || grip.dragged() && ui.input(|i| {
+                        i.pointer.press_origin().zip(i.pointer.interact_pos()).is_some_and(|(a, b)| b.y - a.y > 40.0)
+                    }) {
+                        done = true;
+                    }
+                    inner.min.y = head.bottom();
+                } else {
+                    ui.painter().rect_filled(rect, 0.0, p_bg());
+                }
+                let mut content = ui.new_child(egui::UiBuilder::new().max_rect(inner));
                 content.set_clip_rect(rect.intersect(screen));
                 mobile_visuals(&mut content);
                 content.horizontal(|ui| {
-                    done = p_button(ui, "Done", true, vec2(60.0, 32.0)).clicked();
+                    done |= p_button(ui, "Done", true, vec2(60.0, 32.0)).clicked();
                     ui.add(egui::Label::new(RichText::new(&title).size(15.0).strong()).truncate());
                 });
                 let mut detail = arrangement_ui::DetailCtx {
@@ -2323,7 +2365,18 @@ impl VinteriaApp {
     fn m_browser_sidebar(&mut self, ctx: &egui::Context) {
         let id = egui::Id::new("m_browser_open");
         let open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
-        let width = (ctx.screen_rect().width() * 0.6).clamp(180.0, 300.0);
+        // full width on the phone; while a sample is being dragged the browser steps aside so it can land on a lane
+        let screen = ctx.screen_rect();
+        let width = if screen.width() < screen.height() { screen.width() } else { (screen.width() * 0.45).clamp(220.0, 360.0) };
+        let dragging = egui::DragAndDrop::has_any_payload(ctx);
+        // a sample was just dropped: stay closed, so the new clip is visible
+        let drag_id = egui::Id::new("m_browser_was_dragging");
+        let was_dragging = ctx.data(|d| d.get_temp::<bool>(drag_id)).unwrap_or(false);
+        if was_dragging && !dragging {
+            ctx.data_mut(|d| d.insert_temp(id, false));
+        }
+        ctx.data_mut(|d| d.insert_temp(drag_id, dragging && open));
+        let open = open && !dragging && !(was_dragging && !dragging);
         egui::SidePanel::left("m_sample_browser_left").resizable(false)
             .exact_width(width).show_separator_line(false)
             .frame(Frame::none().fill(bar_fill()).inner_margin(Margin { left: 8.0, right: 8.0, top: 6.0, bottom: 6.0 }))
