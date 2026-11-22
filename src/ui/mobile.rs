@@ -2323,18 +2323,22 @@ impl VinteriaApp {
     fn m_browser_sidebar(&mut self, ctx: &egui::Context) {
         let id = egui::Id::new("m_browser_open");
         let open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
-        let width = (ctx.screen_rect().width() * 0.46).min(288.0);
+        let width = (ctx.screen_rect().width() * 0.6).clamp(180.0, 300.0);
         egui::SidePanel::left("m_sample_browser_left").resizable(false)
-            .exact_width(width)
-            .frame(Frame::none().fill(bar_fill()).inner_margin(8.0))
+            .exact_width(width).show_separator_line(false)
+            .frame(Frame::none().fill(bar_fill()).inner_margin(Margin { left: 8.0, right: 8.0, top: 6.0, bottom: 6.0 }))
             .show_animated(ctx, open, |ui| {
                 mobile_visuals(ui);
+                // never wider than the panel, whatever the text size of the phone
+                ui.set_max_width(width - 16.0);
                 let mut close = false;
                 ui.horizontal(|ui| {
-                    close = p_button(ui, "×", false, vec2(28.0, 32.0))
-                        .on_hover_text("Close browser").clicked();
-                    ui.add(egui::Label::new(RichText::new("Browser").size(15.0).strong()).truncate());
+                    ui.label(RichText::new("Browser").size(17.0).strong().color(ink()));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        close = p_button(ui, "×", false, vec2(36.0, 36.0)).on_hover_text("Close browser").clicked();
+                    });
                 });
+                ui.add_space(4.0);
                 if close {
                     ctx.data_mut(|d| {
                         d.insert_temp(id, false);
@@ -2352,10 +2356,17 @@ impl VinteriaApp {
         let query_id = egui::Id::new("m_browser_query");
         let mut plugins = ui.data(|d| d.get_temp::<bool>(tab_id)).unwrap_or(false);
         let mut query = ui.data(|d| d.get_temp::<String>(query_id)).unwrap_or_default();
-        ui.horizontal_wrapped(|ui| {
-            ui.selectable_value(&mut plugins, false, "Sounds");
-            ui.selectable_value(&mut plugins, true, "Plugins");
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let half = (ui.available_width() - 4.0) * 0.5;
+            if p_button(ui, "Sounds", !plugins, vec2(half, 36.0)).clicked() {
+                plugins = false;
+            }
+            if p_button(ui, "Plugins", plugins, vec2(half, 36.0)).clicked() {
+                plugins = true;
+            }
         });
+        ui.add_space(2.0);
         #[cfg(target_os = "android")]
         if !plugins {
             let pending = egui::Id::new("m_sound_import_pending");
@@ -2364,18 +2375,14 @@ impl VinteriaApp {
             // 0 = single WAVs, 1 = pack from a ZIP, 2 = pack from a folder
             let mut pick = None;
             ui.add_enabled_ui(!busy, |ui| {
-                if ui.add(egui::Button::new("Import WAV").min_size(vec2(ui.available_width(), TOUCH))).clicked() {
-                    pick = Some(0);
-                }
-                ui.horizontal(|ui| {
-                    let half = (ui.available_width() - ui.spacing().item_spacing.x) * 0.5;
-                    if ui.add(egui::Button::new("Pack .zip").min_size(vec2(half, TOUCH)))
-                        .on_hover_text("Import a sample pack from a ZIP file").clicked() {
-                        pick = Some(1);
-                    }
-                    if ui.add(egui::Button::new("Pack folder").min_size(vec2(half, TOUCH)))
-                        .on_hover_text("Import every WAV of a folder as a pack").clicked() {
-                        pick = Some(2);
+                let button = egui::Button::new(RichText::new("+  Import").size(14.0)).min_size(vec2(ui.available_width(), 38.0));
+                egui::menu::menu_custom_button(ui, button, |ui| {
+                    ui.set_min_width(170.0);
+                    for (kind, label) in [(0, "WAV files"), (1, "Pack (.zip)"), (2, "Pack folder")] {
+                        if ui.add(egui::Button::new(label).min_size(vec2(170.0, 40.0))).clicked() {
+                            pick = Some(kind);
+                            ui.close_menu();
+                        }
                     }
                 });
             });
@@ -2400,7 +2407,8 @@ impl VinteriaApp {
                 ui.label(RichText::new(status).size(11.0).color(muted()));
             }
         }
-        ui.add(egui::TextEdit::singleline(&mut query).hint_text("Search").desired_width(ui.available_width()));
+        ui.add_sized([ui.available_width(), 34.0], egui::TextEdit::singleline(&mut query).hint_text("Search")
+            .vertical_align(egui::Align::Center));
         let filter = query.trim().to_lowercase();
         ui.data_mut(|d| {
             d.insert_temp(tab_id, plugins);
@@ -2412,7 +2420,9 @@ impl VinteriaApp {
         let picking_clip = ui.data(|d| d.get_temp::<(usize, u32)>(egui::Id::new("m_audio_clip_target"))).is_some();
         if !plugins && !picking_clip {
             let destination = drum_destination.map_or("Audio clip", |lane| DRUM_NAMES[lane]);
-            ui.menu_button(destination, |ui| {
+            let dest_button = egui::Button::new(RichText::new(format!("Tap to: {destination}")).size(12.0).color(muted()))
+                .min_size(vec2(ui.available_width(), 30.0)).truncate();
+            egui::menu::menu_custom_button(ui, dest_button, |ui| {
                 if ui.selectable_value(&mut drum_destination, None, "Audio clip").clicked() {
                     ui.close_menu();
                 }
@@ -2617,7 +2627,7 @@ impl VinteriaApp {
         let panel_open = ui.data(|d| d.get_temp::<bool>(panel_id)).unwrap_or(false);
         let screen = ui.ctx().screen_rect();
         let portrait = screen.width() < screen.height();
-        let panel_width: f32 = if portrait { 74.0 } else if panel_open { 106.0 } else { 28.0 };
+        let panel_width: f32 = if portrait && add_lane { 10.0 } else if portrait { 74.0 } else if panel_open { 106.0 } else { 28.0 };
         let reveal_id = egui::Id::new("m_playlist_reveal_track");
         let reveal_lane = ui.data_mut(|d| d.remove_temp::<usize>(reveal_id));
         let (viewport, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
@@ -2892,6 +2902,9 @@ impl VinteriaApp {
                 if portrait {
                     // the track's colour strip, its name next to it (the row under the header is gone)
                     labels.rect_filled(Rect::from_min_size(row.min + vec2(2.0, 3.0), vec2(4.0, row.height() - 6.0)), 2.0, lane_col(lane));
+                    if add_lane {
+                        continue; // the browser is open: strips only, the room goes to the lanes
+                    }
                 } else {
                     labels.circle_filled(row.left_center() + vec2(12.0, 0.0), 3.0, lane_col(lane));
                 }
@@ -3232,18 +3245,28 @@ fn mobile_editor_sheet(ctx: &egui::Context, id: &'static str, title: &str, body:
     done || ctx.input(|input| input.key_pressed(egui::Key::Escape))
 }
 
+/// one sample / plugin row of the phone browser: full width, drag the dots on the left to drop it on the Playlist
 fn browser_drag_row<T: std::any::Any + Send + Sync>(ui: &mut Ui, label: &str, item: T) -> Response {
-    ui.horizontal(|ui| {
-        let (rect, grip) = ui.allocate_exact_size(vec2(24.0, 38.0), Sense::drag());
-        grip.dnd_set_drag_payload(item);
-        // drag grip: two columns of dots (drawn: the "⋮" glyph is missing from the fonts)
-        for col in [-3.0, 3.0] {
-            for row in [-6.0, 0.0, 6.0] {
-                ui.painter().circle_filled(rect.center() + vec2(col, row), 1.6, muted());
-            }
+    let width = ui.available_width();
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 40.0), Sense::click());
+    let grip_rect = Rect::from_min_size(rect.min, vec2(26.0, rect.height()));
+    let grip = ui.interact(grip_rect, response.id.with("grip"), Sense::drag());
+    grip.dnd_set_drag_payload(item);
+    let p = ui.painter();
+    let fill = if response.is_pointer_button_down_on() { selected_fill() } else { card_fill() };
+    p.rect_filled(rect.shrink2(vec2(0.0, 2.0)), 10.0, fill);
+    for col in [-3.0, 3.0] {
+        for row in [-6.0, 0.0, 6.0] {
+            p.circle_filled(grip_rect.center() + vec2(col + 2.0, row), 1.6, muted());
         }
-        ui.add_sized([ui.available_width(), 38.0], egui::Button::new(label).truncate())
-    }).inner
+    }
+    let text = Rect::from_min_max(pos2(grip_rect.right() + 4.0, rect.top()), pos2(rect.right() - 8.0, rect.bottom()));
+    let galley = ui.painter().layout(label.to_owned(), FontId::proportional(13.5), ink(), f32::INFINITY);
+    let mut job = egui::text::LayoutJob::single_section(label.to_owned(), egui::TextFormat::simple(FontId::proportional(13.5), ink()));
+    job.wrap = egui::text::TextWrapping::truncate_at_width(text.width());
+    let shown = if galley.size().x > text.width() { ui.painter().layout_job(job) } else { galley };
+    p.galley(pos2(text.left(), text.center().y - shown.size().y * 0.5), shown, ink());
+    response.union(grip)
 }
 
 fn meter(ui: &Ui, pk: [f32; 2]) {
