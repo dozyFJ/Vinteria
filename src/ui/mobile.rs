@@ -1492,6 +1492,7 @@ impl VinteriaApp {
             _ => self.m_tracks(ui),
         }
         self.m_step_sheet(ui.ctx());
+        self.m_drum_sound_sheet(ui.ctx());
         self.m_export_sheet(ui.ctx());
         self.m_clip_sheet(ui.ctx());
         self.m_track_sheet(ui.ctx());
@@ -1550,7 +1551,13 @@ impl VinteriaApp {
                 panel(ui.painter(), rect, 16.0);
                 let col = lane_col(lane);
                 ui.painter().circle_filled(rect.left_top() + vec2(20.0, 18.0), 5.0, col);
+                let label = Rect::from_min_size(rect.min, vec2(rect.width(), 34.0));
+                let hit = ui.interact(label, ui.id().with(("drum_sound", lane)), Sense::click());
                 ui.painter().text(rect.left_top() + vec2(32.0, 18.0), Align2::LEFT_CENTER, DRUM_NAMES[lane], FontId::proportional(15.0), ink());
+                icon(ui.painter(), Icon::Wave, label.right_center() - vec2(22.0, 0.0), muted());
+                if hit.on_hover_text("Drum sound settings").clicked() {
+                    ui.data_mut(|d| d.insert_temp(egui::Id::new("m_drum_sound_sheet"), lane));
+                }
                 for k in 0..16 {
                     let s = page * 16 + k;
                     if s >= len {
@@ -1597,7 +1604,11 @@ impl VinteriaApp {
     }
 
     fn m_piano_editor(&mut self, ui: &mut Ui, pi: usize, drawer: Option<(egui::Id, bool)>) -> bool {
-        let oct_id = egui::Id::new(("m_piano_oct", pi));
+        let clip_index = drawer.and(self.arr.sel_clip).filter(|&index| {
+            self.project.arrangement.clips.get(index).is_some_and(|clip| !clip.audio && clip.pattern == pi)
+        });
+        let editor = (clip_index.is_some(), clip_index.unwrap_or(pi));
+        let oct_id = egui::Id::new(("m_piano_oct", editor));
         let chord_id = egui::Id::new("m_piano_chords");
         let loop_id = egui::Id::new("m_piano_loop");
         let default_oct = self.project.patterns.get(pi).and_then(|pattern| pattern.notes.first())
@@ -1607,7 +1618,7 @@ impl VinteriaApp {
         let mut chords = ui.data(|d| d.get_temp::<bool>(chord_id)).unwrap_or(false);
         let mut looping = ui.data(|d| d.get_temp::<bool>(loop_id)).unwrap_or(true);
         let names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-        let record_id = egui::Id::new(("m_piano_record", pi));
+        let mut record_id = egui::Id::new(("m_piano_record", pi));
         let mut record_step = ui.data(|d| d.get_temp::<usize>(record_id));
         let screen = ui.ctx().screen_rect();
         let portrait = screen.width() < screen.height();
@@ -1732,6 +1743,38 @@ impl VinteriaApp {
         ui.add_space(3.0);
         ui.add(egui::Label::new(RichText::new("Double-tap to delete · Drag to move")
             .size(11.0).color(muted())).truncate());
+        let length_error_id = egui::Id::new(("m_piano_length_error", editor));
+        let mut pi = pi;
+        let mut edit_length = None;
+        ui.horizontal(|ui| {
+            if p_button(ui, "+", false, vec2(44.0, 40.0)).on_hover_text("Add one bar").clicked() {
+                edit_length = Some(false);
+            }
+            ui.add_enabled_ui(!self.project.patterns[pi].notes.is_empty(), |ui| {
+                if p_button(ui, "Duplicate notes", false, vec2(128.0, 40.0)).clicked() {
+                    edit_length = Some(true);
+                }
+            });
+        });
+        if let Some(duplicate) = edit_length {
+            match self.m_extend_piano(pi, clip_index, duplicate) {
+                Ok(()) => {
+                    ui.data_mut(|d| d.remove::<String>(length_error_id));
+                    let edited_pattern = self.project.current_pattern;
+                    if edited_pattern != pi {
+                        ui.data_mut(|d| d.remove::<usize>(record_id));
+                        record_id = egui::Id::new(("m_piano_record", edited_pattern));
+                        pi = edited_pattern;
+                    }
+                    ui.ctx().request_repaint();
+                }
+                Err(error) => ui.data_mut(|d| d.insert_temp(length_error_id, error.to_owned())),
+            }
+        }
+        if let Some(error) = ui.data(|d| d.get_temp::<String>(length_error_id)) {
+            ui.colored_label(RED, error);
+        }
+        let steps = self.project.patterns[pi].length_steps.max(1) as usize;
         let (key_root, key_scale) = (self.project.key_root, self.project.key_scale);
         let base = oct * 12;
         let high_pitch = 127_u8;
@@ -1752,7 +1795,7 @@ impl VinteriaApp {
         let grid = Rect::from_min_max(viewport.min + vec2(ruler_width, timeline_height), viewport.max);
         let mut grid_ui = ui.new_child(egui::UiBuilder::new().max_rect(grid));
         grid_ui.set_clip_rect(grid.intersect(ui.clip_rect()));
-        let grid_id = ("m_piano_grid_pc", pi, drawer.is_some());
+        let grid_id = ("m_piano_grid_pc", editor);
         let initialized = egui::Id::new((grid_id, "initialized"));
         let mut scroll = mobile_scroll(egui::ScrollArea::both()).id_salt(grid_id)
             .max_height(grid.height()).auto_shrink([false, false]);
@@ -2117,6 +2160,63 @@ impl VinteriaApp {
         }
     }
 
+    fn m_extend_piano(&mut self, pattern: usize, clip_index: Option<usize>, duplicate: bool) -> Result<(), &'static str> {
+        let source = &self.project.patterns[pattern];
+        let clip = clip_index.map(|index| self.project.arrangement.clips[index]);
+        let offset = clip.map_or(0, |clip| clip.offset);
+        let current = clip.map_or(source.len_ticks(), |clip| clip.len);
+        let max_ticks = crate::sequencer::MAX_STEPS as u32 * TICKS_PER_STEP;
+        let mut limit = max_ticks.saturating_sub(offset);
+        if let Some(clip) = clip {
+            if let Some(next) = self.project.arrangement.clips.iter()
+                .filter(|other| other.lane == clip.lane && other.start >= clip.end_tick())
+                .map(|other| other.start).min()
+            {
+                limit = limit.min(next - clip.start);
+            }
+        }
+        let mut copied = Vec::new();
+        let next = if duplicate {
+            let shift = current.max(source.len_ticks().saturating_sub(offset));
+            copied.extend(source.notes.iter()
+                .filter(|note| note.start >= offset && note.start < offset.saturating_add(current))
+                .map(|note| crate::piano_roll::Note { start: note.start.saturating_add(shift), ..*note }));
+            let end = copied.iter().map(|note| note.start.saturating_add(note.len)).max()
+                .ok_or("There are no notes in this clip to duplicate.")?;
+            shift.saturating_add(current).max(end.saturating_sub(offset))
+        } else {
+            current.saturating_add(TICKS_PER_BAR).min(limit)
+        };
+        if next <= current || next > limit {
+            return Err("No room to extend here. Move the next clip or shorten this one.");
+        }
+        let needed = offset.saturating_add(next).div_ceil(TICKS_PER_STEP);
+        let mut edit_pattern = pattern;
+        if let Some(index) = clip_index {
+            let shared = !source.clip_only || self.project.arrangement.clips.iter().enumerate()
+                .any(|(other, clip)| other != index && !clip.audio && clip.pattern == pattern)
+                || self.project.scenes.iter().enumerate().any(|(scene, entry)| {
+                    scene != self.project.active_scene && entry.arrangement.clips.iter()
+                        .any(|clip| !clip.audio && clip.pattern == pattern)
+                });
+            if shared && (needed > source.length_steps || duplicate) {
+                let mut copy = source.clone();
+                copy.clip_only = true;
+                edit_pattern = self.project.patterns.len();
+                self.project.patterns.push(copy);
+            }
+            let clip = &mut self.project.arrangement.clips[index];
+            clip.pattern = edit_pattern;
+            clip.len = next;
+        }
+        let edited = &mut self.project.patterns[edit_pattern];
+        edited.length_steps = edited.length_steps.max(needed);
+        edited.notes.extend(copied);
+        self.project.current_pattern = edit_pattern;
+        self.m_playlist_undo_step();
+        Ok(())
+    }
+
     fn m_clip_sheet(&mut self, ctx: &egui::Context) {
         let id = egui::Id::new("m_clip_sheet_selection");
         let animation = egui::Id::new("m_piano_drawer_animation");
@@ -2167,7 +2267,7 @@ impl VinteriaApp {
         egui::Area::new(egui::Id::new("m_piano_drawer"))
             .fixed_pos(open_at).constrain(false).movable(false).order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+                let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::click());
                 ui.painter().rect_filled(rect, 0.0, p_bg());
                 if !full {
                     ui.painter().line_segment([rect.right_top(), rect.right_bottom()], Stroke::new(1.0, outline()));
@@ -2179,6 +2279,49 @@ impl VinteriaApp {
                 close |= self.m_piano_editor(&mut child, pattern, Some((full_id, full)));
             });
         close || ctx.input(|input| input.key_pressed(egui::Key::Escape))
+    }
+
+    fn m_drum_sound_sheet(&mut self, ctx: &egui::Context) {
+        let id = egui::Id::new("m_drum_sound_sheet");
+        let lane = ctx.data(|d| d.get_temp::<usize>(id));
+        let Some(lane) = lane.filter(|&lane| self.m_sec == 1 && lane < NUM_DRUMS) else {
+            if lane.is_some() {
+                ctx.data_mut(|d| d.remove::<usize>(id));
+            }
+            return;
+        };
+        let done = mobile_editor_sheet(ctx, "m_drum_sound", DRUM_NAMES[lane], |ui| {
+            ui.add_space(8.0);
+            if let Some(sample) = self.project.drum_samples.get(lane).and_then(Option::as_ref) {
+                track_ui::sample_waveform(ui, sample, self.project.bpm, &self.shared);
+            } else {
+                ui.label("Built-in drum sound");
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if p_button(ui, "Preview", true, vec2(96.0, 40.0)).clicked() {
+                    self.shared.send(Cmd::DrumHit { lane, vel: 112 });
+                }
+                ui.menu_button("Choose WAV", |ui| {
+                    if let Some(path) = arrangement_ui::sample_picker(ui, &mut self.lib) {
+                        self.lib.assign(&mut self.project, lane, &path);
+                        self.status.clone_from(&self.lib.message);
+                        ui.close_menu();
+                    }
+                });
+            });
+            ui.separator();
+            let channel = &mut self.project.channels[lane];
+            ui.label("Level");
+            ui.add(egui::Slider::new(&mut channel.volume, 0.0..=1.0)
+                .custom_formatter(|v, _| format!("{:+.1} dB", widgets::db(v as f32))));
+            ui.label("Pan");
+            ui.add(egui::Slider::new(&mut channel.pan, -1.0..=1.0));
+        });
+        if done {
+            self.shared.send(Cmd::PreviewStop);
+            ctx.data_mut(|d| d.remove::<usize>(id));
+        }
     }
 
     fn m_track_sheet(&mut self, ctx: &egui::Context) {
@@ -2193,7 +2336,7 @@ impl VinteriaApp {
             ctx.data_mut(|d| d.remove::<bool>(id));
             return;
         };
-        let title = format!("Track Settings · {}", track.name);
+        let title = track.name.clone();
         let screen = ctx.screen_rect();
         let width = if screen.width() < screen.height() {
             screen.width()
@@ -3503,7 +3646,7 @@ impl VinteriaApp {
                         ui.label(RichText::new(&track.name).strong());
                         if ui.add_sized([136.0, 38.0], egui::Button::new("Main")).clicked() {
                             name_pick = Some((lane, true));
-                            ui.data_mut(|d| d.remove::<usize>(egui::Id::new(("m_track_settings_page", lane))));
+                            ui.data_mut(|d| d.insert_temp(egui::Id::new(("m_track_settings_page", lane)), 1_usize));
                             ui.close_menu();
                         }
                         if ui.add_sized([136.0, 38.0], egui::Button::new("Mute").selected(track.mute)).clicked() {

@@ -477,17 +477,73 @@ pub(super) fn mobile_track_settings(
     shared: &crate::audio_engine::device::Shared,
 ) {
     let lane = state.sel_lane;
-    let audio = project.arrangement.kind(lane) == TrackKind::Audio;
-    track_settings(ui, project, lane, true, |ui, project, part| {
-        match part {
-            0 if audio => section(ui, "Sample", f32::INFINITY, |ui| {
-                super::track_ui::sample_panel(ui, project, lane, state.sel_sample, library, shared);
-            }),
-            0 => show(ui, project, state, detail, plugin_window, library, shared.position.load(std::sync::atomic::Ordering::Relaxed), 3),
-            2 => show(ui, project, state, detail, plugin_window, library, shared.position.load(std::sync::atomic::Ordering::Relaxed), 4),
-            _ => {}
+    let kind = project.arrangement.kind(lane);
+    let page_id = egui::Id::new(("m_track_settings_page", lane));
+    let mut page = ui.data(|d| d.get_temp::<usize>(page_id)).unwrap_or(0).min(2);
+    let source_label = if kind == TrackKind::Audio { "Sample" } else { "Instrument" };
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        let width = (ui.available_width() - 2.0 * ui.spacing().item_spacing.x) / 3.0;
+        for (index, label) in [source_label, "Controls", "Effects"].iter().enumerate() {
+            if ui.add_sized([width, 42.0], egui::Button::new(*label).selected(page == index)).clicked() {
+                page = index;
+            }
         }
     });
+    ui.data_mut(|d| d.insert_temp(page_id, page));
+    ui.add_space(8.0);
+
+    let playhead = shared.position.load(std::sync::atomic::Ordering::Relaxed);
+    egui::ScrollArea::vertical().id_salt(("mobile_track_page", lane, page))
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+        .auto_shrink([false, false]).show(ui, |ui| match page {
+            0 if kind == TrackKind::Audio => {
+                let sample = state.sel_clip.and_then(|index| project.arrangement.clips.get(index))
+                    .filter(|clip| clip.audio && clip.lane == lane).map(|clip| clip.pattern)
+                    .or(project.arrangement.tracks[lane].audio_brush);
+                super::track_ui::sample_panel(ui, project, lane, sample, false, shared);
+            }
+            0 => {
+                let sampler = &project.arrangement.tracks[lane].sampler;
+                if let Some(sample) = sampler.sample.as_ref().filter(|_| project.arrangement.tracks[lane].instrument == Some(Track::Sampler)) {
+                    super::track_ui::sample_waveform(ui, sample, project.bpm, shared);
+                    ui.add_space(8.0);
+                }
+                show(ui, project, state, detail, plugin_window, library, playhead, 3);
+            }
+            1 => {
+                let track = &mut project.arrangement.tracks[lane];
+                ui.label("Track name");
+                ui.add(egui::TextEdit::singleline(&mut track.name).desired_width(f32::INFINITY));
+                ui.add_space(6.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.toggle_value(&mut track.mute, "Mute");
+                    ui.toggle_value(&mut track.solo, "Solo");
+                    ui.toggle_value(&mut track.arm, "Arm");
+                });
+                ui.separator();
+                ui.spacing_mut().slider_width = (ui.available_width() * 0.55).max(96.0);
+                ui.label("Level");
+                ui.add(egui::Slider::new(&mut track.volume, 0.0..=1.5)
+                    .custom_formatter(|v, _| format!("{:+.1} dB", super::widgets::db(v as f32))));
+                ui.label(if kind == TrackKind::Midi { "Transpose" } else { "Pitch" });
+                ui.add(egui::Slider::new(&mut track.transpose, -24..=24).suffix(" st"));
+                ui.separator();
+                ui.label("Input");
+                let inputs = crate::arrangement::input_names(kind);
+                let input = (track.input as usize).min(inputs.len() - 1);
+                egui::ComboBox::from_id_salt(("mobile_track_input", lane)).selected_text(inputs[input])
+                    .show_ui(ui, |ui| {
+                        for (index, name) in inputs.iter().enumerate() {
+                            ui.selectable_value(&mut track.input, index as u8, *name);
+                        }
+                    });
+                ui.label("Output");
+                super::mixer_ui::output_picker_w(ui, ("mobile_track_output", lane), &mut track.output, 124.0);
+                ui.checkbox(&mut track.sidechain_src, "Sidechain source");
+            }
+            _ => show(ui, project, state, detail, plugin_window, library, playhead, 4),
+        });
 }
 
 /// id of the dock page (0 Track Settings, 1 Instruments, 2 Track Effects, 3 Editor); set it to 3 to open the clip editor
@@ -586,7 +642,7 @@ pub fn dock(
                                 ui.add_space(6.0);
                                 ui.label(RichText::new(format!("Sample Editor – {}", p.arrangement.tracks[lane].name)).strong().size(14.0));
                                 ui.add_space(4.0);
-                                super::track_ui::sample_panel(ui, p, lane, st.sel_sample, lib, shared);
+                                super::track_ui::sample_panel(ui, p, lane, st.sel_sample, true, shared);
                             }
                         }
                     });
@@ -598,7 +654,7 @@ pub fn dock(
                     } else if audio {
                         ui.label(RichText::new(format!("Sample Editor – {}", p.arrangement.tracks[lane].name)).strong().size(14.0));
                         ui.add_space(4.0);
-                        super::track_ui::sample_panel(ui, p, lane, st.sel_sample, lib, shared);
+                        super::track_ui::sample_panel(ui, p, lane, st.sel_sample, true, shared);
                     } else {
                         let mut switch: Option<usize> = None;
                         if let Some(l) = switch.or(switch_to.take()) {

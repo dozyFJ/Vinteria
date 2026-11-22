@@ -343,3 +343,17 @@ Browser открывается слева рядом с Playlist в обеих �
 - Mobile light and dark themes use muted blue-gray surfaces and subtle Morning Dawn tints. Playlist clips keep the existing lane colors with softer fills and dark text. The shared desktop palette is unchanged.
 - Browser opens as a left drawer over the Playlist in the same style as the main menu. Dragging a Browser item clears the overlay so it can land on a track.
 - New MIDI clips use the active grid step. New audio clips align to the next division when space permits, and clip resizing snaps the right edge. The metronome follows arrangement or pattern position after seeking and looping.
+
+### Android 1.0.58
+
+- Mobile Track Settings opens with Sample or Instrument and has dedicated Controls and Effects tabs. The Main action in Playlist goes directly to Controls.
+- Tapping the name of a drum in Steps opens a sound panel with waveform, preview, WAV selection, level and pan.
+
+### Android 1.0.59
+
+- Piano Roll adds fixed controls to extend the current grid by a bar and duplicate the melody to the right. A clip extension stops at the next clip, and copies never overwrite neighboring clips.
+- Saved patterns retain valid nonstandard step counts.
+
+### Android 1.0.60
+
+- Piano Roll redraws the updated notes and grid in the same frame after extending or duplicating. A shared pattern can fork without resetting the open clip's scroll position or octave.

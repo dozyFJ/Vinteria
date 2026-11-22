@@ -2716,7 +2716,7 @@ impl eframe::App for VinteriaApp {
                         ui.separator();
                     }
                     match self.dock {
-                        Tab::Track => track_ui::sample_panel(ui, &mut self.project, lane, self.arr.sel_sample, &mut self.lib, &self.shared),
+                        Tab::Track => track_ui::sample_panel(ui, &mut self.project, lane, self.arr.sel_sample, true, &self.shared),
                         Tab::Instruments => {
                             let has = self.project.arrangement.tracks.get(lane).map_or(false, |t| t.instrument.is_some());
                             if has {

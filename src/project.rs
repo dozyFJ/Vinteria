@@ -437,10 +437,7 @@ impl Project {
             self.patterns.push(Pattern::new("Pattern 1", 16));
         }
         for p in &mut self.patterns {
-            p.length_steps = match p.length_steps {
-                16 | 32 | 64 | 128 | 256 => p.length_steps,
-                _ => 16,
-            };
+            p.length_steps = if p.length_steps == 0 { 16 } else { p.length_steps.min(MAX_STEPS as u32) };
             p.drums.resize(NUM_DRUMS, vec![]);
             for l in &mut p.drums {
                 l.resize(MAX_STEPS, Step::default());
