@@ -1639,6 +1639,7 @@ impl VinteriaApp {
                 let color = if record_step.is_some() { RED } else { p_accent() };
                 p.line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], Stroke::new(2.0, color));
             }
+            let pattern_end = steps as u32 * TICKS_PER_STEP;
             let tap_id = resp.id.with("last_piano_note_tap");
             let mut remove = None;
             let mut audition = None;
