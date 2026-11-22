@@ -18,12 +18,15 @@
 
 ## Кто что делает и как выходят обновления
 
-- **Официальные релизы и OTA выпускает ChatGPT** своим ключом (сертификат `f8dd8eae…8523`) в `dozyFJ/pulse-updates`,
-  ветка `winteria`. Это канал, который читают установленные у пользователя версии (`FEED` в `src/android_update.rs`).
-  Переход на ключ Claude отменён: секреты не были добавлены.
-- **Claude** делает фичи и исправления в `winteria`. Тестовые сборки «Winteria Dev» (`com.winteria.daw.dev`)
-  собирает CI в `ffight763-glitch/Vinteria-git3` (`android-dev.yml`), в OTA они не попадают.
-- Версия = следующая после последней опубликованной в `pulse-updates` и после последней `dev-v*`.
+- **Официальную Winteria делают оба: ChatGPT и Claude.** Один код (`dozyFJ/Vinteria`, ветка `winteria`), один ключ
+  (сертификат `f8dd8eae…8523`), один канал OTA (`dozyFJ/pulse-updates`, ветка `winteria`).
+- **Перед публикацией OTA код этой версии обязан быть запушен в `winteria`.** `sourceCommit` в `latest.json` должен
+  существовать в ветке. APK из незапушенного кода не выпускать (так пропали 1.0.32, 1.0.35, 1.0.63).
+- **Версия** = следующая после максимума из `pulse-updates` и всех `dev-v*`. Перед сборкой сделай `git pull --rebase`.
+- **Чтобы Claude тоже мог публиковать**, ключ релиза хранится в секретах GitHub `ffight763-glitch/Vinteria-git3`:
+  `ANDROID_KEYSTORE_B64`, `ANDROID_KEYSTORE_PASSWORD`. Добавляет их пользователь, в git ключ не кладётся никогда.
+  Тогда CI (`android.yml`) собирает и подписывает официальную версию после пуша Claude.
+- Тестовые сборки «Winteria Dev» (`com.winteria.daw.dev`) идут через `android-dev.yml` и в OTA не попадают.
 
 ## Правила
 
