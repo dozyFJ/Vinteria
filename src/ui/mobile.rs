@@ -368,6 +368,7 @@ const STUDIO_SECTIONS: [(&str, Icon); 6] = [
 ];
 const SEC_PLAYLIST: usize = 0;
 const DRAWER_OPEN: &str = "m_nav_drawer_open";
+const MIXER_SHEET: &str = "m_mixer_sheet_open";
 
 /// one line of the navigation drawer: icon + label, the active one on a filled pill
 fn drawer_row(ui: &mut Ui, symbol: Icon, label: &str, active: bool) -> Response {
@@ -541,11 +542,8 @@ impl VinteriaApp {
                     });
             } else if portrait {
                 self.m_studio_portrait_header(ctx);
-                if self.m_tab == 1 && self.m_sec == SEC_PLAYLIST {
-                    // track names in a row right under the header (portrait); landscape keeps the list on the left
-                    self.m_playlist_track_nav(ctx);
-                }
                 self.m_studio_transport_dock(ctx);
+                self.m_mixer_sheet(ctx);
                 self.m_nav_drawer(ctx);
             } else {
                 self.m_studio_sidebar(ctx);
@@ -760,6 +758,18 @@ impl VinteriaApp {
             .frame(Frame::none().fill(bar_fill()).inner_margin(Margin { left: 6.0, right: 6.0, top: 6.0, bottom: 12.0 }))
             .show(ctx, |ui| {
                 mobile_visuals(ui);
+                // in the Playlist a swipe up on the dock pulls up the mixer sheet (the buttons only take taps)
+                if self.m_sec == SEC_PLAYLIST {
+                    let area = ui.max_rect().expand2(vec2(6.0, 6.0));
+                    let swipe = ui.interact(area, egui::Id::new("m_dock_swipe"), Sense::drag());
+                    if swipe.drag_stopped() && swipe.drag_delta().y < 0.0 || swipe.dragged() && ui.input(|i| {
+                        i.pointer.press_origin().zip(i.pointer.interact_pos()).is_some_and(|(a, b)| a.y - b.y > 24.0)
+                    }) {
+                        ctx.data_mut(|d| d.insert_temp(egui::Id::new(MIXER_SHEET), true));
+                    }
+                    let grip = Rect::from_center_size(pos2(area.center().x, area.top() + 4.0), vec2(36.0, 4.0));
+                    ui.painter().rect_filled(grip, 2.0, outline());
+                }
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
                     let (play_w, tempo_w, small) = (44.0, 54.0, 36.0);
@@ -767,11 +777,57 @@ impl VinteriaApp {
                     let right = 2.0 * play_w + tempo_w + 3.0 * 2.0;
                     let space = (ui.available_width() - right).max(1.0);
                     ui.add_sized([space, 44.0], egui::Label::new(RichText::new(&self.project.name)
-                        .strong().size(14.0).color(ink())).truncate());
+                        .strong().size(14.0).color(ink())).truncate().selectable(false));
                     self.m_studio_play_stop(ui, ctx, play_w);
                     self.m_studio_tempo(ui, tempo_w, false);
                 });
             });
+    }
+
+    /// Playlist: the mixer as a bottom sheet (swipe the dock up to open, swipe the grip down or tap above to close)
+    fn m_mixer_sheet(&mut self, ctx: &egui::Context) {
+        let open_id = egui::Id::new(MIXER_SHEET);
+        let open = ctx.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false) && self.m_sec == SEC_PLAYLIST;
+        let t = ctx.animate_bool_with_time(open_id.with("anim"), open, 0.18);
+        if t <= 0.0 {
+            return;
+        }
+        let screen = ctx.screen_rect();
+        let height = (screen.height() * 0.62).max(300.0).min(screen.height() - 60.0);
+        let mut close = false;
+        egui::Area::new(open_id.with("scrim")).order(egui::Order::Middle).fixed_pos(screen.min)
+            .show(ctx, |ui| {
+                let (rect, resp) = ui.allocate_exact_size(screen.size(), Sense::click());
+                ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha((120.0 * t) as u8));
+                close |= resp.clicked();
+            });
+        egui::Area::new(open_id.with("sheet")).order(egui::Order::Foreground)
+            .fixed_pos(pos2(screen.left(), screen.bottom() - height * t))
+            .show(ctx, |ui| {
+                let rect = Rect::from_min_size(ui.max_rect().min, vec2(screen.width(), height));
+                ui.allocate_rect(rect, Sense::hover());
+                ui.painter().rect_filled(rect, egui::Rounding { nw: 18.0, ne: 18.0, ..Default::default() }, bar_fill());
+                // grip: drag it down (or tap it) to close
+                let head = Rect::from_min_size(rect.min, vec2(rect.width(), 40.0));
+                let grip = ui.interact(head, open_id.with("grip"), Sense::click_and_drag());
+                ui.painter().rect_filled(Rect::from_center_size(pos2(head.center().x, head.top() + 10.0), vec2(40.0, 5.0)), 2.5, outline());
+                ui.painter().text(pos2(head.left() + 16.0, head.top() + 26.0), Align2::LEFT_CENTER, "Mixer",
+                    FontId::proportional(15.0), ink());
+                if grip.clicked() || grip.drag_stopped() && grip.drag_delta().y >= 0.0 || grip.dragged() && ui.input(|i| {
+                    i.pointer.press_origin().zip(i.pointer.interact_pos()).is_some_and(|(a, b)| b.y - a.y > 40.0)
+                }) {
+                    close = true;
+                }
+                let body = Rect::from_min_max(pos2(rect.left() + 8.0, head.bottom()), pos2(rect.right() - 8.0, rect.bottom() - 10.0));
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body));
+                child.set_clip_rect(body.intersect(screen));
+                mobile_visuals(&mut child);
+                self.m_mixer(&mut child);
+            });
+        if close {
+            ctx.data_mut(|d| d.insert_temp(open_id, false));
+        }
+        ctx.request_repaint();
     }
 
     /// left drawer like the Claude app: sections (the active one highlighted) and the project actions
@@ -870,6 +926,7 @@ impl VinteriaApp {
         ctx.request_repaint();
     }
 
+    #[allow(dead_code)]
     fn m_playlist_track_nav(&mut self, ctx: &egui::Context) {
         let mut select = None;
         egui::TopBottomPanel::top("m_playlist_track_nav")
@@ -2560,12 +2617,17 @@ impl VinteriaApp {
         let panel_open = ui.data(|d| d.get_temp::<bool>(panel_id)).unwrap_or(false);
         let screen = ui.ctx().screen_rect();
         let portrait = screen.width() < screen.height();
-        let panel_width: f32 = if portrait { 8.0 } else if panel_open { 106.0 } else { 28.0 };
+        let panel_width: f32 = if portrait { 74.0 } else if panel_open { 106.0 } else { 28.0 };
         let reveal_id = egui::Id::new("m_playlist_reveal_track");
         let reveal_lane = ui.data_mut(|d| d.remove_temp::<usize>(reveal_id));
         let (viewport, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
         let mut grid = viewport;
-        grid.min.x += panel_width.min((viewport.width() - 1.0).max(0.0));
+        // portrait: the track names sit on the right (like Ableton), the left edge stays for the browser
+        if portrait {
+            grid.max.x -= panel_width.min((viewport.width() - 1.0).max(0.0));
+        } else {
+            grid.min.x += panel_width.min((viewport.width() - 1.0).max(0.0));
+        }
         grid.min.y += ruler.min((viewport.height() - 1.0).max(0.0));
         let mut grid_ui = ui.new_child(egui::UiBuilder::new().max_rect(grid));
         grid_ui.set_clip_rect(grid.intersect(ui.clip_rect()));
@@ -2802,7 +2864,11 @@ impl VinteriaApp {
                     p_accent(), Stroke::NONE));
             }
         }
-        let panel = Rect::from_min_max(viewport.min, pos2(grid.left(), viewport.bottom()));
+        let panel = if portrait {
+            Rect::from_min_max(pos2(grid.right(), viewport.top()), viewport.max)
+        } else {
+            Rect::from_min_max(viewport.min, pos2(grid.left(), viewport.bottom()))
+        };
         let painter = ui.painter_at(panel);
         painter.rect_filled(panel, 0.0, pick(0xFF252D37, 0xFFB9C5CA));
         let names = Rect::from_min_max(pos2(panel.left(), grid.top()), panel.max);
@@ -2824,15 +2890,15 @@ impl VinteriaApp {
                 }
                 labels.line_segment([row.left_top(), row.right_top()], Stroke::new(0.6, grid_line()));
                 if portrait {
-                    // names are in the row under the header: here only a colour strip per track
-                    labels.rect_filled(row.shrink2(vec2(1.5, 3.0)), 2.0, lane_col(lane));
-                    continue;
+                    // the track's colour strip, its name next to it (the row under the header is gone)
+                    labels.rect_filled(Rect::from_min_size(row.min + vec2(2.0, 3.0), vec2(4.0, row.height() - 6.0)), 2.0, lane_col(lane));
+                } else {
+                    labels.circle_filled(row.left_center() + vec2(12.0, 0.0), 3.0, lane_col(lane));
                 }
-                labels.circle_filled(row.left_center() + vec2(if portrait { 7.0 } else { 12.0 }, 0.0), 3.0, lane_col(lane));
                 let _ = counts;
                 // the full track name; tap selects the track, a second tap on the selected one opens its settings
                 labels.with_clip_rect(row.intersect(names).intersect(ui.clip_rect())).text(
-                    row.left_center() + vec2(if portrait { 14.0 } else { 23.0 }, 0.0), Align2::LEFT_CENTER, &track.name,
+                    row.left_center() + vec2(if portrait { 11.0 } else { 23.0 }, 0.0), Align2::LEFT_CENTER, &track.name,
                     FontId::proportional(if portrait { 12.0 } else { 13.0 }), if track.mute { muted() } else { ink() });
                 let hit = ui.interact(row.intersect(names), panel_id.with(lane), Sense::click()).on_hover_text(&track.name);
                 if hit.clicked() || hit.secondary_clicked() {
