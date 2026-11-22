@@ -357,3 +357,12 @@ Browser открывается слева рядом с Playlist в обеих �
 ### Android 1.0.60
 
 - Piano Roll redraws the updated notes and grid in the same frame after extending or duplicating. A shared pattern can fork without resetting the open clip's scroll position or octave.
+
+### Android 1.0.61
+
+- Mobile Piano Roll has a Select tool with tap selection and drag marquee. Duplicate selection places selected notes to the right at a grid-aligned interval and extends the clip only when necessary.
+
+### Android 1.0.62
+
+- Studio has a scrollable center toolbar and a pencil to draw volume automation on the selected Playlist track. Existing automation plays through the shared engine.
+- Home, Projects and Plugin Store are in the mobile hub navigation. Home surfaces recent projects, templates and sounds. Plugin Store catalogs the built-in instruments and effects.

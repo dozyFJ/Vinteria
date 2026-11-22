@@ -401,7 +401,7 @@ impl VinteriaApp {
             show_projects: false,
             hub_open: false,
             splash: web_time::Instant::now(),
-            m_tab: 0,
+            m_tab: 4,
             m_sec: 0,
             m_export: Default::default(),
             #[cfg(not(target_arch = "wasm32"))]
