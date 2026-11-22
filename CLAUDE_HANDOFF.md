@@ -332,3 +332,8 @@ Browser открывается слева рядом с Playlist в обеих �
 - The waveform button renders the selected Playlist track off the UI thread. The shared progress animation stays visible during rendering, then Studio selects the rendered WAV on a new audio track and mutes the original.
 - Repeated renders use distinct WAV filenames. Rendered tracks keep their full length when reopening a saved project.
 - Tap or drag the Playlist ruler to set the playhead. Audio clips resume at the seek position. Hold a clip to duplicate or delete it, and use Undo from Playlist options to reverse the edit.
+
+### Android 1.0.56
+
+- The waveform button renders the entire audible Playlist into one WAV and imports it on a new audio track. The original tracks are muted after a successful render. Desktop retains its single-track command.
+- MIDI and audio track cards expose Main, Mute and Solo in their own Playlist menus.

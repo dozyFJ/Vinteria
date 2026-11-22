@@ -831,12 +831,11 @@ impl VinteriaApp {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn m_render_track_button(&mut self, ui: &mut Ui, ctx: &egui::Context, width: f32) {
-        if !studio_icon(ui, width, Icon::Wave, false, "Render selected track to audio").clicked() {
+        if !studio_icon(ui, width, Icon::Wave, false, "Render Playlist mix to audio").clicked() {
             return;
         }
-        let lane = self.arr.sel_lane;
-        if !self.project.arrangement.clips.iter().any(|clip| clip.lane == lane) {
-            self.status = "Select a Playlist track with clips to render.".into();
+        if self.project.arrangement.clips.is_empty() {
+            self.status = "Add clips to the Playlist before rendering.".into();
             self.arr.msg.clone_from(&self.status);
             return;
         }
@@ -844,7 +843,7 @@ impl VinteriaApp {
         self.m_select_studio_section(ctx, SEC_PLAYLIST);
         ctx.data_mut(|d| {
             d.remove::<bool>(egui::Id::new("m_browser_open"));
-            d.insert_temp(egui::Id::new("render_job"), (lane, 0_u8));
+            d.insert_temp(egui::Id::new("render_job"), None::<usize>);
         });
         ctx.request_repaint();
     }
@@ -3062,7 +3061,7 @@ impl VinteriaApp {
         let panel_open = ui.data(|d| d.get_temp::<bool>(panel_id)).unwrap_or(false);
         let screen = ui.ctx().screen_rect();
         let portrait = screen.width() < screen.height();
-        let panel_width: f32 = if portrait && add_lane { 10.0 } else if portrait { 74.0 } else if panel_open { 106.0 } else { 28.0 };
+        let panel_width: f32 = if portrait && add_lane { 10.0 } else if portrait { 94.0 } else if panel_open { 106.0 } else { 28.0 };
         let reveal_id = egui::Id::new("m_playlist_reveal_track");
         let reveal_lane = ui.data_mut(|d| d.remove_temp::<usize>(reveal_id));
         let (viewport, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
@@ -3423,6 +3422,8 @@ impl VinteriaApp {
         let painter = ui.painter_at(panel);
         painter.rect_filled(panel, 0.0, pick(0xFF252D37, 0xFFB9C5CA));
         let names = Rect::from_min_max(pos2(panel.left(), grid.top()), panel.max);
+        let mut mute_change = None;
+        let mut solo_change = None;
         let mut name_pick: Option<(usize, bool)> = None;
         if portrait {
             let swipe = ui.interact(names.intersect(ui.clip_rect()), egui::Id::new("m_playlist_names_swipe"), Sense::drag());
@@ -3458,11 +3459,40 @@ impl VinteriaApp {
                     labels.circle_filled(row.left_center() + vec2(12.0, 0.0), 3.0, lane_col(lane));
                 }
                 let _ = counts;
-                // the full track name; tap selects the track, a second tap on the selected one opens its settings
-                labels.with_clip_rect(row.intersect(names).intersect(ui.clip_rect())).text(
+                let visible = row.intersect(names).intersect(ui.clip_rect());
+                let mut label_rect = visible;
+                if panel.width() >= 84.0 {
+                    label_rect.max.x -= 30.0;
+                    let button_rect = Rect::from_min_max(pos2(label_rect.right(), visible.top()), visible.max);
+                    let mut trigger = ui.new_child(egui::UiBuilder::new().id_salt(("track_options", lane)).max_rect(button_rect));
+                    trigger.set_clip_rect(button_rect);
+                    let button = egui::Button::new("").frame(false).min_size(button_rect.size());
+                    let menu = egui::menu::menu_custom_button(&mut trigger, button, |ui| {
+                        ui.label(RichText::new(&track.name).strong());
+                        if ui.add_sized([136.0, 38.0], egui::Button::new("Main")).clicked() {
+                            name_pick = Some((lane, true));
+                            ui.data_mut(|d| d.remove::<usize>(egui::Id::new(("m_track_settings_page", lane))));
+                            ui.close_menu();
+                        }
+                        if ui.add_sized([136.0, 38.0], egui::Button::new("Mute").selected(track.mute)).clicked() {
+                            mute_change = Some((lane, !track.mute));
+                            ui.close_menu();
+                        }
+                        if ui.add_sized([136.0, 38.0], egui::Button::new("Solo").selected(track.solo)).clicked() {
+                            solo_change = Some((lane, !track.solo));
+                            ui.close_menu();
+                        }
+                    });
+                    menu.response.on_hover_text("Track options");
+                    let dot_color = if track.solo { super::theme::TEAL() } else { muted() };
+                    for offset in [-5.0, 0.0, 5.0] {
+                        labels.circle_filled(button_rect.center() + vec2(offset, 0.0), 1.4, dot_color);
+                    }
+                }
+                labels.with_clip_rect(label_rect).text(
                     row.left_center() + vec2(if portrait { 11.0 } else { 23.0 }, 0.0), Align2::LEFT_CENTER, &track.name,
                     FontId::proportional(if portrait { 12.0 } else { 13.0 }), if track.mute { muted() } else { ink() });
-                let hit = ui.interact(row.intersect(names), panel_id.with(lane), Sense::click()).on_hover_text(&track.name);
+                let hit = ui.interact(label_rect, panel_id.with(lane), Sense::click()).on_hover_text(&track.name);
                 if hit.clicked() || hit.secondary_clicked() {
                     name_pick = Some((lane, lane == self.arr.sel_lane || hit.secondary_clicked()));
                 }
@@ -3524,6 +3554,14 @@ impl VinteriaApp {
             let x = if portrait { panel.right() - 3.0 } else { timeline.right() - 3.0 };
             let options = Rect::from_min_size(pos2(x - TOUCH, viewport.top()), vec2(TOUCH, ruler));
             self.m_playlist_options(ui, options);
+        }
+        if let Some((lane, mute)) = mute_change {
+            self.m_playlist_undo_step();
+            self.project.arrangement.tracks[lane].mute = mute;
+        }
+        if let Some((lane, solo)) = solo_change {
+            self.m_playlist_undo_step();
+            self.project.arrangement.tracks[lane].solo = solo;
         }
         if let Some((lane, open_settings)) = name_pick {
             self.arr.sel_lane = lane;

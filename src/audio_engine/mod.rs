@@ -889,6 +889,7 @@ impl Engine {
                 ins_mono[i] = m + lane_ins[i];
             }
             let mut au = 0.0;
+            let mut rendered_mix = 0.0f32;
             for v in self.audio.iter_mut() {
                 if !v.active || self.paused {
                     continue;
@@ -913,8 +914,10 @@ impl Engine {
                 }
                 v.elapsed += 1.0;
                 let x = (sd.mono[i] * (1.0 - fr) + sd.mono[i + 1] * fr) * v.fade * v.gain * cg * self.lane_auto.get(v.lane).copied().unwrap_or(1.0);
-                match proj.arrangement.tracks.get(v.lane).and_then(|t| t.output) {
+                let track = proj.arrangement.tracks.get(v.lane);
+                match track.and_then(|track| track.output) {
                     Some(o) => ins_mono[o.min(NUM_INSERTS - 1)] += x * proj.channels[crate::mixer::CH_AUDIO].volume,
+                    None if track.is_some_and(|track| track.rendered_mix) => rendered_mix += x,
                     None => au += x,
                 }
                 let step = sd.rate as f64 / sr as f64 * if v.mul > 0.0 { v.mul } else { 1.0 };
@@ -931,7 +934,7 @@ impl Engine {
                 }
             }
             raw[crate::mixer::CH_AUDIO] = au;
-            let (mut ml, mut mr, mut sl, mut sr_) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+            let (mut ml, mut mr, mut sl, mut sr_) = (rendered_mix, rendered_mix, 0.0f32, 0.0f32);
             // the envelope falls back in about 0.22 s
             self.duck_env *= 1.0 - 4.5 / sr;
             let mut ins_l = [0.0f32; NUM_INSERTS];

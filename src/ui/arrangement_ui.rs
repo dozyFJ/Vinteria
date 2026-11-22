@@ -1605,7 +1605,7 @@ fn track_headers(ui: &mut Ui, project: &mut Project, st: &mut ArrState, dc: &mut
     }
     if let Some(l) = render_req {
         // the render itself runs a frame later (see `render_overlay` in ui/mod.rs), after the "please wait" screen is up
-        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("render_job"), (l, 0u8)));
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("render_job"), Some(l)));
         ui.ctx().request_repaint();
     }
 }

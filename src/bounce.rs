@@ -151,33 +151,53 @@ pub fn render_track_to_audio(project: &mut Project, lane: usize) -> Result<Optio
 }
 
 pub fn render_track_to_audio_in(project: &mut Project, lane: usize, dir: &Path) -> Result<Option<usize>, String> {
-    let Some(src) = project.arrangement.tracks.get(lane).cloned() else { return Ok(None) };
-    let clips: Vec<Clip> = project.arrangement.clips.iter().filter(|c| c.lane == lane).copied().collect();
-    if clips.is_empty() {
-        return Ok(None);
-    }
-    let end_tick = clips.iter().map(|c| c.end_tick()).max().unwrap_or(0);
-    let bars = ((end_tick + TICKS_PER_BAR - 1) / TICKS_PER_BAR).max(1);
-    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let settings = ExportSettings { sample_rate: 48000, depth: BitDepth::Pcm16, bars, tail_secs: 1.5 };
-    // the same project with only this track playing; the master chain is left out (the new audio track goes through it later)
+    render_to_audio_in(project, Some(lane), dir)
+}
+
+pub fn render_mix_to_audio(project: &mut Project) -> Result<Option<usize>, String> {
+    render_to_audio_in(project, None, Path::new("bounces"))
+}
+
+fn render_to_audio_in(project: &mut Project, lane: Option<usize>, dir: &Path) -> Result<Option<usize>, String> {
+    let name = match lane {
+        Some(lane) => match project.arrangement.tracks.get(lane) {
+            Some(track) => track.name.clone(),
+            None => return Ok(None),
+        },
+        None => "Playlist mix".to_owned(),
+    };
     let mut q = project.clone();
     q.song_mode = true;
     q.metronome = false;
     q.loop_on = false;
-    q.arrangement.clips.retain(|c| c.lane == lane);
-    for track in &mut q.arrangement.tracks {
-        track.solo = false;
+    if let Some(lane) = lane {
+        q.arrangement.clips.retain(|clip| clip.lane == lane);
+        for track in &mut q.arrangement.tracks {
+            track.solo = false;
+        }
+        q.arrangement.tracks[lane].mute = false;
     }
-    q.arrangement.tracks[lane].mute = false;
+    if q.arrangement.clips.is_empty() {
+        return Ok(None);
+    }
+    q.arrangement.clips.retain(|clip| !clip.mute && (lane.is_some() || !project.arrangement.muted(clip.lane)));
+    if q.arrangement.clips.is_empty() {
+        return Ok(None);
+    }
+    let bars = export::default_bars(&q).max(1);
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let settings = ExportSettings { sample_rate: 48000, depth: BitDepth::Pcm16, bars, tail_secs: 1.5 };
+    // The imported track runs through the project's master chain on playback.
     q.master_fx = crate::project::MasterFx::default();
     q.master_volume = 1.0;
+    q.master_chain.clear();
+    q.master_auto.clear();
     let data = export::render(&q, &settings);
     if data.iter().fold(0.0f32, |m, v| m.max(v.abs())) < 1e-4 {
         return Ok(None);
     }
     let clean = |s: &str| -> String { s.chars().map(|ch| if ch.is_alphanumeric() { ch } else { '_' }).collect() };
-    let base = format!("{}_{}_render", clean(&project.name), clean(&src.name));
+    let base = format!("{}_{}_render", clean(&project.name), clean(&name));
     let (file, writer) = (1_u32..).find_map(|take| {
         let name = if take == 1 { base.clone() } else { format!("{base}_{take}") };
         let path = dir.join(format!("{name}.wav"));
@@ -193,18 +213,26 @@ pub fn render_track_to_audio_in(project: &mut Project, lane: usize, dir: &Path) 
     }
     let mono: Vec<f32> = data.chunks(2).map(|f| (f[0] + f.get(1).copied().unwrap_or(f[0])) * 0.5).collect();
     let secs = mono.len() as f32 / settings.sample_rate as f32;
-    let idx = project.pool_index(&format!("{} (render)", src.name), &file.to_string_lossy(), Arc::new(SampleData { rate: settings.sample_rate, mono }));
+    let idx = project.pool_index(&format!("{name} (render)"), &file.to_string_lossy(), Arc::new(SampleData { rate: settings.sample_rate, mono }));
     project.arrangement.add_track(TrackKind::Audio);
     let new_lane = project.arrangement.tracks.len() - 1;
-    project.arrangement.tracks[new_lane].name = format!("{} (render)", src.name);
+    project.arrangement.tracks[new_lane].name = format!("{name} (render)");
     // the render starts at the beginning of the song, so the clip does too
     let len = ((secs * project.bpm / 60.0 * PPQ as f32).floor() as u32).max(24);
     project.arrangement.clips.push(Clip::new(idx, new_lane, 0, len, true));
     project.arrangement.tracks[new_lane].audio_brush = Some(idx);
-    project.arrangement.tracks[lane].mute = true;
-    if project.arrangement.tracks[lane].solo {
-        project.arrangement.tracks[lane].solo = false;
-        project.arrangement.tracks[new_lane].solo = true;
+    if let Some(lane) = lane {
+        project.arrangement.tracks[lane].mute = true;
+        if project.arrangement.tracks[lane].solo {
+            project.arrangement.tracks[lane].solo = false;
+            project.arrangement.tracks[new_lane].solo = true;
+        }
+    } else {
+        project.arrangement.tracks[new_lane].rendered_mix = true;
+        for track in &mut project.arrangement.tracks[..new_lane] {
+            track.mute = true;
+            track.solo = false;
+        }
     }
     project.song_mode = true;
     Ok(Some(new_lane))
@@ -212,7 +240,7 @@ pub fn render_track_to_audio_in(project: &mut Project, lane: usize, dir: &Path) 
 
 /// A fresh Beat track for a pattern: first in the list, plays whatever the pattern holds (drums and per-note instruments).
 pub fn beat_track(name: &str) -> ArrTrack {
-    ArrTrack { name: name.to_string(), kind: TrackKind::Midi, mute: false, instrument: None, output: None, transpose: 0, blank: false, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, solo: false, arm: false, input: 0, volume: 1.0, group: 0 }
+    ArrTrack { name: name.to_string(), kind: TrackKind::Midi, mute: false, instrument: None, output: None, transpose: 0, blank: false, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, rendered_mix: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0 }
 }
 
 #[cfg(test)]

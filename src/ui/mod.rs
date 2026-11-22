@@ -511,21 +511,28 @@ impl VinteriaApp {
                     }
                     format!("Rendered to {}", self.project.arrangement.tracks[lane].name)
                 }
-                Ok(None) => "Nothing audible on that track to render".into(),
+                Ok(None) => "Nothing audible to render".into(),
                 Err(error) => format!("Render failed: {error}"),
             };
             self.status.clone_from(&self.arr.msg);
             return false;
         }
 
-        let Some((lane, _)) = ctx.data_mut(|d| d.remove_temp::<(usize, u8)>(id)) else { return false };
-        let Some(track) = self.project.arrangement.tracks.get(lane) else { return false };
-        let source_name = track.name.clone();
+        let Some(target) = ctx.data_mut(|d| d.remove_temp::<Option<usize>>(id)) else { return false };
+        let source_name = match target {
+            Some(lane) => {
+                let Some(track) = self.project.arrangement.tracks.get(lane) else { return false };
+                track.name.clone()
+            }
+            None => "Playlist mix".into(),
+        };
         let mut project = self.project.clone();
         let (tx, result) = crossbeam_channel::bounded(1);
         let worker = std::thread::Builder::new().name("winteria-track-render".into()).spawn(move || {
-            let result = crate::bounce::render_track_to_audio(&mut project, lane)
-                .map(|lane| lane.map(|lane| (project, lane)));
+            let result = match target {
+                Some(lane) => crate::bounce::render_track_to_audio(&mut project, lane),
+                None => crate::bounce::render_mix_to_audio(&mut project),
+            }.map(|lane| lane.map(|lane| (project, lane)));
             let _ = tx.send(result);
         });
         match worker {
