@@ -3576,7 +3576,14 @@ impl VinteriaApp {
                 let clip = ui.interact(hit, resp.id.with(("clip", i)), if automation { Sense::hover() } else { Sense::click_and_drag() })
                     .on_hover_cursor(egui::CursorIcon::Grab);
                 let resize_id = resp.id.with(("clip_resize", i));
-                if clip.drag_started() {
+                let grab_id = clip.id.with("grab_x");
+                if pinching || automation || clip.drag_started() {
+                    ui.data_mut(|d| {
+                        d.remove::<f32>(resize_id);
+                        d.remove::<f32>(grab_id);
+                    });
+                }
+                if !pinching && !automation && clip.drag_started() {
                     // remember where the finger went down: it is gone by the time the drag ends
                     if let Some(origin) = ui.input(|input| input.pointer.press_origin()).filter(|o| edge_rect.contains(*o)) {
                         ui.data_mut(|d| d.insert_temp(resize_id, origin.x));
@@ -3667,7 +3674,6 @@ impl VinteriaApp {
                     }
                 });
 
-                let grab_id = clip.id.with("grab_x");
                 if clip.drag_started() {
                     if let Some(origin) = ui.input(|input| input.pointer.press_origin()) {
                         ui.data_mut(|d| d.insert_temp(grab_id, origin.x - x0));

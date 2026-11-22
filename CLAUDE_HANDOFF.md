@@ -383,3 +383,9 @@ Browser открывается слева рядом с Playlist в обеих �
    ключом, и они встанут поверх твоих.
 3. Дальше правила из `AGENTS.md`: всегда `git pull --rebase` перед работой, пуш до публикации, версия строго следующая.
    Каждый пишет сюда короткую запись о своей версии.
+
+### Android 1.0.64
+
+- The 1.0.63 source and APK were unavailable. This release starts from the published 1.0.62 code and the shared handoff updates.
+- Playlist clips clear pending move and resize state when a pinch takes over or automation drawing is active. A fresh clip drag starts with fresh state.
+- Check clip resize, drag, pinch, and drawing on Android. Official builds use the existing OTA signing certificate.
