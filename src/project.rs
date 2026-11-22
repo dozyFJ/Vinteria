@@ -109,10 +109,16 @@ pub fn load_wav(path: &Path) -> Result<SampleData, String> {
 }
 
 pub(crate) fn decode_wav(input: impl std::io::Read) -> Result<SampleData, String> {
+    decode_wav_with_limit(input, Some(60))
+}
+
+fn decode_wav_with_limit(input: impl std::io::Read, seconds: Option<usize>) -> Result<SampleData, String> {
     let mut r = hound::WavReader::new(input).map_err(|e| format!("invalid WAV: {e}"))?;
     let spec = r.spec();
     let ch = spec.channels.max(1) as usize;
-    let max_samples = (spec.sample_rate as usize).saturating_mul(60).saturating_mul(ch);
+    let max_samples = seconds.map_or(usize::MAX, |seconds| {
+        (spec.sample_rate as usize).saturating_mul(seconds).saturating_mul(ch)
+    });
     let raw: Vec<f32> = match spec.sample_format {
         hound::SampleFormat::Float => r.samples::<f32>().take(max_samples).collect::<Result<Vec<_>, _>>().map_err(|e| format!("invalid WAV data: {e}"))?,
         hound::SampleFormat::Int => {
@@ -123,8 +129,7 @@ pub(crate) fn decode_wav(input: impl std::io::Read) -> Result<SampleData, String
     if raw.iter().any(|v| !v.is_finite()) {
         return Err("invalid WAV data: non-finite sample".into());
     }
-    let mut mono: Vec<f32> = raw.chunks(ch).map(|f| f.iter().sum::<f32>() / ch as f32).collect();
-    mono.truncate(spec.sample_rate as usize * 60);
+    let mono: Vec<f32> = raw.chunks_exact(ch).map(|f| f.iter().sum::<f32>() / ch as f32).collect();
     if mono.len() < 2 {
         return Err("sample is empty".into());
     }
@@ -1002,7 +1007,15 @@ impl Project {
         }
         for r in p.audio_pool.iter_mut() {
             let cand = resolve_sample_path(&dir, &r.path);
-            match load_wav(&cand) {
+            let stored = Path::new(&r.path);
+            let bounced = stored.parent() == Some(Path::new("bounces"));
+            let audio = if bounced {
+                std::fs::File::open(&cand).map_err(|error| error.to_string())
+                    .and_then(|file| decode_wav_with_limit(std::io::BufReader::new(file), None))
+            } else {
+                load_wav(&cand)
+            };
+            match audio {
                 Ok(d) => r.data = Some(Arc::new(d)),
                 Err(e) => {
                     warnings.push(format!("audio '{}' not loaded: {e}", r.name));

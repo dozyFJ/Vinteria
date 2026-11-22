@@ -326,3 +326,9 @@ Browser открывается слева рядом с Playlist в обеих �
 ### Android 1.0.54
 
 - Portrait Studio centers frameless BPM, metronome, microphone and MIDI controls. Menu and Browser sit at opposite edges.
+
+### Android 1.0.55
+
+- The waveform button renders the selected Playlist track off the UI thread. The shared progress animation stays visible during rendering, then Studio selects the rendered WAV on a new audio track and mutes the original.
+- Repeated renders use distinct WAV filenames. Rendered tracks keep their full length when reopening a saved project.
+- Tap or drag the Playlist ruler to set the playhead. Audio clips resume at the seek position. Hold a clip to duplicate or delete it, and use Undo from Playlist options to reverse the edit.

@@ -156,7 +156,6 @@ pub fn render_track_to_audio_in(project: &mut Project, lane: usize, dir: &Path) 
     if clips.is_empty() {
         return Ok(None);
     }
-    let first = clips.iter().map(|c| c.start).min().unwrap_or(0);
     let end_tick = clips.iter().map(|c| c.end_tick()).max().unwrap_or(0);
     let bars = ((end_tick + TICKS_PER_BAR - 1) / TICKS_PER_BAR).max(1);
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -167,6 +166,10 @@ pub fn render_track_to_audio_in(project: &mut Project, lane: usize, dir: &Path) 
     q.metronome = false;
     q.loop_on = false;
     q.arrangement.clips.retain(|c| c.lane == lane);
+    for track in &mut q.arrangement.tracks {
+        track.solo = false;
+    }
+    q.arrangement.tracks[lane].mute = false;
     q.master_fx = crate::project::MasterFx::default();
     q.master_volume = 1.0;
     let data = export::render(&q, &settings);
@@ -174,8 +177,20 @@ pub fn render_track_to_audio_in(project: &mut Project, lane: usize, dir: &Path) 
         return Ok(None);
     }
     let clean = |s: &str| -> String { s.chars().map(|ch| if ch.is_alphanumeric() { ch } else { '_' }).collect() };
-    let file: PathBuf = dir.join(format!("{}_{}_render.wav", clean(&project.name), clean(&src.name)));
-    export::write_wav(&file, &data, &settings)?;
+    let base = format!("{}_{}_render", clean(&project.name), clean(&src.name));
+    let (file, writer) = (1_u32..).find_map(|take| {
+        let name = if take == 1 { base.clone() } else { format!("{base}_{take}") };
+        let path = dir.join(format!("{name}.wav"));
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(writer) => Some(Ok((path, writer))),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
+            Err(error) => Some(Err(format!("{}: {error}", path.display()))),
+        }
+    }).ok_or("Could not reserve a render file")??;
+    if let Err(error) = export::write_wav_to(std::io::BufWriter::new(writer), &data, &settings) {
+        let _ = std::fs::remove_file(&file);
+        return Err(error);
+    }
     let mono: Vec<f32> = data.chunks(2).map(|f| (f[0] + f.get(1).copied().unwrap_or(f[0])) * 0.5).collect();
     let secs = mono.len() as f32 / settings.sample_rate as f32;
     let idx = project.pool_index(&format!("{} (render)", src.name), &file.to_string_lossy(), Arc::new(SampleData { rate: settings.sample_rate, mono }));
@@ -184,9 +199,14 @@ pub fn render_track_to_audio_in(project: &mut Project, lane: usize, dir: &Path) 
     project.arrangement.tracks[new_lane].name = format!("{} (render)", src.name);
     // the render starts at the beginning of the song, so the clip does too
     let len = ((secs * project.bpm / 60.0 * PPQ as f32).floor() as u32).max(24);
-    let _ = first;
     project.arrangement.clips.push(Clip::new(idx, new_lane, 0, len, true));
+    project.arrangement.tracks[new_lane].audio_brush = Some(idx);
     project.arrangement.tracks[lane].mute = true;
+    if project.arrangement.tracks[lane].solo {
+        project.arrangement.tracks[lane].solo = false;
+        project.arrangement.tracks[new_lane].solo = true;
+    }
+    project.song_mode = true;
     Ok(Some(new_lane))
 }
 

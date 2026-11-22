@@ -208,6 +208,12 @@ fn splash(ctx: &egui::Context, id: &str, sub: &str) {
     });
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+struct TrackRender {
+    source_name: String,
+    result: Receiver<Result<Option<(Project, usize)>, String>>,
+}
+
 struct ExportUi {
     open: bool,
     rate: u32,
@@ -280,6 +286,8 @@ pub struct VinteriaApp {
     m_tab: usize,
     m_sec: usize,
     m_export: mobile::MobileExport,
+    #[cfg(not(target_arch = "wasm32"))]
+    track_render: Option<TrackRender>,
     /// waveform of the whole arrangement (signature it was rendered for, peaks), the render in flight and the one waiting
     song_wave: Option<(u64, Vec<f32>)>,
     song_rx: Option<Receiver<(u64, Vec<f32>)>>,
@@ -396,6 +404,8 @@ impl VinteriaApp {
             m_tab: 0,
             m_sec: 0,
             m_export: Default::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            track_render: None,
             song_wave: None,
             song_rx: None,
             song_pending: None,
@@ -474,26 +484,63 @@ impl VinteriaApp {
         }
     }
 
-    /// "Render this track to audio": a full-screen dimmed splash with a spinner while the render runs.
-    /// The job is queued by the Playlist's track menu; the first frame only shows the splash, the next one renders.
-    fn render_overlay(&mut self, ctx: &egui::Context) {
+    #[cfg(not(target_arch = "wasm32"))]
+    fn render_overlay(&mut self, ctx: &egui::Context) -> bool {
         let id = egui::Id::new("render_job");
-        let Some((lane, phase)) = ctx.data(|d| d.get_temp::<(usize, u8)>(id)) else { return };
-        let name = self.project.arrangement.tracks.get(lane).map(|t| t.name.clone()).unwrap_or_default();
-        splash(ctx, "render_splash", &format!("{name} is being rendered to a new audio track"));
-        ctx.request_repaint();
-        if phase == 0 {
-            ctx.data_mut(|d| d.insert_temp(id, (lane, 1u8)));
-            return;
+        if let Some(job) = self.track_render.as_ref() {
+            let result = match job.result.try_recv() {
+                Ok(result) => result,
+                Err(crossbeam_channel::TryRecvError::Empty) => {
+                    splash(ctx, "render_splash", &format!("{} → new audio track", job.source_name));
+                    ctx.request_repaint_after(std::time::Duration::from_millis(16));
+                    return true;
+                }
+                Err(crossbeam_channel::TryRecvError::Disconnected) => Err("Rendering stopped unexpectedly".into()),
+            };
+            self.track_render = None;
+            self.arr.msg = match result {
+                Ok(Some((project, lane))) => {
+                    self.project = project;
+                    if self.is_mobile() {
+                        self.arr.sel_lane = lane;
+                        self.arr.sel_clip = Some(self.project.arrangement.clips.len() - 1);
+                        ctx.data_mut(|d| {
+                            d.insert_temp(egui::Id::new("m_playlist_reveal_track"), lane);
+                            d.insert_temp(egui::Id::new("m_playlist_reveal_tick"), 0_u32);
+                        });
+                    }
+                    format!("Rendered to {}", self.project.arrangement.tracks[lane].name)
+                }
+                Ok(None) => "Nothing audible on that track to render".into(),
+                Err(error) => format!("Render failed: {error}"),
+            };
+            self.status.clone_from(&self.arr.msg);
+            return false;
         }
-        ctx.data_mut(|d| d.remove::<(usize, u8)>(id));
-        let project = &mut self.project;
-        self.arr.msg = match crate::bounce::render_track_to_audio(project, lane) {
-            Ok(Some(n)) => format!("Rendered '{}' to the audio track '{}'", project.arrangement.tracks[lane].name, project.arrangement.tracks[n].name),
-            Ok(None) => "Nothing audible on that track to render".into(),
-            Err(e) => format!("Render failed: {e}"),
-        };
-        self.status = self.arr.msg.clone();
+
+        let Some((lane, _)) = ctx.data_mut(|d| d.remove_temp::<(usize, u8)>(id)) else { return false };
+        let Some(track) = self.project.arrangement.tracks.get(lane) else { return false };
+        let source_name = track.name.clone();
+        let mut project = self.project.clone();
+        let (tx, result) = crossbeam_channel::bounded(1);
+        let worker = std::thread::Builder::new().name("winteria-track-render".into()).spawn(move || {
+            let result = crate::bounce::render_track_to_audio(&mut project, lane)
+                .map(|lane| lane.map(|lane| (project, lane)));
+            let _ = tx.send(result);
+        });
+        match worker {
+            Ok(_) => {
+                splash(ctx, "render_splash", &format!("{source_name} → new audio track"));
+                self.track_render = Some(TrackRender { source_name, result });
+                ctx.request_repaint_after(std::time::Duration::from_millis(16));
+                true
+            }
+            Err(error) => {
+                self.arr.msg = format!("Could not start render: {error}");
+                self.status.clone_from(&self.arr.msg);
+                false
+            }
+        }
     }
 
     /// The dock under the Playlist: Track Settings / Instruments / Track Effects, and the clip editor.
@@ -2178,7 +2225,10 @@ impl eframe::App for VinteriaApp {
         self.check_update(ctx);
         self.toasts_ui(ctx);
         self.splash_ui(ctx);
-        self.render_overlay(ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.render_overlay(ctx) {
+            return;
+        }
         // rolling autosave of unsaved work (not while playing: writing a big file must not touch the audio)
         if self.last_autosave.elapsed() > std::time::Duration::from_secs(90) {
             self.last_autosave = web_time::Instant::now();

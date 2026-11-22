@@ -237,6 +237,7 @@ pub struct Engine {
     /// stopped by Pause: Play resumes instead of starting over
     paused: bool,
     countdown: f64,
+    resume_audio_at_seek: bool,
     abs_tick: u64,
     song_tick: u32,
     /// position shown in the UI, in ticks (pattern-local in pattern mode)
@@ -291,6 +292,7 @@ impl Engine {
             playing: false,
             paused: false,
             countdown: 0.0,
+            resume_audio_at_seek: false,
             abs_tick: 0,
             song_tick: 0,
             position: 0,
@@ -399,18 +401,23 @@ impl Engine {
             Cmd::PreviewStop => self.preview = None,
             Cmd::PreviewGain(g) => self.preview_gain = g.clamp(0.0, 1.0),
             Cmd::Seek(t) => {
+                self.resume_audio_at_seek = true;
+                self.position = t;
+                self.song_tick = t;
+                self.countdown = 0.0;
                 if self.playing {
                     self.release_everything();
                     self.stop_audio_clips();
-                    self.song_tick = t;
                 } else {
                     self.abs_tick = 0;
-                    self.song_tick = t;
-                    self.position = t;
                     self.paused = true;
+                    for voice in &mut self.audio {
+                        voice.active = false;
+                    }
                 }
             }
             Cmd::PlayFrom(t) => {
+                self.resume_audio_at_seek = true;
                 self.paused = false;
                 if !self.playing {
                     self.abs_tick = 0;
@@ -533,6 +540,7 @@ impl Engine {
         self.queue = [None; MAX_LANES];
         self.playing = false;
         self.song_tick = 0;
+        self.resume_audio_at_seek = false;
         self.position = 0;
         self.release_everything();
         self.stop_audio_clips();
@@ -624,10 +632,23 @@ impl Engine {
                 st = loop_start;
                 self.song_tick = st;
             }
+            let seek = std::mem::take(&mut self.resume_audio_at_seek);
             for clip in &proj.arrangement.clips {
                 if clip.audio {
-                    if st == clip.start_tick() && !proj.arrangement.muted(clip.lane) && !clip.mute {
-                        self.start_audio(clip.pattern, clip.lane, abs + (clip.end_tick() - st) as u64, clip.offset, clip.gain, ClipFx { reverse: clip.reverse, fade_in: clip.fade_in, fade_out: clip.fade_out, pitch: clip.pitch, len: clip.len, warp: clip.warp });
+                    let start = clip.start_tick();
+                    let end = clip.end_tick();
+                    let inside = seek && st > start && st < end;
+                    if (st == start || inside) && !proj.arrangement.muted(clip.lane) && !clip.mute {
+                        let sample_rate = self.sr;
+                        let voice = self.start_audio(clip.pattern, clip.lane, abs + (end - st) as u64, clip.offset, clip.gain, ClipFx { reverse: clip.reverse, fade_in: clip.fade_in, fade_out: clip.fade_out, pitch: clip.pitch, len: clip.len, warp: clip.warp });
+                        if inside {
+                            let rate = proj.audio_pool.get(clip.pattern).and_then(|sample| sample.data.as_ref())
+                                .map_or(0.0, |sample| sample.rate as f64);
+                            let secs = f64::from(st - start) * 60.0 / (f64::from(proj.bpm.max(20.0)) * f64::from(PPQ));
+                            let skipped = secs * rate * voice.mul;
+                            voice.pos += if voice.rev { -skipped } else { skipped };
+                            voice.elapsed = secs * f64::from(sample_rate);
+                        }
                     }
                     continue;
                 }
@@ -677,7 +698,7 @@ impl Engine {
         self.abs_tick += 1;
     }
 
-    fn start_audio(&mut self, pool: usize, lane: usize, end_abs: u64, offset_ticks: u32, gain: f32, fx: ClipFx) {
+    fn start_audio(&mut self, pool: usize, lane: usize, end_abs: u64, offset_ticks: u32, gain: f32, fx: ClipFx) -> &mut AudioVoice {
         if self.project.arrangement.tracks.get(lane).map_or(false, |t| t.sidechain_src) {
             self.duck_env = 1.0;
         }
@@ -705,6 +726,7 @@ impl Engine {
             (start, false)
         };
         self.audio[idx] = AudioVoice { active: true, pool, lane, pos, end_abs, fade: 1.0, mul: 2f64.powf(tr as f64 / 12.0) * warp_ratio, gain: gain * self.project.arrangement.tracks.get(lane).map_or(1.0, |t| t.volume), rev, start_pos: start, elapsed: 0.0, len_s, fade_in_s: fx.fade_in as f64 * spt, fade_out_s: fx.fade_out as f64 * spt };
+        &mut self.audio[idx]
     }
 
     fn fire(&mut self, bank: usize, lane: Option<usize>, pat: &Pattern, local: u32, abs: u64, limit: u64, swing: u32, inst: Option<Track>, transpose: i32) {
