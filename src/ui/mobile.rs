@@ -772,7 +772,6 @@ impl VinteriaApp {
                     if studio_icon(ui, 44.0, Icon::Menu, false, "Menu").clicked() {
                         ctx.data_mut(|d| d.insert_temp(egui::Id::new(DRAWER_OPEN), true));
                     }
-                    self.m_studio_quick_controls(ui, ctx);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if self.m_sec == SEC_PLAYLIST {
                             self.m_studio_browser_button(ui, ctx, 44.0);
@@ -780,23 +779,38 @@ impl VinteriaApp {
                             self.m_select_studio_section(ctx, SEC_PLAYLIST);
                             ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_browser_open"), true));
                         }
+                        let controls_width = 58.0 + 44.0 + 44.0 + 46.0 + 3.0 * ui.spacing().item_spacing.x;
+                        let gap = ((ui.available_width() - controls_width - ui.spacing().item_spacing.x) * 0.5).max(0.0);
+                        if gap > 0.0 {
+                            ui.add_space(gap);
+                        }
+                        ui.allocate_ui_with_layout(
+                            vec2(controls_width, 44.0),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| self.m_studio_quick_controls(ui, ctx),
+                        );
                     });
                 });
             });
     }
 
     fn m_studio_quick_controls(&mut self, ui: &mut Ui, ctx: &egui::Context) {
-        self.m_studio_tempo(ui, 58.0, true);
-        if studio_icon(ui, 44.0, Icon::Clock, self.project.metronome, "Metronome").clicked() {
+        self.m_studio_tempo(ui, 58.0, true, false);
+        let (rect, metronome) = ui.allocate_exact_size(vec2(44.0, 44.0), Sense::click());
+        if metronome.on_hover_text("Metronome").clicked() {
             self.project.metronome = !self.project.metronome;
         }
-        if p_button(ui, "Mic", self.rec_mode == 1 && self.record, vec2(44.0, 44.0))
-            .on_hover_text("Record microphone to audio track").clicked()
+        let clock_color = if self.project.metronome { super::theme::TEAL() } else { ink() };
+        icon(ui.painter(), Icon::Clock, rect.center(), clock_color);
+        let mic_color = if self.rec_mode == 1 && self.record { RED } else { ink() };
+        let mic = egui::Button::new(RichText::new("Mic").color(mic_color)).frame(false);
+        if ui.add_sized([44.0, 44.0], mic).on_hover_text("Record microphone to audio track").clicked()
         {
             self.m_voice_record();
         }
-        if p_button(ui, "MIDI", self.rec_mode == 0 && self.record, vec2(46.0, 44.0))
-            .on_hover_text("Record notes in Piano Roll").clicked()
+        let midi_color = if self.rec_mode == 0 && self.record { RED } else { ink() };
+        let midi = egui::Button::new(RichText::new("MIDI").color(midi_color)).frame(false);
+        if ui.add_sized([46.0, 44.0], midi).on_hover_text("Record notes in Piano Roll").clicked()
         {
             if self.record && self.rec_mode == 1 {
                 self.m_voice_record();
@@ -1109,7 +1123,7 @@ impl VinteriaApp {
         if studio_icon(ui, width, Icon::Record, self.record, "Arm recording").clicked() {
             self.m_toggle_studio_record(ctx);
         }
-        self.m_studio_tempo(ui, width, false);
+        self.m_studio_tempo(ui, width, false, true);
         if studio_icon(ui, width, Icon::Share, false, "Export or share").clicked() {
             self.m_export.open = !self.m_export.open;
             self.m_export.song = self.m_sec == SEC_PLAYLIST;
@@ -1191,10 +1205,10 @@ impl VinteriaApp {
         }
     }
 
-    fn m_studio_tempo(&mut self, ui: &mut Ui, width: f32, show_unit: bool) {
+    fn m_studio_tempo(&mut self, ui: &mut Ui, width: f32, show_unit: bool, framed: bool) {
         let unit = if show_unit { " BPM" } else { "" };
         let tempo = egui::Button::new(RichText::new(format!("{:.0}{unit}", self.project.bpm)).size(12.0))
-            .wrap_mode(egui::TextWrapMode::Extend).min_size(vec2(width, 44.0));
+            .frame(framed).wrap_mode(egui::TextWrapMode::Extend).min_size(vec2(width, 44.0));
         ui.scope(|ui| {
             ui.spacing_mut().button_padding.x = 3.0;
             egui::menu::menu_custom_button(ui, tempo, |ui| {

@@ -322,3 +322,7 @@ Browser открывается слева рядом с Playlist в обеих �
 - Playlist audio tracks remember the last chosen sound. A tap on an empty grid cell repeats it at the current snap interval. Empty tracks still prompt for a sound.
 - The visible 1/32 subdivisions align with the placement grid.
 - Horizontal two-finger zoom keeps the Playlist centered at the gesture. BPM, metronome, microphone and MIDI now sit in the Studio header between Menu and Browser.
+
+### Android 1.0.54
+
+- Portrait Studio centers frameless BPM, metronome, microphone and MIDI controls. Menu and Browser sit at opposite edges.
