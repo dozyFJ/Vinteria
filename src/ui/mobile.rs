@@ -362,6 +362,23 @@ fn mobile_visuals(ui: &mut Ui) {
     v.slider_trailing_fill = true;
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum MobileMixerChannel {
+    Track(usize),
+    Insert(usize),
+    Master,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum MobileMixerPage {
+    Channels,
+    Effects,
+    Master,
+}
+
+const MIXER_CHANNEL: &str = "m_mixer_channel";
+const MIXER_PAGE: &str = "m_mixer_page";
+
 const STUDIO_SECTIONS: [(&str, Icon); 6] = [
     ("Playlist", Icon::Timeline), ("Steps", Icon::Steps), ("Piano", Icon::Keys),
     ("Session", Icon::Session), ("Mixer", Icon::Mixer), ("Tracks", Icon::Tracks),
@@ -3033,7 +3050,8 @@ impl VinteriaApp {
                     format!("{:+.1} dB", crate::ui::widgets::db(self.project.master_volume)), FontId::proportional(11.0), muted());
                 if resp.clicked() {
                     ui.data_mut(|d| {
-                        d.insert_temp(egui::Id::new("m_mixer_channel"), 0usize);
+                        d.insert_temp(egui::Id::new(MIXER_CHANNEL), MobileMixerChannel::Master);
+                        d.insert_temp(egui::Id::new(MIXER_PAGE), MobileMixerPage::Master);
                         d.insert_temp(egui::Id::new(MIXER_SHEET), true);
                     });
                 }
@@ -3203,74 +3221,219 @@ impl VinteriaApp {
     }
 
     fn m_mixer(&mut self, ui: &mut Ui) {
-        let id = egui::Id::new("m_mixer_channel");
-        let mut selected = ui.data(|d| d.get_temp::<usize>(id)).unwrap_or(0).min(NUM_INSERTS);
-        let height = ui.available_height().max(1.0);
-        let rail_width = (ui.available_width() * 0.54).clamp(72.0, 190.0);
-        let control_width = (ui.available_width() - rail_width - ui.spacing().item_spacing.x).max(1.0);
-        ui.horizontal_top(|ui| {
-            ui.allocate_ui_with_layout(vec2(control_width, height), egui::Layout::top_down(egui::Align::Center), |ui| {
-                self.m_strip(ui, selected.checked_sub(1), (height - 8.0).clamp(160.0, 520.0));
+        let channel_id = egui::Id::new(MIXER_CHANNEL);
+        let page_id = egui::Id::new(MIXER_PAGE);
+        let fallback = if self.arr.sel_lane < self.project.arrangement.tracks.len() {
+            MobileMixerChannel::Track(self.arr.sel_lane)
+        } else {
+            MobileMixerChannel::Master
+        };
+        let mut channel = ui.data(|d| d.get_temp::<MobileMixerChannel>(channel_id)).unwrap_or(fallback);
+        match channel {
+            MobileMixerChannel::Track(lane) if lane >= self.project.arrangement.tracks.len() => channel = fallback,
+            MobileMixerChannel::Insert(insert) if insert >= NUM_INSERTS => channel = fallback,
+            _ => {}
+        }
+        let mut page = ui.data(|d| d.get_temp::<MobileMixerPage>(page_id)).unwrap_or(MobileMixerPage::Channels);
+        ui.horizontal(|ui| {
+            let gap = 4.0;
+            ui.spacing_mut().item_spacing.x = gap;
+            let slot = (ui.available_width() - gap * 2.0).max(3.0);
+            for (tab, label, fraction) in [
+                (MobileMixerPage::Channels, "Channels", 0.30),
+                (MobileMixerPage::Effects, "Effects Chain", 0.43),
+                (MobileMixerPage::Master, "Master", 0.27),
+            ] {
+                if ui.add_sized([slot * fraction, TOUCH], egui::Button::new(label).selected(page == tab).truncate()).clicked() {
+                    page = tab;
+                }
+            }
+        });
+        ui.separator();
+        mobile_scroll(egui::ScrollArea::vertical()).auto_shrink([false, false])
+            .id_salt(("m_mixer_body", page as u8)).show(ui, |ui| {
+                match page {
+                    MobileMixerPage::Channels => self.m_mixer_channels(ui, &mut channel, &mut page),
+                    MobileMixerPage::Effects => self.m_mixer_effects(ui, channel),
+                    MobileMixerPage::Master => {
+                        self.m_mixer_master(ui);
+                        if p_button(ui, "Master Effects Chain", false, vec2(ui.available_width(), TOUCH)).clicked() {
+                            channel = MobileMixerChannel::Master;
+                            page = MobileMixerPage::Effects;
+                        }
+                    }
+                }
             });
-            ui.allocate_ui_with_layout(vec2(rail_width, height), egui::Layout::top_down(egui::Align::Min), |ui| {
-                ui.set_width(rail_width);
-                Frame::none().fill(bar_fill()).rounding(14.0).inner_margin(7.0).show(ui, |ui| {
-                    mobile_scroll(egui::ScrollArea::vertical()).id_salt("m_mixer_right").max_height((height - 14.0).max(1.0)).show(ui, |ui| {
-                        for channel in 0..=NUM_INSERTS {
-                            let label: String = if channel == 0 { "Master".into() } else {
-                                let name = &self.project.channels[NUM_CH + channel - 1].name;
-                                let short: String = name.chars().take(12).collect();
-                                format!("{channel}  {short}")
-                            };
-                            if p_button(ui, &label, channel == selected, vec2(ui.available_width(), 38.0)).clicked() {
-                                selected = channel;
-                            }
+        ui.data_mut(|d| {
+            d.insert_temp(channel_id, channel);
+            d.insert_temp(page_id, page);
+        });
+    }
+
+    fn m_mixer_channels(&mut self, ui: &mut Ui, selected: &mut MobileMixerChannel, page: &mut MobileMixerPage) {
+        let controls = Rect::from_min_size(ui.cursor().min, vec2(1.0, 1.0));
+        let name = match *selected {
+            MobileMixerChannel::Track(lane) => {
+                let track = &mut self.project.arrangement.tracks[lane];
+                ui.label(RichText::new(&track.name).strong());
+                ui.add(egui::Slider::new(&mut track.volume, 0.0..=1.5).text("Volume"));
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut track.mute, "Mute");
+                    ui.checkbox(&mut track.solo, "Solo");
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Output");
+                    mixer_ui::output_picker_w(ui, ("mobile_mixer_track_output", lane), &mut track.output, 100.0);
+                });
+                track.name.as_str()
+            }
+            MobileMixerChannel::Insert(insert) => {
+                let channel = &mut self.project.channels[NUM_CH + insert];
+                ui.label(RichText::new(&channel.name).strong());
+                ui.add(egui::Slider::new(&mut channel.volume, 0.0..=1.5).text("Volume"));
+                ui.add(egui::Slider::new(&mut channel.pan, -1.0..=1.0).text("Pan"));
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut channel.mute, "Mute");
+                    ui.checkbox(&mut channel.solo, "Solo");
+                });
+                channel.name.as_str()
+            }
+            MobileMixerChannel::Master => "Master",
+        };
+        if ui.add_sized([ui.available_width(), TOUCH],
+            egui::Button::new(format!("Effects for {name}")).truncate()).clicked()
+        {
+            *page = MobileMixerPage::Effects;
+        }
+        heading(ui, "Tracks");
+        for (lane, track) in self.project.arrangement.tracks.iter().enumerate() {
+            let target = MobileMixerChannel::Track(lane);
+            let kind = if track.kind == crate::arrangement::TrackKind::Audio { "Audio" } else { "MIDI" };
+            if ui.add_sized([ui.available_width(), TOUCH],
+                egui::Button::new(format!("{} · {kind}", track.name)).selected(*selected == target).truncate()
+            ).clicked() {
+                *selected = target;
+                ui.scroll_to_rect(controls, Some(egui::Align::Min));
+            }
+        }
+        heading(ui, "Mixer inserts");
+        for insert in 0..NUM_INSERTS {
+            let target = MobileMixerChannel::Insert(insert);
+            let name = &self.project.channels[NUM_CH + insert].name;
+            if ui.add_sized([ui.available_width(), TOUCH], egui::Button::new(name).selected(*selected == target).truncate()).clicked() {
+                *selected = target;
+                ui.scroll_to_rect(controls, Some(egui::Align::Min));
+            }
+        }
+        if ui.add_sized([ui.available_width(), TOUCH], egui::Button::new("Master")).clicked() {
+            *selected = MobileMixerChannel::Master;
+            *page = MobileMixerPage::Master;
+        }
+    }
+
+    fn m_mixer_effects(&mut self, ui: &mut Ui, channel: MobileMixerChannel) {
+        let error_id = egui::Id::new(("m_mixer_effect_error", channel));
+        let insert = match channel {
+            MobileMixerChannel::Master => {
+                ui.label(RichText::new("Master").strong());
+                Some(NUM_INSERTS)
+            }
+            MobileMixerChannel::Insert(insert) => {
+                ui.label(RichText::new(&self.project.channels[NUM_CH + insert].name).strong());
+                Some(insert)
+            }
+            MobileMixerChannel::Track(lane) => {
+                let track = &self.project.arrangement.tracks[lane];
+                ui.label(RichText::new(&track.name).strong());
+                let output = track.output.filter(|&insert| insert < NUM_INSERTS);
+                if let Some(insert) = output {
+                    ui.label(RichText::new(format!("Insert {} · {}", insert + 1, self.project.channels[NUM_CH + insert].name))
+                        .size(11.0).color(muted()));
+                }
+                output
+            }
+        };
+        if let Some(text) = ui.data(|d| d.get_temp::<String>(error_id)) {
+            ui.colored_label(RED, text);
+        }
+        let Some(insert) = insert else {
+            if let MobileMixerChannel::Track(lane) = channel {
+                Self::m_mixer_effect_picker(ui, "Add first effect", |kind| {
+                    let result = plugins_ui::add_to_track(&mut self.project, lane, &crate::fx::FxSlot::new(kind));
+                    ui.ctx().request_repaint();
+                    ui.data_mut(|d| {
+                        d.remove::<String>(error_id);
+                        if let Err(error) = result {
+                            d.insert_temp(error_id, error.to_owned());
                         }
                     });
                 });
+            }
+            return;
+        };
+        let chain = if insert == NUM_INSERTS {
+            &mut self.project.master_chain
+        } else {
+            self.project.insert_fx.resize_with(NUM_INSERTS, Vec::new);
+            &mut self.project.insert_fx[insert]
+        };
+        for index in 0..plugins_ui::MAX_SLOTS {
+            ui.push_id((insert, index), |ui| {
+                if let Some(slot) = chain.get_mut(index).filter(|slot| !slot.empty) {
+                    egui::CollapsingHeader::new(format!("{:02}  {}", index + 1, slot.kind.name()))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.checkbox(&mut slot.on, "Enabled");
+                                if ui.button("Remove").clicked() {
+                                    *slot = crate::fx::FxSlot::empty();
+                                }
+                            });
+                            if !slot.empty {
+                                plugin_ui::plugin_grid(ui, slot);
+                            }
+                        });
+                } else {
+                    Self::m_mixer_effect_picker(ui, &format!("{:02}  + Add effect", index + 1), |kind| {
+                        if chain.len() <= index {
+                            chain.resize_with(index + 1, crate::fx::FxSlot::empty);
+                        }
+                        chain[index] = crate::fx::FxSlot::new(kind);
+                    });
+                }
             });
-        });
-        ui.data_mut(|d| d.insert_temp(id, selected));
+        }
     }
 
-    fn m_strip(&mut self, ui: &mut Ui, insert: Option<usize>, h: f32) {
-        let w = 72.0;
-        let (rect, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
-        if insert.is_none() {
-            ui.painter().rect_filled(rect, 16.0, p_bg());
-            panel(ui.painter(), rect, 16.0);
-        } else {
-            panel(ui.painter(), rect, 16.0);
+    fn m_mixer_effect_picker(ui: &mut Ui, label: &str, select: impl FnOnce(crate::fx::FxKind)) {
+        let mut picked = None;
+        let button = egui::Button::new(label).min_size(vec2(ui.available_width(), TOUCH));
+        egui::menu::menu_custom_button(ui, button, |ui| {
+            mobile_scroll(egui::ScrollArea::vertical()).max_height(280.0).show(ui, |ui| {
+                for kind in crate::fx::ALL {
+                    if ui.button(kind.name()).clicked() {
+                        picked = Some(kind);
+                        ui.close_menu();
+                    }
+                }
+            });
+        });
+        if let Some(kind) = picked {
+            select(kind);
         }
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(8.0)).layout(egui::Layout::top_down(egui::Align::Center)));
-        mobile_visuals(&mut child);
-        child.spacing_mut().slider_width = (h - 130.0).max(80.0);
-        match insert {
-            None => {
-                child.label(RichText::new("MASTER").size(11.0).strong().color(ink()));
-                child.add_space(6.0);
-                child.add(egui::Slider::new(&mut self.project.master_volume, 0.0..=1.2).vertical().show_value(false));
-                child.label(RichText::new(format!("{:+.1}", db(self.project.master_volume))).size(11.0).color(muted()));
-                let pk = self.shared.peak(0);
-                meter(&child, pk);
-            }
-            Some(i) => {
-                let ch = &mut self.project.channels[NUM_CH + i];
-                child.label(RichText::new(format!("{}", i + 1)).size(14.0).strong().color(ink()));
-                child.add(egui::TextEdit::singleline(&mut ch.name).desired_width(56.0).font(FontId::proportional(10.0)));
-                child.add(egui::Slider::new(&mut ch.volume, 0.0..=1.5).vertical().show_value(false));
-                child.label(RichText::new(format!("{:+.1}", db(ch.volume))).size(11.0).color(muted()));
-                let (r, resp) = child.allocate_exact_size(vec2(48.0, 32.0), Sense::click());
-                if ch.mute {
-                    pill(child.painter(), r, AMBER);
-                } else {
-                    panel(child.painter(), r, 16.0);
-                }
-                child.painter().text(r.center(), Align2::CENTER_CENTER, "M", FontId::proportional(13.0), if ch.mute { on_accent() } else { ink() });
-                if resp.clicked() {
-                    ch.mute = !ch.mute;
-                }
-            }
+    }
+
+    fn m_mixer_master(&mut self, ui: &mut Ui) {
+        ui.label(RichText::new("Master output").strong());
+        widgets::meter(ui, vec2(32.0, 80.0), self.shared.peak(crate::mixer::NUM_STRIPS));
+        ui.add(egui::Slider::new(&mut self.project.master_volume, 0.0..=1.2).text("Volume"));
+        let fx = &mut self.project.master_fx;
+        ui.add(egui::Slider::new(&mut fx.low_db, -18.0..=18.0).text("Low EQ").suffix(" dB"));
+        ui.add(egui::Slider::new(&mut fx.high_db, -18.0..=18.0).text("High EQ").suffix(" dB"));
+        ui.checkbox(&mut fx.comp_on, "Compressor");
+        if fx.comp_on {
+            ui.add(egui::Slider::new(&mut fx.threshold_db, -48.0..=0.0).text("Threshold").suffix(" dB"));
+            ui.add(egui::Slider::new(&mut fx.ratio, 1.0..=20.0).text("Ratio"));
+            ui.add(egui::Slider::new(&mut fx.makeup_db, 0.0..=24.0).text("Makeup").suffix(" dB"));
         }
     }
 
@@ -3396,15 +3559,4 @@ fn browser_drag_row<T: std::any::Any + Send + Sync>(ui: &mut Ui, label: &str, it
     let shown = if galley.size().x > text.width() { ui.painter().layout_job(job) } else { galley };
     p.galley(pos2(text.left(), text.center().y - shown.size().y * 0.5), shown, ink());
     response.union(grip)
-}
-
-fn meter(ui: &Ui, pk: [f32; 2]) {
-    let r = ui.max_rect();
-    let p = ui.painter();
-    for (k, v) in pk.iter().enumerate() {
-        let x = r.right() - 4.0 - k as f32 * 5.0;
-        let h = (v.clamp(0.0, 1.2) / 1.2) * (r.height() - 60.0);
-        let bottom = r.bottom() - 30.0;
-        p.line_segment([pos2(x, bottom), pos2(x, bottom - h)], Stroke::new(3.0, p_accent()));
-    }
 }

@@ -12,7 +12,7 @@ use egui::{pos2, vec2, Align2, Color32, FontId, RichText, Sense, Stroke, Ui};
 
 const CARD_W: f32 = 158.0;
 const CARD_H: f32 = 74.0;
-const MAX_SLOTS: usize = 10;
+pub(super) const MAX_SLOTS: usize = 10;
 
 #[derive(Clone, PartialEq)]
 enum Pick {
@@ -67,7 +67,10 @@ pub fn add_to_insert(project: &mut Project, insert: usize, slot: &FxSlot) -> boo
 /// add the plugin to the effects of a track: the track plays through an insert, a track without one gets a free insert
 pub(super) fn add_to_track(project: &mut Project, lane: usize, slot: &FxSlot) -> Result<usize, &'static str> {
     project.insert_fx.resize_with(NUM_INSERTS, Vec::new);
-    let used: Vec<usize> = project.arrangement.tracks.iter().filter_map(|t| t.output).collect();
+    let used: Vec<usize> = project.arrangement.tracks.iter().filter_map(|t| t.output)
+        .chain(project.channels.iter().take(NUM_CH).filter_map(|channel| channel.output))
+        .chain(project.scenes.iter().flat_map(|scene| scene.arrangement.tracks.iter().filter_map(|track| track.output)))
+        .collect();
     let out = match project.arrangement.tracks.get(lane).ok_or("No such track")?.output {
         Some(o) => o.min(NUM_INSERTS - 1),
         None => {
