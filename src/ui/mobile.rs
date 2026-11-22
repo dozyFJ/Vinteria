@@ -1770,7 +1770,14 @@ impl VinteriaApp {
                         panel(p, r, 10.0);
                     }
                     if playing && play_step == s {
-                        p.rect_stroke(r.expand(2.0), 12.0, Stroke::new(2.0, p_accent()));
+                        if on {
+                            let [left, right] = self.shared.peak(lane);
+                            let opacity = (left.max(right).clamp(0.0, 1.0) * 120.0) as u8 + 30;
+                            p.rect_filled(r, 10.0, Color32::from_white_alpha(opacity));
+                            p.rect_stroke(r.expand(2.0), 12.0, Stroke::new(2.0, col));
+                        } else {
+                            p.rect_stroke(r.expand(1.0), 11.0, Stroke::new(1.0, p_accent().gamma_multiply(0.5)));
+                        }
                     }
                     if resp.clicked() && !resp.long_touched() {
                         let st = &mut self.project.patterns[pi].drums[lane][s];
@@ -2834,6 +2841,8 @@ impl VinteriaApp {
             return;
         }
         let blink = ((ui.input(|i| i.time) * 3.0) as i64) % 2 == 0;
+        let beat = TICKS_PER_BAR / 4;
+        let phase = (self.shared.position.load(Ordering::Relaxed) % beat) as f32 / beat as f32;
         let (cell_w, cell_h, head_w, head_h) = (86.0f32, 52.0f32, 48.0f32, 30.0f32);
         let scenes = self.project.session.scenes;
         mobile_scroll(egui::ScrollArea::both()).id_salt("m_session").auto_shrink([false, false]).show(ui, |ui| {
@@ -2872,6 +2881,10 @@ impl VinteriaApp {
                             let queued = queue == code || (running && queue == QUEUED_STOP);
                             let col = lane_col(l);
                             p.rect_filled(r, 12.0, col.linear_multiply(if running { 0.95 } else { 0.55 }));
+                            if running {
+                                let pulse = (1.0 - phase).powi(2);
+                                p.rect_filled(r, 12.0, Color32::from_white_alpha((pulse * 56.0) as u8));
+                            }
                             if running || (queued && blink) {
                                 p.rect_stroke(r.expand(1.5), 13.0, Stroke::new(2.5, p_accent()));
                             }
@@ -3628,6 +3641,28 @@ impl VinteriaApp {
         ).saturating_add(8).max(16);
         let pos = self.shared.position.load(Ordering::Relaxed);
         let playing = self.playing() && self.project.song_mode;
+        let mut active_lanes = vec![false; tracks];
+        if playing {
+            for clip in self.project.arrangement.clips.iter().filter(|clip| {
+                !clip.mute && (clip.start..clip.end_tick()).contains(&pos)
+            }) {
+                let active = if clip.audio {
+                    !self.project.arrangement.muted(clip.lane)
+                } else {
+                    !self.project.arrangement.silent(clip.lane) && self.project.patterns.get(clip.pattern)
+                        .is_some_and(|pattern| {
+                            let tick = (pos - clip.start + clip.offset) % pattern.len_ticks().max(1);
+                            let step = (tick / TICKS_PER_STEP) as usize;
+                            pattern.notes.iter().any(|note| !note.mute && note.chance > 0
+                                && (note.start..note.start.saturating_add(note.len)).contains(&tick))
+                                || pattern.drums.iter().any(|lane| lane.get(step).is_some_and(|cell| cell.on))
+                        })
+                };
+                if let Some(lane) = active_lanes.get_mut(clip.lane) {
+                    *lane |= active;
+                }
+            }
+        }
         let add_lane = egui::DragAndDrop::has_payload_of_type::<browser::DragItem>(ui.ctx());
         // portrait: room under the lanes for "+ MIDI" / "+ Audio" and the Master row of the right column
         let extra_h = if portrait_view(ui) && !add_lane { 2.0 * 40.0 + 8.0 + 56.0 + 12.0 } else { 0.0 };
@@ -3691,6 +3726,7 @@ impl VinteriaApp {
         let mut delete_clip = None;
         let mut duplicate: Option<usize> = None;
         let mut move_clip = None;
+        let mut fade_clip = None;
         let mut dropped_item = None;
         let mut dropped_effect = None;
         let scroll = mobile_scroll(egui::ScrollArea::both()).id_salt("m_playlist")
@@ -3818,17 +3854,43 @@ impl VinteriaApp {
                 let clip = ui.interact(hit, resp.id.with(("clip", i)), if automation { Sense::hover() } else { Sense::click_and_drag() })
                     .on_hover_cursor(egui::CursorIcon::Grab);
                 let resize_id = resp.id.with(("clip_resize", i));
+                let fade_id = resp.id.with(("clip_fade", i));
                 let grab_id = clip.id.with("grab_x");
                 if pinching || automation || clip.drag_started() {
                     ui.data_mut(|d| {
                         d.remove::<f32>(resize_id);
+                        d.remove::<(f32, bool)>(fade_id);
                         d.remove::<f32>(grab_id);
                     });
                 }
+                let show_fades = self.arr.sel_clip == Some(i) && w >= 10.0;
                 if !pinching && !automation && clip.drag_started() {
-                    // remember where the finger went down: it is gone by the time the drag ends
-                    if let Some(origin) = ui.input(|input| input.pointer.press_origin()).filter(|o| edge_rect.contains(*o)) {
-                        ui.data_mut(|d| d.insert_temp(resize_id, origin.x));
+                    if let Some(origin) = ui.input(|input| input.pointer.press_origin()) {
+                        let fade_zone = (w * 0.5).min(27.0);
+                        if show_fades && origin.y <= hit.top() + hit.height().min(25.0)
+                            && (origin.x <= hit.left() + fade_zone || origin.x >= hit.right() - fade_zone)
+                        {
+                            let out = origin.x > hit.center().x;
+                            ui.data_mut(|d| d.insert_temp(fade_id, (origin.x, out)));
+                        } else if edge_rect.contains(origin) {
+                            ui.data_mut(|d| d.insert_temp(resize_id, origin.x));
+                        }
+                    }
+                }
+                let mut preview_fade = *c;
+                let fade_drag = ui.data(|d| d.get_temp::<(f32, bool)>(fade_id));
+                if let Some((origin, out)) = fade_drag {
+                    if let Some(point) = clip.interact_pointer_pos() {
+                        let delta = if out { origin - point.x } else { point.x - origin };
+                        let field = if out { &mut preview_fade.fade_out } else { &mut preview_fade.fade_in };
+                        let ticks = delta / bar_w * TICKS_PER_BAR as f32;
+                        *field = (*field as f32 + ticks).round().clamp(0.0, (c.len / 2) as f32) as u32;
+                        if clip.drag_stopped() && preview_fade != *c {
+                            fade_clip = Some((i, preview_fade));
+                        }
+                    }
+                    if clip.drag_stopped() {
+                        ui.data_mut(|d| d.remove::<(f32, bool)>(fade_id));
                     }
                 }
                 let resize_from = ui.data(|d| d.get_temp::<f32>(resize_id));
@@ -3837,25 +3899,62 @@ impl VinteriaApp {
                 let pastel = if c.audio { argb(0xFFCAF0F8) } else { argb(0xFFBDB2FF) };
                 let fill = tint(col, pastel, if is_dark() { 0.18 } else { 0.28 });
                 p.rect_filled(r, 3.0, fill);
+                if playing && !c.mute && active_lanes[c.lane] && (c.start..c.end_tick()).contains(&pos) {
+                    let progress = (pos - c.start) as f32 / c.len.max(1) as f32;
+                    let x = r.left() + r.width() * progress;
+                    let played = Rect::from_min_max(r.min, pos2(x, r.bottom()));
+                    p.rect_filled(played, 3.0, Color32::from_white_alpha(39));
+                    p.vline(x, r.y_range(), Stroke::new(1.5, Color32::from_white_alpha(190)));
+                }
+                if r.is_positive() {
+                    let fade_y = r.top() + 2.0;
+                    let fade_height = (r.height() * 0.45).min(20.0);
+                    let tint = argb(0xFF253242);
+                    for (out, length) in [(false, preview_fade.fade_in), (true, preview_fade.fade_out)] {
+                        let edge = if out { r.right() } else { r.left() };
+                        let direction = if out { -1.0 } else { 1.0 };
+                        if length > 0 {
+                            let inner = edge + direction * r.width() * (length.min(c.len) as f32 / c.len.max(1) as f32);
+                            let corner = pos2(edge, fade_y + fade_height);
+                            let top = pos2(inner, fade_y);
+                            p.add(Shape::convex_polygon(vec![pos2(edge, fade_y), corner, top],
+                                tint.gamma_multiply(0.35), Stroke::NONE));
+                            p.line_segment([corner, top], Stroke::new(1.2, tint));
+                        }
+                        if show_fades {
+                            let x = edge + direction * (r.width() * 0.2).min(7.0);
+                            p.circle_filled(pos2(x, fade_y + 4.0), 3.2, tint);
+                        }
+                    }
+                }
                 if self.arr.sel_clip == Some(i) {
                     p.rect_stroke(r.expand(1.0), 9.0, Stroke::new(2.0, p_accent()));
                 }
+                let pattern = (!c.audio).then(|| self.project.patterns.get(c.pattern)).flatten();
+                let notes_visible = pattern.is_some_and(|pattern| !pattern.notes.is_empty()) && r.height() >= 32.0;
                 let name = if c.audio {
                     self.project.audio_pool.get(c.pattern).map(|sample| sample.name.as_str())
                 } else {
-                    self.project.patterns.get(c.pattern).map(|pattern| pattern.name.as_str())
+                    pattern.map(|pattern| pattern.name.as_str())
                 };
+                let content = p.with_clip_rect(r.intersect(ui.clip_rect()));
                 if let Some(name) = name.filter(|_| r.width() > 24.0) {
-                    p.with_clip_rect(r.intersect(ui.clip_rect())).text(
-                        r.left_center() + vec2(6.0, 0.0), Align2::LEFT_CENTER, name,
+                    let y = if notes_visible { r.top() + 14.0 } else { r.center().y };
+                    content.text(pos2(r.left() + 6.0, y), Align2::LEFT_CENTER, name,
                         FontId::proportional(11.0), argb(0xFF172227));
+                }
+                if let Some(pattern) = pattern.filter(|_| notes_visible) {
+                    let notes_rect = Rect::from_min_max(r.min + vec2(3.0, 24.0), r.max - vec2(5.0, 3.0));
+                    if notes_rect.is_positive() {
+                        playlist_midi_preview(&content, notes_rect, pattern, c.offset, c.len);
+                    }
                 }
                 // grip on the right edge of the selected clip
                 if r.width() > 8.0 {
                     let grip = Rect::from_center_size(pos2(r.right() - 4.0, r.center().y), vec2(3.0, (r.height() * 0.5).max(8.0)));
                     p.rect_filled(grip, 1.5, argb(0xFF253242).gamma_multiply(0.75));
                 }
-                if pinching || automation {
+                if pinching || automation || fade_drag.is_some() {
                     continue;
                 }
                 if resizing && (clip.dragged() || clip.drag_stopped()) {
@@ -4146,6 +4245,9 @@ impl VinteriaApp {
                     labels.rect_filled(row, 0.0, pick(0xFF35415A, 0xFFAABBD0));
                 }
                 labels.line_segment([row.left_top(), row.right_top()], Stroke::new(0.6, grid_line()));
+                if active_lanes[lane] {
+                    labels.circle_filled(row.right_top() + vec2(-9.0, 8.0), 3.0, lane_col(lane));
+                }
                 if portrait {
                     // the track's colour strip, its name next to it (the row under the header is gone)
                     labels.rect_filled(Rect::from_min_size(row.min + vec2(2.0, 3.0), vec2(4.0, row.height() - 6.0)), 2.0, lane_col(lane));
@@ -4233,11 +4335,23 @@ impl VinteriaApp {
             if master.intersects(clip) {
                 let resp = ui.interact(master.intersect(clip), panel_id.with("master"), Sense::click()).on_hover_text("Master channel");
                 let p = ui.painter().with_clip_rect(clip);
-                p.rect_filled(master, 10.0, pick(0xFF354154, 0xFFADBDD0));
-                p.rect_filled(Rect::from_min_size(master.min + vec2(4.0, 6.0), vec2(4.0, master.height() - 12.0)), 2.0, ink());
-                p.text(master.left_top() + vec2(13.0, 17.0), Align2::LEFT_CENTER, "Master", FontId::proportional(13.0), ink());
-                p.text(master.left_top() + vec2(13.0, 38.0), Align2::LEFT_CENTER,
-                    format!("{:+.1} dB", crate::ui::widgets::db(self.project.master_volume)), FontId::proportional(11.0), muted());
+                p.rect_filled(master, 10.0, card_fill());
+                p.rect_stroke(master, 10.0, Stroke::new(1.0, outline()));
+                p.text(master.left_top() + vec2(7.0, 17.0), Align2::LEFT_CENTER, "Master", FontId::proportional(12.0), ink());
+                p.text(master.right_top() + vec2(-7.0, 17.0), Align2::RIGHT_CENTER,
+                    format!("{:+.1}", widgets::db(self.project.master_volume)), FontId::proportional(10.0), muted());
+                let meter = Rect::from_min_size(master.left_bottom() + vec2(7.0, -21.0),
+                    vec2(master.width() - 14.0, 9.0));
+                p.rect_filled(meter, 4.5, p_bg());
+                let [left, right] = self.shared.peak(crate::mixer::NUM_STRIPS);
+                let level = left.max(right).clamp(0.0, 1.0).sqrt();
+                if level > 0.0 {
+                    let fill = Rect::from_min_size(meter.min, vec2(meter.width() * level, meter.height()));
+                    p.rect_filled(fill, 4.5, p_accent());
+                }
+                if level > 0.0 || self.playing() {
+                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(16));
+                }
                 if resp.clicked() {
                     ui.data_mut(|d| {
                         d.insert_temp(egui::Id::new(MIXER_CHANNEL), MobileMixerChannel::Master);
@@ -4297,6 +4411,10 @@ impl VinteriaApp {
                     d.insert_temp(egui::Id::new("m_track_sheet_open"), true);
                 });
             }
+        }
+        if let Some((index, edited)) = fade_clip {
+            self.m_playlist_undo_step();
+            self.project.arrangement.clips[index] = edited;
         }
         if let Some((index, moved)) = move_clip {
             self.project.arrangement.clips[index] = moved;
@@ -4888,6 +5006,37 @@ impl VinteriaApp {
             list_row(ui, lane_col(0), "P", "Projects", &format!("{projects} saved"), "", false);
             list_row(ui, lane_col(4), "R", "Recent", &format!("{} opened", self.recent.len()), "", false);
         });
+    }
+}
+
+fn playlist_midi_preview(painter: &egui::Painter, rect: Rect, pattern: &crate::sequencer::Pattern, offset: u32, length: u32) {
+    let visible = rect.intersect(painter.clip_rect());
+    if !visible.is_positive() || length == 0 {
+        return;
+    }
+    let (low, high) = pattern.notes.iter().fold((127, 0), |(lo, hi), note| (lo.min(note.pitch), hi.max(note.pitch)));
+    let pitch_span = high.saturating_sub(low).max(6) as f32;
+    let origin = u64::from(offset);
+    let end = origin + u64::from(length);
+    let period = u64::from(pattern.len_ticks().max(1));
+    let to_tick = |x: f32| origin + ((x - rect.left()) / rect.width() * length as f32) as u64;
+    let left = to_tick(visible.left());
+    let right = to_tick(visible.right()).saturating_add(1).min(end);
+    let x_at = |tick: u64| rect.left() + (tick - origin) as f32 / length as f32 * rect.width();
+    let preview = painter.with_clip_rect(visible);
+    for cycle in left / period..=right / period {
+        let base = cycle * period;
+        for note in pattern.notes.iter().filter(|note| !note.mute && u64::from(note.start) < period) {
+            let start = base + u64::from(note.start);
+            let stop = (start + u64::from(note.len)).min(base + period);
+            if stop <= left || start >= right {
+                continue;
+            }
+            let y = rect.bottom() - 1.0 - f32::from(note.pitch - low) / pitch_span * (rect.height() - 2.0).max(0.0);
+            let x = x_at(start.max(origin));
+            let x_end = x_at(stop.min(end)).max(x + 2.0);
+            preview.line_segment([pos2(x, y), pos2(x_end, y)], Stroke::new(1.8, Color32::from_black_alpha(150)));
+        }
     }
 }
 

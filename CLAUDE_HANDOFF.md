@@ -421,3 +421,9 @@ Browser открывается слева рядом с Playlist в обеих �
 
 - Drag from the Playlist track name or handle to create a group or move a track into an existing one. The drag shows a floating track name and highlights the drop target. Track options stay on their own touch target.
 - Piano Roll shows an exit button next to Clone while selection is active. It clears the highlighted range and restores note editing.
+
+### Android 1.0.71
+
+- Select an Audio or MIDI clip and drag its top left or right handle to shape Fade In or Fade Out. The right edge below the fade handle still resizes.
+- Playlist clips and track cards indicate playback activity. Steps flash on active hits, and Session's running pads pulse with the transport.
+- MIDI clips show a note thumbnail below the name, including cropped and repeated content. The Playlist Master card shows output level as a horizontal meter.
