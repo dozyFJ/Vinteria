@@ -2675,7 +2675,9 @@ impl VinteriaApp {
         let pos = self.shared.position.load(Ordering::Relaxed);
         let playing = self.playing() && self.project.song_mode;
         let add_lane = ui.data(|d| d.get_temp::<bool>(egui::Id::new("m_browser_open"))).unwrap_or(false);
-        let full_h = (tracks + usize::from(add_lane)) as f32 * lane_h;
+        // portrait: room under the lanes for "+ MIDI" / "+ Audio" and the Master row of the right column
+        let extra_h = if portrait_view(ui) && !add_lane { 2.0 * 40.0 + 8.0 + 56.0 + 12.0 } else { 0.0 };
+        let full_h = (tracks + usize::from(add_lane)) as f32 * lane_h + extra_h;
         let panel_id = egui::Id::new("m_playlist_track_names");
         let panel_open = ui.data(|d| d.get_temp::<bool>(panel_id)).unwrap_or(false);
         let screen = ui.ctx().screen_rect();
@@ -2717,6 +2719,12 @@ impl VinteriaApp {
             scroll.horizontal_scroll_offset(head_x - grid.width() * 0.7)
         } else {
             scroll
+        };
+        // a swipe on the right column (track names, + MIDI / + Audio, Master) scrolls the lanes too
+        let names_scroll_id = egui::Id::new("m_playlist_names_scroll");
+        let scroll = match ui.data_mut(|d| d.remove_temp::<f32>(names_scroll_id)) {
+            Some(y) => scroll.vertical_scroll_offset(y.clamp(0.0, (full_h - grid.height()).max(0.0))),
+            None => scroll,
         };
         let scroll = scroll.show(&mut grid_ui, |ui| {
             let (rect, resp) = ui.allocate_exact_size(
@@ -2905,6 +2913,7 @@ impl VinteriaApp {
             rect.min
         });
         ui.data_mut(|d| d.insert_temp(follow_id, scroll.state.offset.x));
+        let offset_y = scroll.state.offset.y;
         let timeline = Rect::from_min_max(pos2(grid.left(), viewport.top()), pos2(grid.right(), grid.top()));
         let painter = ui.painter_at(timeline);
         painter.rect_filled(timeline, 0.0, pick(0xFF252D37, 0xFFB9C5CA));
@@ -2936,6 +2945,14 @@ impl VinteriaApp {
         painter.rect_filled(panel, 0.0, pick(0xFF252D37, 0xFFB9C5CA));
         let names = Rect::from_min_max(pos2(panel.left(), grid.top()), panel.max);
         let mut name_pick: Option<(usize, bool)> = None;
+        if portrait {
+            let swipe = ui.interact(names.intersect(ui.clip_rect()), egui::Id::new("m_playlist_names_swipe"), Sense::drag());
+            if swipe.dragged() && swipe.drag_delta().y != 0.0 {
+                let y = offset_y - swipe.drag_delta().y;
+                ui.data_mut(|d| d.insert_temp(names_scroll_id, y));
+                ui.ctx().request_repaint();
+            }
+        }
         if portrait || panel_open {
             let labels = painter.with_clip_rect(names.intersect(ui.clip_rect()));
             let mut counts = [0, 0];
@@ -2970,6 +2987,47 @@ impl VinteriaApp {
                 if hit.clicked() || hit.secondary_clicked() {
                     name_pick = Some((lane, lane == self.arr.sel_lane || hit.secondary_clicked()));
                 }
+            }
+        }
+        if portrait && !add_lane {
+            // under the track names: add a MIDI / audio track, then the Master channel (like Ableton's master track)
+            let clip = names.intersect(ui.clip_rect());
+            let mut y = scroll.inner.y + tracks as f32 * lane_h + 6.0;
+            let mut add = None;
+            for (kind, label) in [(crate::arrangement::TrackKind::Midi, "+ MIDI"), (crate::arrangement::TrackKind::Audio, "+ Audio")] {
+                let r = Rect::from_min_size(pos2(panel.left() + 4.0, y), vec2(panel.width() - 8.0, 34.0));
+                y += 40.0;
+                if !r.intersects(clip) {
+                    continue;
+                }
+                let resp = ui.interact(r.intersect(clip), panel_id.with(label), Sense::click());
+                let p = ui.painter().with_clip_rect(clip);
+                p.rect_filled(r, 10.0, if resp.is_pointer_button_down_on() { selected_fill() } else { card_fill() });
+                p.rect_stroke(r, 10.0, Stroke::new(1.0, outline()));
+                p.text(r.center(), Align2::CENTER_CENTER, label, FontId::proportional(12.5), ink());
+                if resp.clicked() {
+                    add = Some(kind);
+                }
+            }
+            let master = Rect::from_min_size(pos2(panel.left() + 4.0, y + 8.0), vec2(panel.width() - 8.0, 56.0));
+            if master.intersects(clip) {
+                let resp = ui.interact(master.intersect(clip), panel_id.with("master"), Sense::click()).on_hover_text("Master channel");
+                let p = ui.painter().with_clip_rect(clip);
+                p.rect_filled(master, 10.0, pick(0xFF2E3742, 0xFFA9B9C0));
+                p.rect_filled(Rect::from_min_size(master.min + vec2(4.0, 6.0), vec2(4.0, master.height() - 12.0)), 2.0, ink());
+                p.text(master.left_top() + vec2(13.0, 17.0), Align2::LEFT_CENTER, "Master", FontId::proportional(13.0), ink());
+                p.text(master.left_top() + vec2(13.0, 38.0), Align2::LEFT_CENTER,
+                    format!("{:+.1} dB", crate::ui::widgets::db(self.project.master_volume)), FontId::proportional(11.0), muted());
+                if resp.clicked() {
+                    ui.data_mut(|d| {
+                        d.insert_temp(egui::Id::new("m_mixer_channel"), 0usize);
+                        d.insert_temp(egui::Id::new(MIXER_SHEET), true);
+                    });
+                }
+            }
+            if let Some(kind) = add {
+                self.project.arrangement.add_track(kind);
+                self.arr.sel_lane = self.project.arrangement.tracks.len() - 1;
             }
         }
         if !portrait {
@@ -3299,6 +3357,11 @@ fn mobile_editor_sheet(ctx: &egui::Context, id: &'static str, title: &str, body:
 }
 
 /// one sample / plugin row of the phone browser: full width, drag the dots on the left to drop it on the Playlist
+fn portrait_view(ui: &Ui) -> bool {
+    let screen = ui.ctx().screen_rect();
+    screen.width() < screen.height()
+}
+
 fn browser_drag_row<T: std::any::Any + Send + Sync>(ui: &mut Ui, label: &str, item: T) -> Response {
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(vec2(width, 40.0), Sense::click());
