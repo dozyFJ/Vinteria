@@ -186,11 +186,11 @@ impl Library {
     }
 
     /// A WAV dropped on a MIDI track: the track plays that sound on every key (the 808 Sampler, with its own sample).
-    pub fn assign_track_sampler(&mut self, project: &mut Project, lane: usize, path: &Path) {
+    pub fn assign_track_sampler(&mut self, project: &mut Project, lane: usize, path: &Path) -> bool {
         match self.get(path) {
             Ok(data) => {
                 if lane >= project.arrangement.tracks.len() {
-                    return;
+                    return false;
                 }
                 let name = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
                 let t = &mut project.arrangement.tracks[lane];
@@ -198,8 +198,12 @@ impl Library {
                 t.instrument = Some(crate::piano_roll::Track::Sampler);
                 t.blank = false;
                 self.message = format!("{name} -> {}", t.name);
+                true
             }
-            Err(e) => self.message = format!("Load failed: {e}"),
+            Err(e) => {
+                self.message = format!("Load failed: {e}");
+                false
+            }
         }
     }
 

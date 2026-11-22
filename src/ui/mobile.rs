@@ -2406,7 +2406,10 @@ impl VinteriaApp {
             ctx.data_mut(|d| d.insert_temp(id, false));
         }
         ctx.data_mut(|d| d.insert_temp(drag_id, dragging && open));
-        let open = open && !dragging && !(was_dragging && !dragging);
+        if dragging {
+            return;
+        }
+        let open = open && !was_dragging;
         egui::SidePanel::left("m_sample_browser_left").resizable(false)
             .exact_width(width).show_separator_line(false)
             .frame(Frame::none().fill(bar_fill()).inner_margin(Margin { left: 8.0, right: 8.0, top: 6.0, bottom: 6.0 }))
@@ -2497,16 +2500,23 @@ impl VinteriaApp {
             d.insert_temp(tab_id, plugins);
             d.insert_temp(query_id, query);
         });
+        let midi_available = self.project.arrangement.tracks.get(self.arr.sel_lane)
+            .is_some_and(|track| track.kind == crate::arrangement::TrackKind::Midi);
+        let midi_destination = DRUM_NAMES.len();
         let drum_id = egui::Id::new("m_browser_drum_destination");
         let mut drum_destination = ui.data(|d| d.get_temp::<usize>(drum_id))
-            .filter(|&lane| lane < DRUM_NAMES.len());
+            .filter(|&lane| lane < DRUM_NAMES.len() || (lane == midi_destination && midi_available));
         let picking_clip = ui.data(|d| d.get_temp::<(usize, u32)>(egui::Id::new("m_audio_clip_target"))).is_some();
         if !plugins && !picking_clip {
-            let destination = drum_destination.map_or("Audio clip", |lane| DRUM_NAMES[lane]);
+            let destination = drum_destination.map_or("Audio clip", |lane| DRUM_NAMES.get(lane).copied().unwrap_or("Selected MIDI track"));
             let dest_button = egui::Button::new(RichText::new(format!("Tap to: {destination}")).size(12.0).color(muted()))
                 .min_size(vec2(ui.available_width(), 30.0)).truncate();
             egui::menu::menu_custom_button(ui, dest_button, |ui| {
                 if ui.selectable_value(&mut drum_destination, None, "Audio clip").clicked() {
+                    ui.close_menu();
+                }
+                if ui.add_enabled(midi_available, egui::Button::new("Selected MIDI track")).clicked() {
+                    drum_destination = Some(midi_destination);
                     ui.close_menu();
                 }
                 for (lane, label) in DRUM_NAMES.iter().enumerate() {
@@ -2609,8 +2619,15 @@ impl VinteriaApp {
             }
         });
         if let Some((lane, path)) = drum {
-            self.lib.assign(&mut self.project, lane, &path);
-            self.arr.msg.clone_from(&self.lib.message);
+            if lane == midi_destination {
+                self.m_assign_midi_sample(&path, self.arr.sel_lane, None);
+                if self.arr.msg.is_empty() {
+                    ui.data_mut(|d| d.insert_temp(egui::Id::new("m_browser_open"), false));
+                }
+            } else {
+                self.lib.assign(&mut self.project, lane, &path);
+                self.arr.msg.clone_from(&self.lib.message);
+            }
         }
         if let Some(path) = sound {
             let target_id = egui::Id::new("m_audio_clip_target");
@@ -2650,6 +2667,12 @@ impl VinteriaApp {
     }
 
     fn m_drop_browser_item(&mut self, item: &browser::DragItem, lane: usize, tick: u32) {
+        if let browser::DragItem::Sample(path) = item {
+            if self.project.arrangement.tracks.get(lane).is_some_and(|track| track.kind == crate::arrangement::TrackKind::Midi) {
+                self.m_assign_midi_sample(path, lane, Some(tick));
+                return;
+            }
+        }
         self.lib.message.clear();
         let bpm = self.project.bpm;
         let before = self.project.arrangement.clips.len();
@@ -2659,6 +2682,36 @@ impl VinteriaApp {
             self.arr.msg.clone_from(&self.lib.message);
         } else {
             self.arr.msg = "No available track for this item.".into();
+        }
+    }
+
+    fn m_assign_midi_sample(&mut self, path: &std::path::Path, lane: usize, tick: Option<u32>) {
+        if !self.lib.assign_track_sampler(&mut self.project, lane, path) {
+            self.arr.msg.clone_from(&self.lib.message);
+            return;
+        }
+        self.arr.sel_lane = lane;
+        self.arr.msg.clear();
+        let Some(start) = tick else { return };
+        if let Some(index) = self.project.arrangement.clips.iter().position(|clip| {
+            clip.lane == lane && (clip.start..clip.end_tick()).contains(&start)
+        }) {
+            self.arr.sel_clip = Some(index);
+            return;
+        }
+        let sampler = &self.project.arrangement.tracks[lane].sampler;
+        let pitch = sampler.root;
+        let duration = sampler.sample.as_ref().and_then(|sample| sample.data.as_ref()).map_or(TICKS_PER_STEP, |sample| {
+            (sample.mono.len() as f64 / f64::from(sample.rate) * f64::from(self.project.bpm)
+                * f64::from(TICKS_PER_BAR) / 240.0).ceil().clamp(1.0, f64::from(TICKS_PER_BAR * 16)) as u32
+        });
+        if arrangement_ui::new_midi_clip_at(&mut self.project, &mut self.arr, lane, start, duration) {
+            if let Some(clip) = self.arr.sel_clip.and_then(|index| self.project.arrangement.clips.get(index)) {
+                self.project.patterns[clip.pattern].notes.push(crate::piano_roll::Note {
+                    start: 0, len: clip.len, pitch, vel: 100, track: Track::Sampler,
+                    slide: false, chance: 100, pan: 0, mute: false,
+                });
+            }
         }
     }
 
@@ -2678,6 +2731,17 @@ impl VinteriaApp {
         if !self.arr.msg.is_empty() {
             ui.colored_label(RED, &self.arr.msg);
         }
+        let choices = [(TICKS_PER_BAR, "Bar"), (96, "1/4"), (48, "1/8"), (24, "1/16"), (12, "1/32"), (1, "Off")];
+        let snap_label = choices.iter().find(|(step, _)| *step == self.arr.snap).map_or("Fine", |(_, name)| *name);
+        ui.horizontal(|ui| {
+            ui.menu_button(format!("Grid · {snap_label}"), |ui| {
+                for (step, name) in choices {
+                    if ui.selectable_value(&mut self.arr.snap, step, name).clicked() {
+                        ui.close_menu();
+                    }
+                }
+            });
+        });
         let (bar_w, ruler) = (64.0_f32, 30.0_f32);
         let height_id = egui::Id::new("m_playlist_lane_height");
         let gesture = ui.input(|input| input.multi_touch());
@@ -2786,6 +2850,16 @@ impl VinteriaApp {
                 p.text(pos2(rect.left() + 10.0, y + lane_h * 0.5), Align2::LEFT_CENTER,
                     "+ New track", FontId::proportional(12.0), muted());
             }
+            let snap = self.arr.snap.max(1);
+            if snap > 1 && snap < TICKS_PER_BAR {
+                let gap = (snap as f32 / TICKS_PER_BAR as f32 * bar_w).max(4.0);
+                let first = ((ui.clip_rect().left() - gx) / gap).ceil().max(0.0) as u32;
+                let last = ((ui.clip_rect().right().min(rect.right()) - gx) / gap).floor().max(0.0) as u32;
+                for division in first..=last {
+                    let x = gx + division as f32 * gap;
+                    p.line_segment([pos2(x, gy), pos2(x, gy + full_h)], Stroke::new(0.45, grid_line().gamma_multiply(0.45)));
+                }
+            }
             for b in 0..=bars {
                 let x = gx + b as f32 * bar_w;
                 let strong = b % 4 == 0;
@@ -2798,7 +2872,7 @@ impl VinteriaApp {
                 let hit = Rect::from_min_size(pos2(x0, gy + c.lane as f32 * lane_h), vec2(w, lane_h));
                 let r = hit.shrink2(vec2(1.5, 5.0));
                 // the right edge is a handle of its own: drag it to make the clip longer or shorter
-                let edge_w = (w * 0.3).clamp(6.0, 18.0);
+                let edge_w = (w * 0.36).clamp(5.0, 18.0).min(w * 0.6);
                 let edge_rect = Rect::from_min_max(pos2(hit.right() - edge_w, hit.top()), hit.right_bottom());
                 let clip = ui.interact(hit, resp.id.with(("clip", i)), Sense::click_and_drag())
                     .on_hover_cursor(egui::CursorIcon::Grab);
@@ -2828,7 +2902,7 @@ impl VinteriaApp {
                         FontId::proportional(11.0), pick(0xFFFFFFFF, 0xFF172227));
                 }
                 // grip on the right edge of the selected clip
-                if self.arr.sel_clip == Some(i) && r.width() > 14.0 {
+                if r.width() > 8.0 {
                     let grip = Rect::from_center_size(pos2(r.right() - 4.0, r.center().y), vec2(3.0, (r.height() * 0.5).max(8.0)));
                     p.rect_filled(grip, 1.5, Color32::WHITE.gamma_multiply(0.85));
                 }
@@ -2864,6 +2938,17 @@ impl VinteriaApp {
                     if ui.button("Open clip").clicked() {
                         selection = Some((c.lane, Some(i), Some(c.start), true));
                         ui.close_menu();
+                    }
+                    for (label, len) in [
+                        ("Extend by grid step", c.len.saturating_add(snap)),
+                        ("Shorten by grid step", c.len.saturating_sub(snap).max(1)),
+                    ] {
+                        let candidate = crate::arrangement::Clip { len, ..*c };
+                        let valid = len != c.len && self.project.arrangement.can_place(&candidate, Some(i));
+                        if ui.add_enabled(valid, egui::Button::new(label)).clicked() {
+                            move_clip = Some((i, candidate));
+                            ui.close_menu();
+                        }
                     }
                     if ui.button("Duplicate").clicked() {
                         duplicate = Some(i);
@@ -2916,18 +3001,18 @@ impl VinteriaApp {
                 let lane = (((point.y - gy) / lane_h) as usize).min(tracks);
                 let tick = ((point.x - gx).max(0.0) / bar_w * TICKS_PER_BAR as f32) as u32;
                 let snap = self.arr.snap.max(1);
-                if resp.dnd_hover_payload::<browser::DragItem>().is_some()
-                    || (lane < tracks && resp.dnd_hover_payload::<crate::fx::FxKind>().is_some())
-                {
+                let sample = egui::DragAndDrop::payload::<browser::DragItem>(ui.ctx());
+                let effect = (lane < tracks).then(|| egui::DragAndDrop::payload::<crate::fx::FxKind>(ui.ctx())).flatten();
+                if ui.rect_contains_pointer(rect) && (sample.is_some() || effect.is_some()) {
                     let row = Rect::from_min_size(pos2(rect.left(), gy + lane as f32 * lane_h), vec2(rect.width(), lane_h));
                     p.rect_stroke(row.shrink(1.0), 6.0, Stroke::new(1.5, p_accent()));
-                }
-                if let Some(item) = resp.dnd_release_payload::<browser::DragItem>() {
-                    dropped_item = Some((item, lane, tick / snap * snap));
-                }
-                if lane < tracks {
-                    if let Some(kind) = resp.dnd_release_payload::<crate::fx::FxKind>() {
-                        dropped_effect = Some((*kind, lane));
+                    if ui.input(|input| input.pointer.primary_released()) {
+                        if sample.is_some() {
+                            dropped_item = egui::DragAndDrop::take_payload::<browser::DragItem>(ui.ctx())
+                                .map(|item| (item, lane, tick / snap * snap));
+                        } else if effect.is_some() {
+                            dropped_effect = egui::DragAndDrop::take_payload::<crate::fx::FxKind>(ui.ctx()).map(|kind| (*kind, lane));
+                        }
                     }
                 }
             }
@@ -3358,7 +3443,7 @@ impl VinteriaApp {
         }
         let Some(insert) = insert else {
             if let MobileMixerChannel::Track(lane) = channel {
-                Self::m_mixer_effect_picker(ui, "Add first effect", |kind| {
+                if let Some(kind) = Self::m_mixer_effect_picker(ui, "Add first effect") {
                     let result = plugins_ui::add_to_track(&mut self.project, lane, &crate::fx::FxSlot::new(kind));
                     ui.ctx().request_repaint();
                     ui.data_mut(|d| {
@@ -3367,7 +3452,7 @@ impl VinteriaApp {
                             d.insert_temp(error_id, error.to_owned());
                         }
                     });
-                });
+                }
             }
             return;
         };
@@ -3392,19 +3477,17 @@ impl VinteriaApp {
                                 plugin_ui::plugin_grid(ui, slot);
                             }
                         });
-                } else {
-                    Self::m_mixer_effect_picker(ui, &format!("{:02}  + Add effect", index + 1), |kind| {
-                        if chain.len() <= index {
-                            chain.resize_with(index + 1, crate::fx::FxSlot::empty);
-                        }
-                        chain[index] = crate::fx::FxSlot::new(kind);
-                    });
+                } else if let Some(kind) = Self::m_mixer_effect_picker(ui, &format!("{:02}  + Add effect", index + 1)) {
+                    if chain.len() <= index {
+                        chain.resize_with(index + 1, crate::fx::FxSlot::empty);
+                    }
+                    chain[index] = crate::fx::FxSlot::new(kind);
                 }
             });
         }
     }
 
-    fn m_mixer_effect_picker(ui: &mut Ui, label: &str, select: impl FnOnce(crate::fx::FxKind)) {
+    fn m_mixer_effect_picker(ui: &mut Ui, label: &str) -> Option<crate::fx::FxKind> {
         let mut picked = None;
         let button = egui::Button::new(label).min_size(vec2(ui.available_width(), TOUCH));
         egui::menu::menu_custom_button(ui, button, |ui| {
@@ -3417,9 +3500,7 @@ impl VinteriaApp {
                 }
             });
         });
-        if let Some(kind) = picked {
-            select(kind);
-        }
+        picked
     }
 
     fn m_mixer_master(&mut self, ui: &mut Ui) {
