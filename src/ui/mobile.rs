@@ -1982,6 +1982,13 @@ impl VinteriaApp {
                     edit_length = Some(true);
                 }
             });
+            if select_mode && p_button(ui, "×", false, vec2(44.0, 40.0))
+                .on_hover_text("Exit selection mode").clicked()
+            {
+                select_mode = false;
+                selected.clear();
+                selected_range = None;
+            }
             history_changed = self.m_studio_undo_redo(ui, 44.0);
         });
         if history_changed {
@@ -4085,11 +4092,17 @@ impl VinteriaApp {
         let names = Rect::from_min_max(pos2(panel.left(), grid.top()), panel.max);
         let options_id = panel_id.with("track_modal");
         let mut group_drop = None;
+        let (drag_pos, released) = ui.input(|input| {
+            let cancelled = input.events.iter().any(|event| matches!(event,
+                egui::Event::Touch { phase: egui::TouchPhase::Cancel, .. }));
+            (input.pointer.interact_pos(), input.pointer.primary_released() && !cancelled)
+        });
+        let track_drag = egui::DragAndDrop::payload::<PlaylistTrackDrag>(ui.ctx());
         let mut group_toggle = None;
         let mut name_pick: Option<(usize, bool)> = None;
         if portrait {
             let swipe = ui.interact(names.intersect(ui.clip_rect()), egui::Id::new("m_playlist_names_swipe"), Sense::drag());
-            if swipe.dragged() && swipe.drag_delta().y != 0.0 {
+            if track_drag.is_none() && swipe.dragged() && swipe.drag_delta().y != 0.0 {
                 let y = offset_y - swipe.drag_delta().y;
                 ui.data_mut(|d| d.insert_temp(names_scroll_id, y));
                 ui.ctx().request_repaint();
@@ -4119,11 +4132,11 @@ impl VinteriaApp {
                         if card.clicked() {
                             group_toggle = Some(id);
                         }
-                        if card.dnd_hover_payload::<PlaylistTrackDrag>().is_some() {
+                        if let Some(source) = track_drag.as_ref().filter(|_| drag_pos.is_some_and(|pos| visible.contains(pos))) {
                             labels.rect_stroke(row.shrink(2.0), 8.0, Stroke::new(2.0, p_accent()));
-                        }
-                        if let Some(source) = card.dnd_release_payload::<PlaylistTrackDrag>() {
-                            group_drop = Some((source.0, item));
+                            if released {
+                                group_drop = Some((source.0, item));
+                            }
                         }
                         continue;
                     }
@@ -4144,10 +4157,6 @@ impl VinteriaApp {
                 }
                 let mut label_rect = visible;
                 label_rect.min.x = label_rect.min.x.max(row.left() + 19.0);
-                let grip = Rect::from_min_max(visible.min, pos2(label_rect.left(), visible.bottom()));
-                ui.interact(grip, panel_id.with(("grip", lane)), Sense::drag())
-                    .on_hover_text("Drag onto a track or folder")
-                    .dnd_set_drag_payload(PlaylistTrackDrag(lane));
                 if panel.width() >= 84.0 {
                     label_rect.max.x -= 29.0;
                     let button_rect = Rect::from_min_max(pos2(label_rect.right(), visible.top()), visible.max);
@@ -4164,21 +4173,41 @@ impl VinteriaApp {
                 labels.with_clip_rect(label_rect).text(
                     pos2(label_rect.left() + 1.0, row.center().y), Align2::LEFT_CENTER, &track.name,
                     FontId::proportional(11.0), if track.mute { muted() } else { ink() });
-                let hit = ui.interact(label_rect, panel_id.with(lane), Sense::click()).on_hover_text(&track.name);
-                if ui.rect_contains_pointer(visible)
-                    && egui::DragAndDrop::payload::<PlaylistTrackDrag>(ui.ctx()).is_some_and(|source| source.0 != lane)
-                {
+                for offset in [-4.0, 0.0, 4.0] {
+                    labels.circle_filled(pos2(row.left() + 12.0, row.center().y + offset), 1.25, muted());
+                }
+                let handle = Rect::from_min_max(visible.min, label_rect.max);
+                let hit = ui.interact(handle, panel_id.with(lane), Sense::click_and_drag())
+                    .on_hover_text("Drag onto a track or group");
+                hit.dnd_set_drag_payload(PlaylistTrackDrag(lane));
+                if let Some(source) = track_drag.as_ref().filter(|source| {
+                    source.0 != lane && drag_pos.is_some_and(|pos| visible.contains(pos))
+                }) {
                     labels.rect_stroke(row.shrink(2.0), 7.0, Stroke::new(2.0, p_accent()));
-                    if ui.input(|input| input.pointer.primary_released()) {
-                        if let Some(source) = egui::DragAndDrop::take_payload::<PlaylistTrackDrag>(ui.ctx()) {
-                            group_drop = Some((source.0, item));
-                        }
+                    if released {
+                        group_drop = Some((source.0, item));
                     }
                 }
                 if hit.clicked() || hit.secondary_clicked() {
                     name_pick = Some((lane, lane == self.arr.sel_lane || hit.secondary_clicked()));
                 }
             }
+        }
+        if let Some((source, pointer)) = track_drag.as_ref().zip(drag_pos).filter(|_| !released) {
+            if let Some(track) = self.project.arrangement.tracks.get(source.0) {
+                let ghost = ui.painter().with_clip_rect(viewport.intersect(ui.clip_rect()));
+                let width = panel.width().min(104.0);
+                let left = (pointer.x - width - 10.0).clamp(viewport.left(), (viewport.right() - width).max(viewport.left()));
+                let top = (pointer.y - 16.0).clamp(viewport.top(), (viewport.bottom() - 32.0).max(viewport.top()));
+                let badge = Rect::from_min_size(pos2(left, top), vec2(width, 32.0));
+                ghost.rect_filled(badge, 8.0, card_fill());
+                ghost.rect_stroke(badge, 8.0, Stroke::new(1.5, lane_col(source.0)));
+                ghost.with_clip_rect(badge.intersect(viewport)).text(badge.center(), Align2::CENTER_CENTER,
+                    &track.name, FontId::proportional(11.0), ink());
+            }
+        }
+        if group_drop.is_some() {
+            egui::DragAndDrop::take_payload::<PlaylistTrackDrag>(ui.ctx());
         }
         if portrait && !add_lane {
             // under the track names: add a MIDI / audio track, then the Master channel (like Ableton's master track)

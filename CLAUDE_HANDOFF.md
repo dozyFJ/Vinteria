@@ -416,3 +416,8 @@ Browser открывается слева рядом с Playlist в обеих �
 ### Android 1.0.69
 
 - Playlist rewinds its viewport on Stop, Return to start and natural song completion. Fresh Play reveals its start point, Pause keeps the viewport, and follow-playhead can track a loop jumping left.
+
+### Android 1.0.70
+
+- Drag from the Playlist track name or handle to create a group or move a track into an existing one. The drag shows a floating track name and highlights the drop target. Track options stay on their own touch target.
+- Piano Roll shows an exit button next to Clone while selection is active. It clears the highlighted range and restores note editing.
