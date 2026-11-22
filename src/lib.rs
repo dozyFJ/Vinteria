@@ -390,6 +390,10 @@ fn android_main(app: android_activity::AndroidApp) {
         boot_log(&report);
         android_log_error(&report);
     }
+    // the activity was destroyed (Android often does this while a file picker or the share sheet is in front).
+    // winit cannot create a second event loop in the same process, so a recreated activity would close at once:
+    // end the process here and let Android start a fresh one (a pending picker result is delivered to it)
+    std::process::exit(0);
 }
 
 static BOOT_TRACE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

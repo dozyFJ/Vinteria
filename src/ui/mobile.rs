@@ -506,7 +506,13 @@ impl VinteriaApp {
         #[cfg(target_os = "android")]
         {
             let pending = egui::Id::new("m_sound_import_pending");
-            if ctx.data(|d| d.get_temp::<bool>(pending)).unwrap_or(false) {
+            // also polled without a pending flag (twice a second): after Android restarted the app behind the
+            // file picker the import still finishes, and its result must reach the library
+            let poll = egui::Id::new("m_sound_import_poll");
+            let now = ctx.input(|i| i.time);
+            let due = now - ctx.data(|d| d.get_temp::<f64>(poll)).unwrap_or(f64::MIN) > 0.5;
+            if ctx.data(|d| d.get_temp::<bool>(pending)).unwrap_or(false) || due {
+                ctx.data_mut(|d| d.insert_temp(poll, now));
                 if let Some(status) = self.android_updater.as_ref().and_then(|android| android.take_sound_import_status()) {
                     self.lib.rescan();
                     ctx.data_mut(|d| {
@@ -539,6 +545,7 @@ impl VinteriaApp {
                     // track names in a row right under the header (portrait); landscape keeps the list on the left
                     self.m_playlist_track_nav(ctx);
                 }
+                self.m_studio_transport_dock(ctx);
                 self.m_nav_drawer(ctx);
             } else {
                 self.m_studio_sidebar(ctx);
@@ -737,24 +744,32 @@ impl VinteriaApp {
                     if studio_icon(ui, 40.0, Icon::Menu, false, "Menu").clicked() {
                         ctx.data_mut(|d| d.insert_temp(egui::Id::new(DRAWER_OPEN), true));
                     }
-                    let folder = self.m_sec == SEC_PLAYLIST;
-                    let (play_w, tempo_w, small) = (40.0, 50.0, 32.0);
-                    let right = 2.0 * small + 2.0 * play_w + tempo_w + if folder { play_w } else { 0.0 } + 6.0 * 2.0;
-                    let space = (ui.available_width() - right).max(0.0);
-                    let (rect, _) = ui.allocate_exact_size(vec2(space, 44.0), Sense::hover());
-                    if space > 48.0 {
-                        let font = FontId::proportional(if space > 96.0 { 20.0 } else { 15.0 });
-                        let galley = ui.painter().layout_no_wrap("Winteria".into(), font, ink());
-                        if galley.size().x <= space - 4.0 {
-                            ui.painter().galley(pos2(rect.left() + 2.0, rect.center().y - galley.size().y * 0.5), galley, ink());
-                        }
+                    ui.label(RichText::new("Winteria").size(20.0).color(ink()));
+                    if self.m_sec == SEC_PLAYLIST {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            self.m_studio_browser_button(ui, ctx, 44.0);
+                        });
                     }
+                });
+            });
+    }
+
+    /// bottom bar of the portrait studio: undo/redo, the project name in the middle, then play/stop and the tempo
+    fn m_studio_transport_dock(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::bottom("m_studio_transport_dock").show_separator_line(false)
+            .frame(Frame::none().fill(bar_fill()).inner_margin(Margin { left: 6.0, right: 6.0, top: 6.0, bottom: 12.0 }))
+            .show(ctx, |ui| {
+                mobile_visuals(ui);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    let (play_w, tempo_w, small) = (44.0, 54.0, 36.0);
                     self.m_studio_undo_redo(ui, small);
+                    let right = 2.0 * play_w + tempo_w + 3.0 * 2.0;
+                    let space = (ui.available_width() - right).max(1.0);
+                    ui.add_sized([space, 44.0], egui::Label::new(RichText::new(&self.project.name)
+                        .strong().size(14.0).color(ink())).truncate());
                     self.m_studio_play_stop(ui, ctx, play_w);
                     self.m_studio_tempo(ui, tempo_w, false);
-                    if folder {
-                        self.m_studio_browser_button(ui, ctx, play_w);
-                    }
                 });
             });
     }

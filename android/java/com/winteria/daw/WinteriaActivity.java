@@ -3,6 +3,7 @@ package com.winteria.daw;
 import android.app.NativeActivity;
 import android.content.ClipData;
 import android.content.Intent;
+import android.os.Bundle;
 import android.database.Cursor;
 import android.net.Uri;
 import android.provider.DocumentsContract;
@@ -12,6 +13,8 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.Locale;
@@ -27,6 +30,25 @@ public final class WinteriaActivity extends NativeActivity {
     private static final int MAX_PACK_FILES = 5000;
     private volatile String importStatus;
     private boolean importPending;
+
+    @Override
+    protected void onCreate(Bundle state) {
+        // a Java error would close the app without a trace: write it where the Rust side shows crash reports (crash.txt)
+        final Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
+        final File report = new File(getFilesDir(), "crash.txt");
+        Thread.setDefaultUncaughtExceptionHandler((thread, failure) -> {
+            try (FileOutputStream out = new FileOutputStream(report)) {
+                StringWriter trace = new StringWriter();
+                failure.printStackTrace(new PrintWriter(trace));
+                out.write(("Winteria crashed (Java)\n[thread " + thread.getName() + "]\n\n" + trace).getBytes("UTF-8"));
+            } catch (Throwable ignored) {
+            }
+            if (previous != null) {
+                previous.uncaughtException(thread, failure);
+            }
+        });
+        super.onCreate(state);
+    }
 
     public void chooseSounds() {
         runOnUiThread(() -> {
@@ -106,7 +128,7 @@ public final class WinteriaActivity extends NativeActivity {
                 try {
                     importWav(uri);
                     imported++;
-                } catch (IOException | RuntimeException failure) {
+                } catch (Throwable failure) {
                     rejected++;
                 }
             }
