@@ -337,3 +337,9 @@ Browser открывается слева рядом с Playlist в обеих �
 
 - The waveform button renders the entire audible Playlist into one WAV and imports it on a new audio track. The original tracks are muted after a successful render. Desktop retains its single-track command.
 - MIDI and audio track cards expose Main, Mute and Solo in their own Playlist menus.
+
+### Android 1.0.57
+
+- Mobile light and dark themes use muted blue-gray surfaces and subtle Morning Dawn tints. Playlist clips keep the existing lane colors with softer fills and dark text. The shared desktop palette is unchanged.
+- Browser opens as a left drawer over the Playlist in the same style as the main menu. Dragging a Browser item clears the overlay so it can land on a track.
+- New MIDI clips use the active grid step. New audio clips align to the next division when space permits, and clip resizing snaps the right edge. The metronome follows arrangement or pattern position after seeking and looping.

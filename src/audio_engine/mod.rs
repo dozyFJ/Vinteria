@@ -580,6 +580,14 @@ impl Engine {
         proj.arrangement.tracks.get(lane).and_then(|t| t.output).map(|o| 1 + o.min(NUM_INSERTS - 1)).unwrap_or(0)
     }
 
+    fn tick_metronome(&mut self, musical_tick: u32) {
+        if self.project.metronome && musical_tick % PPQ == 0 {
+            self.click_env = 1.0;
+            self.click_ph = 0.0;
+            self.click_hz = if musical_tick % TICKS_PER_BAR == 0 { 1600.0 } else { 1000.0 };
+        }
+    }
+
     fn on_tick(&mut self) {
         let proj = Arc::clone(&self.project);
         let abs = self.abs_tick;
@@ -597,6 +605,7 @@ impl Engine {
         let swing = swing_ticks(proj.swing);
         if self.session_on {
             let st = self.song_tick;
+            self.tick_metronome(st);
             if st % TICKS_PER_BAR == 0 {
                 self.session_bar(&proj);
             }
@@ -632,6 +641,7 @@ impl Engine {
                 st = loop_start;
                 self.song_tick = st;
             }
+            self.tick_metronome(if ctx_range.is_some() { st - loop_start } else { st });
             let seek = std::mem::take(&mut self.resume_audio_at_seek);
             for clip in &proj.arrangement.clips {
                 if clip.audio {
@@ -688,6 +698,7 @@ impl Engine {
             }
         } else if let Some(pat) = proj.patterns.get(proj.current_pattern) {
             let local = self.song_tick % pat.len_ticks();
+            self.tick_metronome(local);
             self.fire(0, None, pat, local, abs, u64::MAX, swing, None, 0);
             self.position = local;
             self.song_tick = self.song_tick.wrapping_add(1);
@@ -821,11 +832,6 @@ impl Engine {
         for frame in out.chunks_exact_mut(2) {
             if self.playing {
                 if self.countdown <= 0.0 {
-                    if proj.metronome && self.abs_tick % PPQ as u64 == 0 {
-                        self.click_env = 1.0;
-                        self.click_ph = 0.0;
-                        self.click_hz = if self.abs_tick % TICKS_PER_BAR as u64 == 0 { 1600.0 } else { 1000.0 };
-                    }
                     self.on_tick();
                     self.countdown += spt;
                 }

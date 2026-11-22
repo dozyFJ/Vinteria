@@ -19,36 +19,36 @@ fn pick(dark: u32, light: u32) -> Color32 {
 }
 /// main text
 fn ink() -> Color32 {
-    pick(0xFFF1F3F5, 0xFF202A30)
+    pick(0xFFF0F1F7, 0xFF232A38)
 }
 /// secondary text
 fn muted() -> Color32 {
-    pick(0xFFBFC5CC, 0xFF35454D)
+    pick(0xFFC2C7D4, 0xFF414C61)
 }
-/// Pulse accent: a calm near-white (night) / slate (day) pill
+/// A muted blue accent using Morning Dawn tones.
 fn p_accent() -> Color32 {
-    pick(0xFFDCE5EE, 0xFF334953)
+    pick(0xFFBFD2F5, 0xFF405277)
 }
 fn on_accent() -> Color32 {
-    pick(0xFF1A1B1D, 0xFFE4EAEB)
+    pick(0xFF1D2638, 0xFFF0F2F8)
 }
 fn p_bg() -> Color32 {
-    pick(0xFF1A1E23, 0xFFB8C2C7)
+    pick(0xFF1C2029, 0xFFBAC4CB)
 }
 fn bar_fill() -> Color32 {
-    pick(0xFF22272E, 0xFFC2CBCE)
+    pick(0xFF262B36, 0xFFC4CDD5)
 }
 fn outline() -> Color32 {
-    pick(0xFF555F69, 0xFF74858D)
+    pick(0xFF555F73, 0xFF748298)
 }
 fn card_fill() -> Color32 {
-    pick(0xFF2A3139, 0xFFCBD2D4)
+    pick(0xFF303646, 0xFFCED5DE)
 }
 fn selected_fill() -> Color32 {
-    pick(0xFF3B4B57, 0xFFA4B8C0)
+    pick(0xFF414E68, 0xFFACBCD2)
 }
 fn grid_line() -> Color32 {
-    pick(0xFF45525E, 0xFF96A7AF)
+    pick(0xFF465164, 0xFF97A5B4)
 }
 
 fn panel(p: &Painter, rect: Rect, radius: f32) {
@@ -355,12 +355,12 @@ fn mobile_visuals(ui: &mut Ui) {
     v.override_text_color = Some(ink());
     v.window_fill = card_fill();
     v.panel_fill = p_bg();
-    v.extreme_bg_color = pick(0xFF1B2026, 0xFFACB9BF);
+    v.extreme_bg_color = pick(0xFF222734, 0xFFADB9C6);
     v.selection.bg_fill = selected_fill();
     v.selection.stroke = Stroke::new(1.0, p_accent());
     for (widget, fill) in [
         (&mut v.widgets.inactive, card_fill()),
-        (&mut v.widgets.hovered, pick(0xFF343D47, 0xFFD0D8DA)),
+        (&mut v.widgets.hovered, pick(0xFF3B4458, 0xFFD4DCE7)),
         (&mut v.widgets.active, selected_fill()),
         (&mut v.widgets.open, bar_fill()),
     ] {
@@ -2549,46 +2549,70 @@ impl VinteriaApp {
     fn m_browser_sidebar(&mut self, ctx: &egui::Context) {
         let id = egui::Id::new("m_browser_open");
         let open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
-        // full width on the phone; while a sample is being dragged the browser steps aside so it can land on a lane
         let screen = ctx.screen_rect();
-        let width = if screen.width() < screen.height() { screen.width() } else { (screen.width() * 0.45).clamp(220.0, 360.0) };
+        let width = if screen.width() < screen.height() {
+            (screen.width() * 0.8).min(360.0)
+        } else {
+            (screen.width() * 0.45).clamp(220.0, 360.0)
+        };
         let dragging = egui::DragAndDrop::has_any_payload(ctx);
-        // a sample was just dropped: stay closed, so the new clip is visible
-        let drag_id = egui::Id::new("m_browser_was_dragging");
+        let drag_id = id.with("dragging");
         let was_dragging = ctx.data(|d| d.get_temp::<bool>(drag_id)).unwrap_or(false);
-        if was_dragging && !dragging {
-            ctx.data_mut(|d| d.insert_temp(id, false));
-        }
-        ctx.data_mut(|d| d.insert_temp(drag_id, dragging && open));
+        ctx.data_mut(|d| {
+            if was_dragging && !dragging {
+                d.insert_temp(id, false);
+            }
+            d.insert_temp(drag_id, dragging && open);
+        });
         if dragging {
             return;
         }
         let open = open && !was_dragging;
-        egui::SidePanel::left("m_sample_browser_left").resizable(false)
-            .exact_width(width).show_separator_line(false)
-            .frame(Frame::none().fill(bar_fill()).inner_margin(Margin { left: 8.0, right: 8.0, top: 6.0, bottom: 6.0 }))
-            .show_animated(ctx, open, |ui| {
-                mobile_visuals(ui);
-                // never wider than the panel, whatever the text size of the phone
-                ui.set_max_width(width - 16.0);
-                let mut close = false;
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Browser").size(17.0).strong().color(ink()));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        close = p_button(ui, "×", false, vec2(36.0, 36.0)).on_hover_text("Close browser").clicked();
-                    });
-                });
-                ui.add_space(4.0);
-                if close {
-                    ctx.data_mut(|d| {
-                        d.insert_temp(id, false);
-                        d.remove::<(usize, u32)>(egui::Id::new("m_audio_clip_target"));
-                    });
-                    ctx.request_repaint();
-                } else {
-                    self.m_browser_items(ui);
-                }
+        let shown = ctx.animate_bool_with_time(id.with("slide"), open, 0.14);
+        if shown <= 0.0 {
+            return;
+        }
+
+        let mut close = false;
+        egui::Area::new(id.with("scrim")).order(egui::Order::Middle).fixed_pos(screen.min)
+            .show(ctx, |ui| {
+                let (rect, response) = ui.allocate_exact_size(screen.size(), Sense::click());
+                ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha((150.0 * shown) as u8));
+                close = response.clicked();
             });
+
+        egui::Area::new(id.with("drawer")).order(egui::Order::Foreground)
+            .fixed_pos(pos2(screen.left() - width * (1.0 - shown), screen.top()))
+            .constrain(false)
+            .show(ctx, |ui| {
+                Frame::none().fill(bar_fill())
+                    .rounding(egui::Rounding { ne: 16.0, se: 16.0, ..Default::default() })
+                    .inner_margin(Margin::symmetric(12.0, 14.0))
+                    .show(ui, |ui| {
+                        mobile_visuals(ui);
+                        ui.set_min_size(vec2(width - 24.0, screen.height() - 28.0));
+                        ui.set_max_size(vec2(width - 24.0, screen.height() - 28.0));
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Browser").size(24.0).strong().color(ink()));
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                close |= p_button(ui, "×", false, vec2(42.0, 42.0))
+                                    .on_hover_text("Close Browser").clicked();
+                            });
+                        });
+                        ui.add_space(10.0);
+                        if open && !close {
+                            self.m_browser_items(ui);
+                        }
+                    });
+            });
+
+        if close || ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            ctx.data_mut(|d| {
+                d.insert_temp(id, false);
+                d.remove::<(usize, u32)>(egui::Id::new("m_audio_clip_target"));
+            });
+            ctx.request_repaint();
+        }
     }
 
     fn m_browser_items(&mut self, ui: &mut Ui) {
@@ -2829,6 +2853,7 @@ impl VinteriaApp {
             }
             match self.lib.insert_audio_clip(&mut self.project, &path, Some(self.arr.sel_lane), self.arr.snap) {
                 Ok(index) => {
+                    self.m_fit_audio_clip_to_grid(index);
                     self.arr.sel_clip = Some(index);
                     let clip = self.project.arrangement.clips[index];
                     self.arr.sel_lane = clip.lane;
@@ -2864,6 +2889,9 @@ impl VinteriaApp {
         if let Some(lane) = arrangement_ui::drop_item(&mut self.project, &mut self.lib, item, lane, tick, bpm) {
             self.arr.sel_lane = lane;
             self.arr.sel_clip = (self.project.arrangement.clips.len() > before).then_some(before);
+            if let Some(index) = self.arr.sel_clip {
+                self.m_fit_audio_clip_to_grid(index);
+            }
             self.arr.msg.clone_from(&self.lib.message);
         } else {
             self.arr.msg = "No available track for this item.".into();
@@ -3053,7 +3081,7 @@ impl VinteriaApp {
         let bars = (self.project.arrangement.song_end_bar() + 8).max(16);
         let pos = self.shared.position.load(Ordering::Relaxed);
         let playing = self.playing() && self.project.song_mode;
-        let add_lane = ui.data(|d| d.get_temp::<bool>(egui::Id::new("m_browser_open"))).unwrap_or(false);
+        let add_lane = egui::DragAndDrop::has_payload_of_type::<browser::DragItem>(ui.ctx());
         // portrait: room under the lanes for "+ MIDI" / "+ Audio" and the Master row of the right column
         let extra_h = if portrait_view(ui) && !add_lane { 2.0 * 40.0 + 8.0 + 56.0 + 12.0 } else { 0.0 };
         let full_h = (tracks + usize::from(add_lane)) as f32 * lane_h + extra_h;
@@ -3061,7 +3089,7 @@ impl VinteriaApp {
         let panel_open = ui.data(|d| d.get_temp::<bool>(panel_id)).unwrap_or(false);
         let screen = ui.ctx().screen_rect();
         let portrait = screen.width() < screen.height();
-        let panel_width: f32 = if portrait && add_lane { 10.0 } else if portrait { 94.0 } else if panel_open { 106.0 } else { 28.0 };
+        let panel_width: f32 = if portrait { 94.0 } else if panel_open { 106.0 } else { 28.0 };
         let reveal_id = egui::Id::new("m_playlist_reveal_track");
         let reveal_lane = ui.data_mut(|d| d.remove_temp::<usize>(reveal_id));
         let (viewport, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
@@ -3172,17 +3200,17 @@ impl VinteriaApp {
             let p = ui.painter_at(rect);
             let gx = rect.left();
             let gy = rect.top();
-            p.rect_filled(rect, 0.0, pick(0xFF191E25, 0xFFB1BDC3));
+            p.rect_filled(rect, 0.0, pick(0xFF1B202A, 0xFFB3BFC8));
             for (lane, track) in self.project.arrangement.tracks.iter().enumerate() {
                 let y = gy + lane as f32 * lane_h;
                 let r = Rect::from_min_size(pos2(rect.left(), y), vec2(rect.width(), lane_h));
                 let audio = track.kind == crate::arrangement::TrackKind::Audio;
                 let row_fill = if lane == self.arr.sel_lane {
-                    pick(0xFF323D4C, 0xFFA2B5BE)
+                    pick(0xFF35415A, 0xFFAABBD0)
                 } else if audio {
-                    pick(0xFF202A30, 0xFFBCCBCB)
+                    pick(0xFF243038, 0xFFBBCBCC)
                 } else {
-                    pick(0xFF232A36, 0xFFC3CCD1)
+                    pick(0xFF282D3C, 0xFFC2C9D7)
                 };
                 p.rect_filled(r, 0.0, row_fill);
                 if lane == self.arr.sel_lane {
@@ -3232,7 +3260,8 @@ impl VinteriaApp {
                 let resize_from = ui.data(|d| d.get_temp::<f32>(resize_id));
                 let resizing = resize_from.is_some();
                 let col = lane_col(c.lane);
-                let fill = if is_dark() { col.linear_multiply(0.75) } else { tint(col, p_bg(), 0.30) };
+                let pastel = if c.audio { argb(0xFFCAF0F8) } else { argb(0xFFBDB2FF) };
+                let fill = tint(col, pastel, if is_dark() { 0.18 } else { 0.28 });
                 p.rect_filled(r, 3.0, fill);
                 if self.arr.sel_clip == Some(i) {
                     p.rect_stroke(r.expand(1.0), 9.0, Stroke::new(2.0, p_accent()));
@@ -3245,12 +3274,12 @@ impl VinteriaApp {
                 if let Some(name) = name.filter(|_| r.width() > 24.0) {
                     p.with_clip_rect(r.intersect(ui.clip_rect())).text(
                         r.left_center() + vec2(6.0, 0.0), Align2::LEFT_CENTER, name,
-                        FontId::proportional(11.0), pick(0xFFFFFFFF, 0xFF172227));
+                        FontId::proportional(11.0), argb(0xFF172227));
                 }
                 // grip on the right edge of the selected clip
                 if r.width() > 8.0 {
                     let grip = Rect::from_center_size(pos2(r.right() - 4.0, r.center().y), vec2(3.0, (r.height() * 0.5).max(8.0)));
-                    p.rect_filled(grip, 1.5, Color32::WHITE.gamma_multiply(0.85));
+                    p.rect_filled(grip, 1.5, argb(0xFF253242).gamma_multiply(0.75));
                 }
                 if pinching {
                     continue;
@@ -3259,7 +3288,10 @@ impl VinteriaApp {
                     if let (Some(origin_x), Some(point)) = (resize_from, clip.interact_pointer_pos()) {
                         let snap = self.arr.snap.max(1);
                         let delta = (point.x - origin_x) / bar_w * TICKS_PER_BAR as f32;
-                        let len = ((c.len as f32 + delta) / snap as f32).round().max(1.0) as u32 * snap;
+                        let target = (c.end_tick() as f64 + f64::from(delta)).max(0.0);
+                        let end = ((target / f64::from(snap)).round() as u32)
+                            .max(c.start / snap + 1).saturating_mul(snap);
+                        let len = end.saturating_sub(c.start).max(1);
                         let candidate = crate::arrangement::Clip { len, ..*c };
                         let valid = !self.project.arrangement.clips.iter().enumerate()
                             .any(|(j, other)| i != j && candidate.overlaps(other));
@@ -3381,7 +3413,7 @@ impl VinteriaApp {
         let offset_y = scroll.state.offset.y;
         let timeline = Rect::from_min_max(pos2(grid.left(), viewport.top()), pos2(grid.right(), grid.top()));
         let painter = ui.painter_at(timeline);
-        painter.rect_filled(timeline, 0.0, pick(0xFF252D37, 0xFFB9C5CA));
+        painter.rect_filled(timeline, 0.0, pick(0xFF2B3241, 0xFFBECAD4));
         for bar in 0..bars {
             let x = scroll.inner.x + bar as f32 * bar_w;
             if x + 18.0 < timeline.left() || x >= timeline.right() {
@@ -3420,7 +3452,7 @@ impl VinteriaApp {
             Rect::from_min_max(viewport.min, pos2(grid.left(), viewport.bottom()))
         };
         let painter = ui.painter_at(panel);
-        painter.rect_filled(panel, 0.0, pick(0xFF252D37, 0xFFB9C5CA));
+        painter.rect_filled(panel, 0.0, pick(0xFF2B3241, 0xFFBECAD4));
         let names = Rect::from_min_max(pos2(panel.left(), grid.top()), panel.max);
         let mut mute_change = None;
         let mut solo_change = None;
@@ -3446,7 +3478,7 @@ impl VinteriaApp {
                     continue;
                 }
                 if lane == self.arr.sel_lane {
-                    labels.rect_filled(row, 0.0, pick(0xFF323D4C, 0xFFA2B5BE));
+                    labels.rect_filled(row, 0.0, pick(0xFF35415A, 0xFFAABBD0));
                 }
                 labels.line_segment([row.left_top(), row.right_top()], Stroke::new(0.6, grid_line()));
                 if portrait {
@@ -3522,7 +3554,7 @@ impl VinteriaApp {
             if master.intersects(clip) {
                 let resp = ui.interact(master.intersect(clip), panel_id.with("master"), Sense::click()).on_hover_text("Master channel");
                 let p = ui.painter().with_clip_rect(clip);
-                p.rect_filled(master, 10.0, pick(0xFF2E3742, 0xFFA9B9C0));
+                p.rect_filled(master, 10.0, pick(0xFF354154, 0xFFADBDD0));
                 p.rect_filled(Rect::from_min_size(master.min + vec2(4.0, 6.0), vec2(4.0, master.height() - 12.0)), 2.0, ink());
                 p.text(master.left_top() + vec2(13.0, 17.0), Align2::LEFT_CENTER, "Master", FontId::proportional(13.0), ink());
                 p.text(master.left_top() + vec2(13.0, 38.0), Align2::LEFT_CENTER,
@@ -3637,7 +3669,8 @@ impl VinteriaApp {
                 let start = tick / snap * snap;
                 match self.project.arrangement.kind(lane) {
                     TrackKind::Midi => {
-                        if arrangement_ui::new_midi_clip_at(&mut self.project, &mut self.arr, lane, start, TICKS_PER_BAR) {
+                        let duration = if snap == 1 { TICKS_PER_BAR } else { snap };
+                        if arrangement_ui::new_midi_clip_at(&mut self.project, &mut self.arr, lane, start, duration) {
                             let track = &mut self.project.arrangement.tracks[lane];
                             if track.blank {
                                 track.blank = false;
@@ -3659,6 +3692,7 @@ impl VinteriaApp {
                             let bpm = self.project.bpm;
                             match arrangement_ui::place_audio_from_pool(&mut self.project, sample, lane, start, bpm) {
                                 Ok(index) => {
+                                    self.m_fit_audio_clip_to_grid(index);
                                     self.arr.sel_clip = Some(index);
                                     self.project.arrangement.tracks[lane].audio_brush = Some(sample);
                                 }
@@ -3674,6 +3708,18 @@ impl VinteriaApp {
                         });
                     }
                 }
+            }
+        }
+    }
+
+    fn m_fit_audio_clip_to_grid(&mut self, index: usize) {
+        let step = self.arr.snap.max(1);
+        let clip = self.project.arrangement.clips[index];
+        if clip.audio && step > 1 {
+            let end = clip.end_tick().div_ceil(step).saturating_mul(step);
+            let fitted = crate::arrangement::Clip { len: end - clip.start, ..clip };
+            if self.project.arrangement.can_place(&fitted, Some(index)) {
+                self.project.arrangement.clips[index] = fitted;
             }
         }
     }
