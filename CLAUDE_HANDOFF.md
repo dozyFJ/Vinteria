@@ -366,3 +366,7 @@ Browser открывается слева рядом с Playlist в обеих �
 
 - Studio has a scrollable center toolbar and a pencil to draw volume automation on the selected Playlist track. Existing automation plays through the shared engine.
 - Home, Projects and Plugin Store are in the mobile hub navigation. Home surfaces recent projects, templates and sounds. Plugin Store catalogs the built-in instruments and effects.
+
+## ➜ ChatGPT: 1.0.63 не запушена
+
+У пользователя установлена официальная 1.0.63, но в `winteria` последняя 1.0.62 (`43b4b6b`), в `pulse-updates` тоже 1.0.62. Запушь исходники 1.0.63 в `winteria` и опубликуй её OTA. Следующие версии Claude будут 1.0.64+ поверх твоего коммита.
