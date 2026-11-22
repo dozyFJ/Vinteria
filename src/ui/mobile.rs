@@ -1639,10 +1639,10 @@ impl VinteriaApp {
                 let color = if record_step.is_some() { RED } else { p_accent() };
                 p.line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], Stroke::new(2.0, color));
             }
+            let tap_id = resp.id.with("last_piano_note_tap");
             let mut remove = None;
             let mut audition = None;
             let mut edit = None;
-            let pattern_end = steps as u32 * TICKS_PER_STEP;
             for (index, note) in self.project.patterns[pi].notes.iter().enumerate() {
                 if note.pitch > high_pitch || note.start >= pattern_end {
                     continue;
@@ -1655,7 +1655,7 @@ impl VinteriaApp {
                 };
                 let original = body(note.len, note.pitch, note.start);
                 let id = resp.id.with(("note", index));
-                let note_response = ui.interact(original, id, Sense::click_and_drag())
+                let note_response = ui.interact(original.expand(1.0), id, Sense::click_and_drag())
                     .on_hover_cursor(egui::CursorIcon::Grab);
                 let edge = Rect::from_min_max(
                     pos2(original.right() - original.width().min(14.0), original.top()),
@@ -1668,6 +1668,7 @@ impl VinteriaApp {
                 let mut start = note.start;
                 let grab_id = id.with("grab");
                 if handle.drag_started() || note_response.drag_started() {
+                    ui.data_mut(|d| d.remove::<(usize, u32, u8, f64)>(tap_id));
                     if let (Some(origin), Some(pointer)) = (
                         ui.input(|input| input.pointer.press_origin()),
                         handle.interact_pointer_pos().or(note_response.interact_pointer_pos()),
@@ -1714,12 +1715,21 @@ impl VinteriaApp {
                         format!("{}{}", names[usize::from(pitch % 12)], i16::from(pitch) / 12 - 1),
                         FontId::proportional(10.0), Color32::from_gray(18));
                 }
-                if note_response.secondary_clicked() || handle.secondary_clicked()
-                    || note_response.double_clicked() || handle.double_clicked()
-                {
+                if note_response.secondary_clicked() || handle.secondary_clicked() {
                     remove = Some(index);
                 } else if note_response.clicked() || handle.clicked() {
-                    audition = Some((note.track, note.pitch, note.vel));
+                    let now = ui.input(|input| input.time);
+                    let repeat = ui.data(|d| d.get_temp::<(usize, u32, u8, f64)>(tap_id))
+                        .is_some_and(|(last_index, start, pitch, time)| {
+                            (last_index, start, pitch) == (index, note.start, note.pitch)
+                                && (0.0..=0.42).contains(&(now - time))
+                        });
+                    if repeat {
+                        remove = Some(index);
+                    } else {
+                        ui.data_mut(|d| d.insert_temp(tap_id, (index, note.start, note.pitch, now)));
+                        audition = Some((note.track, note.pitch, note.vel));
+                    }
                 }
             }
             if let Some((index, len, pitch, start)) = edit {
@@ -1734,10 +1744,12 @@ impl VinteriaApp {
                     self.m_preview_piano_notes(ui.ctx(), track, vec![pitch], velocity);
                 }
             } else if let Some(index) = remove {
+                ui.data_mut(|d| d.remove::<(usize, u32, u8, f64)>(tap_id));
                 self.project.patterns[pi].notes.remove(index);
             } else if let Some((track, pitch, velocity)) = audition {
                 self.m_preview_piano_notes(ui.ctx(), track, vec![pitch], velocity);
             } else if resp.clicked() {
+                ui.data_mut(|d| d.remove::<(usize, u32, u8, f64)>(tap_id));
                 if let Some(pt) = resp.interact_pointer_pos() {
                     let row = (((pt.y - rect.top()) / row_h) as usize).min(rows - 1);
                     let step = (((pt.x - rect.left()) / step_w) as usize).min(steps - 1);
