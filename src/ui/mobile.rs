@@ -2726,23 +2726,114 @@ impl VinteriaApp {
         }
     }
 
+    fn m_playlist_options(&mut self, ui: &mut Ui, rect: Rect) {
+        let choices = [(TICKS_PER_BAR, "Bar"), (96, "1/4"), (48, "1/8"), (24, "1/16"), (12, "1/32"), (1, "Off")];
+        let follow_id = egui::Id::new("m_playlist_follow");
+        let selected = self.arr.sel_clip.filter(|&index| index < self.project.arrangement.clips.len());
+        let mut trigger = ui.new_child(egui::UiBuilder::new().id_salt("playlist_options").max_rect(rect));
+        trigger.set_clip_rect(rect.intersect(ui.clip_rect()));
+        let button = egui::Button::new("").frame(false).min_size(rect.size());
+        let menu = egui::menu::menu_custom_button(&mut trigger, button, |ui| {
+            ui.set_min_width(176.0);
+            mobile_scroll(egui::ScrollArea::vertical()).max_height((ui.ctx().screen_rect().height() * 0.50).min(330.0))
+                .show(ui, |ui| {
+                    egui::CollapsingHeader::new("Playlist").default_open(true).show(ui, |ui| {
+                        let snap = choices.iter().find(|(ticks, _)| *ticks == self.arr.snap).map_or("Fine", |(_, name)| *name);
+                        egui::ComboBox::from_id_salt("playlist_grid").selected_text(format!("Grid · {snap}"))
+                            .show_ui(ui, |ui| {
+                                for (step, name) in choices {
+                                    ui.selectable_value(&mut self.arr.snap, step, name);
+                                }
+                            });
+                        let mut follow = ui.data(|d| d.get_temp::<bool>(follow_id)).unwrap_or(true);
+                        if ui.checkbox(&mut follow, "Follow playhead").changed() {
+                            ui.data_mut(|d| d.insert_temp(follow_id, follow));
+                        }
+                    });
+                    egui::CollapsingHeader::new("Clips").show(ui, |ui| {
+                        let Some(index) = selected else {
+                            ui.label("Select a clip on the playlist.");
+                            return;
+                        };
+                        if ui.button("Open clip").clicked() {
+                            self.m_open_playlist_clip(ui.ctx(), index);
+                            ui.close_menu();
+                        }
+                        if ui.button("Duplicate").clicked() {
+                            if let Some(copy) = arrangement_ui::duplicate_clip(&mut self.project, index) {
+                                self.arr.sel_clip = Some(copy);
+                                self.arr.sel.clear();
+                            } else {
+                                self.arr.msg = "No room to duplicate this clip.".into();
+                            }
+                            ui.close_menu();
+                        }
+                        let clip = self.project.arrangement.clips[index];
+                        let step = self.arr.snap.max(1);
+                        for (label, len) in [
+                            ("Extend by grid step", clip.len.saturating_add(step)),
+                            ("Shorten by grid step", clip.len.saturating_sub(step).max(1)),
+                        ] {
+                            let resized = crate::arrangement::Clip { len, ..clip };
+                            let valid = len != clip.len && self.project.arrangement.can_place(&resized, Some(index));
+                            if ui.add_enabled(valid, egui::Button::new(label)).clicked() {
+                                self.project.arrangement.clips[index] = resized;
+                                ui.close_menu();
+                            }
+                        }
+                    });
+                    egui::CollapsingHeader::new("Audio").show(ui, |ui| {
+                        if ui.button("Sounds & import").clicked() {
+                            ui.data_mut(|d| {
+                                d.remove::<(usize, u32)>(egui::Id::new("m_audio_clip_target"));
+                                d.insert_temp(egui::Id::new("m_browser_plugins"), false);
+                                d.insert_temp(egui::Id::new("m_browser_open"), true);
+                            });
+                            ui.close_menu();
+                        }
+                        if let Some(index) = selected.filter(|&index| self.project.arrangement.clips[index].audio) {
+                            if ui.button("Audio clip settings").clicked() {
+                                self.m_open_playlist_clip(ui.ctx(), index);
+                                ui.close_menu();
+                            }
+                        }
+                        if ui.button("Export WAV").clicked() {
+                            self.m_export.open = true;
+                            self.m_export.song = true;
+                            ui.close_menu();
+                        }
+                    });
+                });
+        });
+        let center = rect.center();
+        let painter = trigger.painter();
+        painter.circle_filled(center, 16.0, if menu.response.hovered() { selected_fill() } else { card_fill() });
+        painter.circle_stroke(center, 16.0, Stroke::new(1.0, outline()));
+        for x in [-6.0, 0.0, 6.0] {
+            painter.circle_filled(center + vec2(x, 0.0), 1.4, ink());
+        }
+        menu.response.on_hover_text("Playlist options");
+    }
+
+    fn m_open_playlist_clip(&mut self, ctx: &egui::Context, index: usize) {
+        let clip = &self.project.arrangement.clips[index];
+        self.arr.sel_lane = clip.lane;
+        self.arr.sel_clip = Some(index);
+        if !clip.audio && clip.pattern < self.project.patterns.len() {
+            self.project.current_pattern = clip.pattern;
+        }
+        ctx.data_mut(|d| {
+            d.remove::<bool>(egui::Id::new("m_track_sheet_open"));
+            d.insert_temp(egui::Id::new("m_clip_sheet_selection"), index);
+        });
+    }
+
     /// Tap a track name or clip to open its editor sheet.
     fn m_playlist(&mut self, ui: &mut Ui) {
         if !self.arr.msg.is_empty() {
             ui.colored_label(RED, &self.arr.msg);
         }
-        let choices = [(TICKS_PER_BAR, "Bar"), (96, "1/4"), (48, "1/8"), (24, "1/16"), (12, "1/32"), (1, "Off")];
-        let snap_label = choices.iter().find(|(step, _)| *step == self.arr.snap).map_or("Fine", |(_, name)| *name);
-        ui.horizontal(|ui| {
-            ui.menu_button(format!("Grid · {snap_label}"), |ui| {
-                for (step, name) in choices {
-                    if ui.selectable_value(&mut self.arr.snap, step, name).clicked() {
-                        ui.close_menu();
-                    }
-                }
-            });
-        });
-        let (bar_w, ruler) = (64.0_f32, 30.0_f32);
+        let (bar_w, ruler) = (64.0_f32, TOUCH);
         let height_id = egui::Id::new("m_playlist_lane_height");
         let gesture = ui.input(|input| input.multi_touch());
         let viewport = ui.available_rect_before_wrap().intersect(ui.clip_rect());
@@ -3155,6 +3246,11 @@ impl VinteriaApp {
             if toggle_response.clicked() {
                 ui.data_mut(|d| d.insert_temp(panel_id, !panel_open));
             }
+        }
+        if !add_lane {
+            let x = if portrait { panel.right() - 3.0 } else { timeline.right() - 3.0 };
+            let options = Rect::from_min_size(pos2(x - TOUCH, viewport.top()), vec2(TOUCH, ruler));
+            self.m_playlist_options(ui, options);
         }
         if let Some((lane, open_settings)) = name_pick {
             self.arr.sel_lane = lane;
