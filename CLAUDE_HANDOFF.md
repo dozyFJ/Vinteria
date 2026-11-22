@@ -427,3 +427,9 @@ Browser открывается слева рядом с Playlist в обеих �
 - Select an Audio or MIDI clip and drag its top left or right handle to shape Fade In or Fade Out. The right edge below the fade handle still resizes.
 - Playlist clips and track cards indicate playback activity. Steps flash on active hits, and Session's running pads pulse with the transport.
 - MIDI clips show a note thumbnail below the name, including cropped and repeated content. The Playlist Master card shows output level as a horizontal meter.
+
+### Android 1.0.72
+
+- Swipe a Playlist track name horizontally for track actions, including locking and confirmed removal. Vertical dragging still groups tracks. Lock protects the track's clips and automation from Playlist edits while preserving playback.
+- Playlist options can enable or disable all tracks. Playing track cards show a stronger pulse and clip progress.
+- Playlist has Select, Clone, Undo and Redo. Tap individual clips or drag a marquee from an empty cell to select them. Clone preserves relative timing and lanes for mixed Audio and MIDI selections.

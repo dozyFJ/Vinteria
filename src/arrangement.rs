@@ -122,6 +122,8 @@ pub struct ArrTrack {
     /// folder this track belongs to (0 = none, otherwise a `TrackGroup::id`)
     #[serde(default)]
     pub group: u16,
+    #[serde(default)]
+    pub playlist_locked: bool,
 }
 
 /// A folder of tracks in the Playlist: collapsed, only its first track shows (the others are hidden but still play).
@@ -224,10 +226,10 @@ impl Arrangement {
     pub fn starter_tracks() -> Vec<ArrTrack> {
         let mut t = vec![];
         for i in 1..=3 {
-            t.push(ArrTrack { name: format!("MIDI {i}"), kind: TrackKind::Midi, mute: false, instrument: None, output: None, transpose: 0, blank: true, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, rendered_mix: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0 });
+            t.push(ArrTrack { name: format!("MIDI {i}"), kind: TrackKind::Midi, mute: false, instrument: None, output: None, transpose: 0, blank: true, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, rendered_mix: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0, playlist_locked: false });
         }
         for i in 1..=3 {
-            t.push(ArrTrack { name: format!("Audio {i}"), kind: TrackKind::Audio, mute: false, instrument: None, output: None, transpose: 0, blank: false, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, rendered_mix: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0 });
+            t.push(ArrTrack { name: format!("Audio {i}"), kind: TrackKind::Audio, mute: false, instrument: None, output: None, transpose: 0, blank: false, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, rendered_mix: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0, playlist_locked: false });
         }
         t
     }
@@ -235,10 +237,10 @@ impl Arrangement {
     pub fn default_tracks() -> Vec<ArrTrack> {
         let mut t = vec![];
         for i in 1..=4 {
-            t.push(ArrTrack { name: format!("MIDI {i}"), kind: TrackKind::Midi, mute: false, instrument: None, output: None, transpose: 0, blank: false, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, rendered_mix: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0 });
+            t.push(ArrTrack { name: format!("MIDI {i}"), kind: TrackKind::Midi, mute: false, instrument: None, output: None, transpose: 0, blank: false, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, rendered_mix: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0, playlist_locked: false });
         }
         for i in 1..=4 {
-            t.push(ArrTrack { name: format!("Audio {i}"), kind: TrackKind::Audio, mute: false, instrument: None, output: None, transpose: 0, blank: false, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, rendered_mix: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0 });
+            t.push(ArrTrack { name: format!("Audio {i}"), kind: TrackKind::Audio, mute: false, instrument: None, output: None, transpose: 0, blank: false, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, rendered_mix: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0, playlist_locked: false });
         }
         t
     }
@@ -261,7 +263,7 @@ impl Arrangement {
             TrackKind::Midi => format!("MIDI {n}"),
             TrackKind::Audio => format!("Audio {n}"),
         };
-        self.tracks.push(ArrTrack { name, kind, mute: false, instrument: None, output: None, transpose: 0, blank: kind == TrackKind::Midi, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, rendered_mix: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0 });
+        self.tracks.push(ArrTrack { name, kind, mute: false, instrument: None, output: None, transpose: 0, blank: kind == TrackKind::Midi, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, rendered_mix: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0, playlist_locked: false });
     }
 
     /// a track inside a collapsed folder that is not the folder's first track: not drawn in the Playlist

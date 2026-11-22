@@ -240,7 +240,7 @@ fn render_to_audio_in(project: &mut Project, lane: Option<usize>, dir: &Path) ->
 
 /// A fresh Beat track for a pattern: first in the list, plays whatever the pattern holds (drums and per-note instruments).
 pub fn beat_track(name: &str) -> ArrTrack {
-    ArrTrack { name: name.to_string(), kind: TrackKind::Midi, mute: false, instrument: None, output: None, transpose: 0, blank: false, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, rendered_mix: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0 }
+    ArrTrack { name: name.to_string(), kind: TrackKind::Midi, mute: false, instrument: None, output: None, transpose: 0, blank: false, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, rendered_mix: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0, playlist_locked: false }
 }
 
 #[cfg(test)]
