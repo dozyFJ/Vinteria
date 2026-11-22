@@ -1930,7 +1930,7 @@ impl VinteriaApp {
         let mut edit_length = None;
         ui.add_space(3.0);
         ui.horizontal(|ui| {
-            if p_button(ui, "+", false, vec2(44.0, 40.0)).on_hover_text("Add one bar").clicked() {
+            if p_button(ui, "+1 beat", false, vec2(72.0, 40.0)).on_hover_text("Extend the grid by one beat").clicked() {
                 edit_length = Some(false);
             }
             if p_button(ui, "Select", select_mode, vec2(68.0, 40.0)).clicked() {
@@ -2473,7 +2473,7 @@ impl VinteriaApp {
             let required = end.saturating_add(shift).saturating_sub(offset);
             if selection.is_empty() { shift.saturating_add(current).max(required) } else { current.max(required) }
         } else {
-            current.saturating_add(TICKS_PER_BAR).min(limit)
+            current.saturating_add(TICKS_PER_BAR / 4).min(limit)
         };
         if (!duplicate && next <= current) || (next > current && next > limit) {
             return Err("No room to extend here. Move the next clip or shorten this one.");

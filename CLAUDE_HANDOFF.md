@@ -399,3 +399,7 @@ Browser открывается слева рядом с Playlist в обеих �
 
 - Drag a Playlist track by its colored handle onto another track or a folder. Folder cards collapse or expand the grouped rows without altering clip indices or playback. The track dialog includes enable/disable, solo, Main and removal from a group.
 - The Mixer has compact tabs and a simpler Master layout. Render joins the scrollable controls in the portrait Studio header.
+
+### Android 1.0.67
+
+- Piano Roll labels the length button “+1 beat” and adds a quarter note of empty grid per tap, capped by the next clip or the pattern length limit.
