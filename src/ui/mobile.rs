@@ -410,6 +410,15 @@ fn grid_pinch(ui: &Ui, id: egui::Id, grid: Rect) -> (bool, Option<(usize, f32, P
     (suppress, zoom)
 }
 
+#[derive(Clone, Copy)]
+enum PlaylistRow {
+    Track(usize),
+    Group(u16),
+}
+
+#[derive(Clone, Copy)]
+struct PlaylistTrackDrag(usize);
+
 fn mobile_scroll(area: egui::ScrollArea) -> egui::ScrollArea {
     area.scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
 }
@@ -923,11 +932,12 @@ impl VinteriaApp {
                             self.m_select_studio_section(ctx, SEC_PLAYLIST);
                             ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_browser_open"), true));
                         }
-                        #[cfg(not(target_arch = "wasm32"))]
-                        self.m_render_track_button(ui, ctx, width);
-                        let controls_width = 5.0 * width + 16.0 + 4.0 * ui.spacing().item_spacing.x;
-                        let visible_width = ui.available_width().min(controls_width).max(1.0);
-                        let gap = ((ui.available_width() - controls_width - ui.spacing().item_spacing.x) * 0.5).max(0.0);
+                        let control_count = if cfg!(target_arch = "wasm32") { 5.0 } else { 6.0 };
+                        let controls_width = control_count * width + 16.0
+                            + (control_count - 1.0) * ui.spacing().item_spacing.x;
+                        let available = ui.available_width();
+                        let visible_width = available.min(controls_width).max(1.0);
+                        let gap = ((available - visible_width) * 0.5).max(0.0);
                         if gap > 0.0 {
                             ui.add_space(gap);
                         }
@@ -937,7 +947,11 @@ impl VinteriaApp {
                             |ui| {
                                 mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_studio_header_scroll")
                                     .max_width(visible_width).auto_shrink([false, true]).show(ui, |ui| {
-                                        ui.horizontal(|ui| self.m_studio_quick_controls(ui, ctx, width));
+                                        ui.horizontal(|ui| {
+                                            self.m_studio_quick_controls(ui, ctx, width);
+                                            #[cfg(not(target_arch = "wasm32"))]
+                                            self.m_render_track_button(ui, ctx, width);
+                                        });
                                     });
                             },
                         );
@@ -3519,7 +3533,30 @@ impl VinteriaApp {
         }
         let lane_h = if automation { height.max(84.0) } else { height };
         let previous_lane_h = if automation { previous_height.max(84.0) } else { previous_height };
-        let full_h = (tracks + usize::from(add_lane)) as f32 * lane_h + extra_h;
+        let arrangement = &self.project.arrangement;
+        let mut rows = Vec::new();
+        let mut track_rows = vec![None; tracks];
+        for (lane, track) in arrangement.tracks.iter().enumerate() {
+            if let Some(group) = arrangement.groups.iter().find(|group| group.id != 0 && group.id == track.group) {
+                if arrangement.tracks.iter().position(|track| track.group == group.id) != Some(lane) {
+                    continue;
+                }
+                rows.push(PlaylistRow::Group(group.id));
+                if !group.collapsed {
+                    for (member, track) in arrangement.tracks.iter().enumerate().skip(lane) {
+                        if track.group == group.id {
+                            track_rows[member] = Some(rows.len());
+                            rows.push(PlaylistRow::Track(member));
+                        }
+                    }
+                }
+            } else {
+                track_rows[lane] = Some(rows.len());
+                rows.push(PlaylistRow::Track(lane));
+            }
+        }
+        let row_count = rows.len();
+        let full_h = (row_count + usize::from(add_lane)) as f32 * lane_h + extra_h;
         let mut grid_ui = ui.new_child(egui::UiBuilder::new().max_rect(grid));
         grid_ui.set_clip_rect(grid.intersect(ui.clip_rect()));
         let mut selection = None;
@@ -3530,8 +3567,8 @@ impl VinteriaApp {
         let mut dropped_effect = None;
         let scroll = mobile_scroll(egui::ScrollArea::both()).id_salt("m_playlist")
             .drag_to_scroll(!pinching).max_height(grid.height()).auto_shrink([false, false]);
-        let scroll = if let Some(lane) = reveal_lane.filter(|&lane| lane < tracks) {
-            scroll.vertical_scroll_offset((lane as f32 * lane_h - grid.height() * 0.35).max(0.0))
+        let scroll = if let Some(row) = reveal_lane.and_then(|lane| track_rows.get(lane).copied().flatten()) {
+            scroll.vertical_scroll_offset((row as f32 * lane_h - grid.height() * 0.35).max(0.0))
         } else {
             scroll
         };
@@ -3587,9 +3624,15 @@ impl VinteriaApp {
             let gx = rect.left();
             let gy = rect.top();
             p.rect_filled(rect, 0.0, pick(0xFF1B202A, 0xFFB3BFC8));
-            for (lane, track) in self.project.arrangement.tracks.iter().enumerate() {
-                let y = gy + lane as f32 * lane_h;
+            for (index, item) in rows.iter().enumerate() {
+                let y = gy + index as f32 * lane_h;
                 let r = Rect::from_min_size(pos2(rect.left(), y), vec2(rect.width(), lane_h));
+                let PlaylistRow::Track(lane) = *item else {
+                    p.rect_filled(r, 0.0, card_fill());
+                    p.line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(1.0, outline()));
+                    continue;
+                };
+                let track = &self.project.arrangement.tracks[lane];
                 let audio = track.kind == crate::arrangement::TrackKind::Audio;
                 let row_fill = if lane == self.arr.sel_lane {
                     pick(0xFF35415A, 0xFFAABBD0)
@@ -3605,7 +3648,7 @@ impl VinteriaApp {
                 p.line_segment([r.left_top(), r.right_top()], Stroke::new(0.6, grid_line()));
             }
             if add_lane {
-                let y = gy + tracks as f32 * lane_h;
+                let y = gy + row_count as f32 * lane_h;
                 p.line_segment([pos2(rect.left(), y), pos2(rect.right(), y)], Stroke::new(0.6, grid_line()));
                 p.text(pos2(rect.left() + 10.0, y + lane_h * 0.5), Align2::LEFT_CENTER,
                     "+ New track", FontId::proportional(12.0), muted());
@@ -3627,9 +3670,10 @@ impl VinteriaApp {
                     Stroke::new(if strong { 1.0 } else { 0.45 }, if strong { outline() } else { grid_line() }));
             }
             for (i, c) in self.project.arrangement.clips.iter().enumerate() {
+                let Some(row) = track_rows.get(c.lane).copied().flatten() else { continue; };
                 let x0 = gx + c.start as f32 / TICKS_PER_BAR as f32 * bar_w;
                 let w = (c.len as f32 / TICKS_PER_BAR as f32 * bar_w).max(6.0);
-                let hit = Rect::from_min_size(pos2(x0, gy + c.lane as f32 * lane_h), vec2(w, lane_h));
+                let hit = Rect::from_min_size(pos2(x0, gy + row as f32 * lane_h), vec2(w, lane_h));
                 let r = hit.shrink2(vec2(1.5, 5.0));
                 // the right edge is a handle of its own: drag it to make the clip longer or shorter
                 let edge_w = (w * 0.36).clamp(5.0, 18.0).min(w * 0.6);
@@ -3688,7 +3732,7 @@ impl VinteriaApp {
                         let candidate = crate::arrangement::Clip { len, ..*c };
                         let valid = !self.project.arrangement.clips.iter().enumerate()
                             .any(|(j, other)| i != j && candidate.overlaps(other));
-                        let preview = Rect::from_min_size(pos2(x0, gy + c.lane as f32 * lane_h),
+                        let preview = Rect::from_min_size(pos2(x0, gy + row as f32 * lane_h),
                             vec2(len as f32 / TICKS_PER_BAR as f32 * bar_w, lane_h)).shrink2(vec2(1.5, 5.0));
                         p.rect_stroke(preview, 4.0, Stroke::new(2.0, if valid { p_accent() } else { RED }));
                         if valid && clip.drag_stopped() {
@@ -3744,7 +3788,13 @@ impl VinteriaApp {
                     let grab = ui.data(|d| d.get_temp::<f32>(grab_id));
                     let point = clip.interact_pointer_pos().filter(|pt| grid.contains(*pt) && pt.y >= gy);
                     if let (Some(grab), Some(point)) = (grab, point) {
-                        let lane = ((point.y - gy) / lane_h) as usize;
+                        let target_row = ((point.y - gy) / lane_h) as usize;
+                        let Some(PlaylistRow::Track(lane)) = rows.get(target_row).copied() else {
+                            if clip.drag_stopped() {
+                                ui.data_mut(|d| d.remove::<f32>(grab_id));
+                            }
+                            continue;
+                        };
                         let snap = self.arr.snap.max(1);
                         let tick = (point.x - gx - grab).max(0.0) / bar_w * TICKS_PER_BAR as f32;
                         let start = (tick / snap as f32).round() as u32 * snap;
@@ -3754,7 +3804,7 @@ impl VinteriaApp {
                             && !self.project.arrangement.clips.iter().enumerate()
                                 .any(|(j, other)| i != j && candidate.overlaps(other));
                         let preview = Rect::from_min_size(
-                            pos2(gx + start as f32 / TICKS_PER_BAR as f32 * bar_w, gy + lane as f32 * lane_h),
+                            pos2(gx + start as f32 / TICKS_PER_BAR as f32 * bar_w, gy + target_row as f32 * lane_h),
                             vec2(w, lane_h)).shrink2(vec2(1.5, 5.0));
                         p.rect_stroke(preview, 4.0, Stroke::new(2.0, if valid { p_accent() } else { RED }));
                         if valid && clip.drag_stopped() {
@@ -3767,37 +3817,44 @@ impl VinteriaApp {
                 }
 
             }
-            if automation {
-                let area = Rect::from_min_size(pos2(gx, gy + self.arr.sel_lane as f32 * lane_h), vec2(rect.width(), lane_h));
+            if let Some(row) = track_rows[self.arr.sel_lane].filter(|_| automation) {
+                let area = Rect::from_min_size(pos2(gx, gy + row as f32 * lane_h), vec2(rect.width(), lane_h));
                 self.m_playlist_automation(ui, area, bar_w, bars, pinching);
             }
             if playing || pos != 0 {
                 let x = gx + pos as f32 / TICKS_PER_BAR as f32 * bar_w;
                 p.line_segment([pos2(x, gy), pos2(x, gy + full_h)], Stroke::new(2.0, p_accent()));
             }
-            if let Some(point) = ui.input(|input| input.pointer.interact_pos()).filter(|p| rect.contains(*p) && p.y >= gy && p.y < gy + (tracks + usize::from(add_lane)) as f32 * lane_h) {
-                let lane = (((point.y - gy) / lane_h) as usize).min(tracks);
-                let tick = ((point.x - gx).max(0.0) / bar_w * TICKS_PER_BAR as f32) as u32;
-                let snap = self.arr.snap.max(1);
-                let sample = egui::DragAndDrop::payload::<browser::DragItem>(ui.ctx());
-                let effect = (lane < tracks).then(|| egui::DragAndDrop::payload::<crate::fx::FxKind>(ui.ctx())).flatten();
-                if ui.rect_contains_pointer(rect) && (sample.is_some() || effect.is_some()) {
-                    let row = Rect::from_min_size(pos2(rect.left(), gy + lane as f32 * lane_h), vec2(rect.width(), lane_h));
-                    p.rect_stroke(row.shrink(1.0), 6.0, Stroke::new(1.5, p_accent()));
-                    if ui.input(|input| input.pointer.primary_released()) {
-                        if sample.is_some() {
-                            dropped_item = egui::DragAndDrop::take_payload::<browser::DragItem>(ui.ctx())
-                                .map(|item| (item, lane, tick / snap * snap));
-                        } else if effect.is_some() {
-                            dropped_effect = egui::DragAndDrop::take_payload::<crate::fx::FxKind>(ui.ctx()).map(|kind| (*kind, lane));
+            if let Some(point) = ui.input(|input| input.pointer.interact_pos()).filter(|p| rect.contains(*p) && p.y >= gy && p.y < gy + (row_count + usize::from(add_lane)) as f32 * lane_h) {
+                let index = ((point.y - gy) / lane_h) as usize;
+                let lane = match rows.get(index) {
+                    Some(PlaylistRow::Track(lane)) => Some(*lane),
+                    None if add_lane && index == row_count => Some(tracks),
+                    _ => None,
+                };
+                if let Some(lane) = lane {
+                    let tick = ((point.x - gx).max(0.0) / bar_w * TICKS_PER_BAR as f32) as u32;
+                    let snap = self.arr.snap.max(1);
+                    let sample = egui::DragAndDrop::payload::<browser::DragItem>(ui.ctx());
+                    let effect = (lane < tracks).then(|| egui::DragAndDrop::payload::<crate::fx::FxKind>(ui.ctx())).flatten();
+                    if ui.rect_contains_pointer(rect) && (sample.is_some() || effect.is_some()) {
+                        let row = Rect::from_min_size(pos2(rect.left(), gy + index as f32 * lane_h), vec2(rect.width(), lane_h));
+                        p.rect_stroke(row.shrink(1.0), 6.0, Stroke::new(1.5, p_accent()));
+                        if ui.input(|input| input.pointer.primary_released()) {
+                            if sample.is_some() {
+                                dropped_item = egui::DragAndDrop::take_payload::<browser::DragItem>(ui.ctx())
+                                    .map(|item| (item, lane, tick / snap * snap));
+                            } else if effect.is_some() {
+                                dropped_effect = egui::DragAndDrop::take_payload::<crate::fx::FxKind>(ui.ctx()).map(|kind| (*kind, lane));
+                            }
                         }
                     }
                 }
             }
             if !pinching && !automation && resp.clicked() {
                 if let Some(pt) = resp.interact_pointer_pos().filter(|pt| pt.y >= gy) {
-                    let lane = ((pt.y - gy) / lane_h) as usize;
-                    if lane < tracks {
+                    let row = ((pt.y - gy) / lane_h) as usize;
+                    if let Some(PlaylistRow::Track(lane)) = rows.get(row).copied() {
                         let tick = ((pt.x - gx).max(0.0) / bar_w * TICKS_PER_BAR as f32) as u32;
                         selection = Some((lane, None, Some(tick), false));
                     }
@@ -3853,8 +3910,9 @@ impl VinteriaApp {
         let painter = ui.painter_at(panel);
         painter.rect_filled(panel, 0.0, pick(0xFF2B3241, 0xFFBECAD4));
         let names = Rect::from_min_max(pos2(panel.left(), grid.top()), panel.max);
-        let mut mute_change = None;
-        let mut solo_change = None;
+        let options_id = panel_id.with("track_modal");
+        let mut group_drop = None;
+        let mut group_toggle = None;
         let mut name_pick: Option<(usize, bool)> = None;
         if portrait {
             let swipe = ui.interact(names.intersect(ui.clip_rect()), egui::Id::new("m_playlist_names_swipe"), Sense::drag());
@@ -3866,16 +3924,38 @@ impl VinteriaApp {
         }
         if portrait || panel_open {
             let labels = painter.with_clip_rect(names.intersect(ui.clip_rect()));
-            let mut counts = [0, 0];
-            for (lane, track) in self.project.arrangement.tracks.iter().enumerate() {
-                let audio = track.kind == crate::arrangement::TrackKind::Audio;
-                let kind = usize::from(audio);
-                counts[kind] += 1;
-                let top = scroll.inner.y + lane as f32 * lane_h;
+            for (index, item) in rows.iter().copied().enumerate() {
+                let top = scroll.inner.y + index as f32 * lane_h;
                 let row = Rect::from_min_size(pos2(panel.left(), top), vec2(panel.width(), lane_h));
-                if !row.intersects(names) {
+                let visible = row.intersect(names).intersect(ui.clip_rect());
+                if !visible.is_positive() {
                     continue;
                 }
+                let lane = match item {
+                    PlaylistRow::Track(lane) => lane,
+                    PlaylistRow::Group(id) => {
+                        let group = self.project.arrangement.groups.iter().find(|group| group.id == id).unwrap();
+                        let card = ui.interact(visible, panel_id.with(("folder", id)), Sense::click());
+                        labels.rect_filled(row.shrink(2.0), 8.0, selected_fill());
+                        labels.text(row.left_top() + vec2(8.0, lane_h * 0.33), Align2::LEFT_CENTER,
+                            format!("{} {}", if group.collapsed { "›" } else { "⌄" }, group.name),
+                            FontId::proportional(12.0), ink());
+                        labels.text(row.left_top() + vec2(17.0, lane_h * 0.70), Align2::LEFT_CENTER,
+                            format!("{} tracks", self.project.arrangement.group_size(id)),
+                            FontId::proportional(10.0), muted());
+                        if card.clicked() {
+                            group_toggle = Some(id);
+                        }
+                        if card.dnd_hover_payload::<PlaylistTrackDrag>().is_some() {
+                            labels.rect_stroke(row.shrink(2.0), 8.0, Stroke::new(2.0, p_accent()));
+                        }
+                        if let Some(source) = card.dnd_release_payload::<PlaylistTrackDrag>() {
+                            group_drop = Some((source.0, item));
+                        }
+                        continue;
+                    }
+                };
+                let track = &self.project.arrangement.tracks[lane];
                 if lane == self.arr.sel_lane {
                     labels.rect_filled(row, 0.0, pick(0xFF35415A, 0xFFAABBD0));
                 }
@@ -3889,41 +3969,39 @@ impl VinteriaApp {
                 } else {
                     labels.circle_filled(row.left_center() + vec2(12.0, 0.0), 3.0, lane_col(lane));
                 }
-                let _ = counts;
-                let visible = row.intersect(names).intersect(ui.clip_rect());
                 let mut label_rect = visible;
+                label_rect.min.x = label_rect.min.x.max(row.left() + 19.0);
+                let grip = Rect::from_min_max(visible.min, pos2(label_rect.left(), visible.bottom()));
+                ui.interact(grip, panel_id.with(("grip", lane)), Sense::drag())
+                    .on_hover_text("Drag onto a track or folder")
+                    .dnd_set_drag_payload(PlaylistTrackDrag(lane));
                 if panel.width() >= 84.0 {
-                    label_rect.max.x -= 30.0;
+                    label_rect.max.x -= 29.0;
                     let button_rect = Rect::from_min_max(pos2(label_rect.right(), visible.top()), visible.max);
-                    let mut trigger = ui.new_child(egui::UiBuilder::new().id_salt(("track_options", lane)).max_rect(button_rect));
-                    trigger.set_clip_rect(button_rect);
-                    let button = egui::Button::new("").frame(false).min_size(button_rect.size());
-                    let menu = egui::menu::menu_custom_button(&mut trigger, button, |ui| {
-                        ui.label(RichText::new(&track.name).strong());
-                        if ui.add_sized([136.0, 38.0], egui::Button::new("Main")).clicked() {
-                            name_pick = Some((lane, true));
-                            ui.data_mut(|d| d.insert_temp(egui::Id::new(("m_track_settings_page", lane)), 1_usize));
-                            ui.close_menu();
-                        }
-                        if ui.add_sized([136.0, 38.0], egui::Button::new("Mute").selected(track.mute)).clicked() {
-                            mute_change = Some((lane, !track.mute));
-                            ui.close_menu();
-                        }
-                        if ui.add_sized([136.0, 38.0], egui::Button::new("Solo").selected(track.solo)).clicked() {
-                            solo_change = Some((lane, !track.solo));
-                            ui.close_menu();
-                        }
-                    });
-                    menu.response.on_hover_text("Track options");
+                    let button = ui.interact(button_rect, panel_id.with(("options", lane)), Sense::click())
+                        .on_hover_text("Track options");
+                    if button.clicked() {
+                        ui.data_mut(|d| d.insert_temp(options_id, lane));
+                    }
                     let dot_color = if track.solo { super::theme::TEAL() } else { muted() };
                     for offset in [-5.0, 0.0, 5.0] {
                         labels.circle_filled(button_rect.center() + vec2(offset, 0.0), 1.4, dot_color);
                     }
                 }
                 labels.with_clip_rect(label_rect).text(
-                    row.left_center() + vec2(if portrait { 11.0 } else { 23.0 }, 0.0), Align2::LEFT_CENTER, &track.name,
-                    FontId::proportional(if portrait { 12.0 } else { 13.0 }), if track.mute { muted() } else { ink() });
+                    pos2(label_rect.left() + 1.0, row.center().y), Align2::LEFT_CENTER, &track.name,
+                    FontId::proportional(11.0), if track.mute { muted() } else { ink() });
                 let hit = ui.interact(label_rect, panel_id.with(lane), Sense::click()).on_hover_text(&track.name);
+                if ui.rect_contains_pointer(visible)
+                    && egui::DragAndDrop::payload::<PlaylistTrackDrag>(ui.ctx()).is_some_and(|source| source.0 != lane)
+                {
+                    labels.rect_stroke(row.shrink(2.0), 7.0, Stroke::new(2.0, p_accent()));
+                    if ui.input(|input| input.pointer.primary_released()) {
+                        if let Some(source) = egui::DragAndDrop::take_payload::<PlaylistTrackDrag>(ui.ctx()) {
+                            group_drop = Some((source.0, item));
+                        }
+                    }
+                }
                 if hit.clicked() || hit.secondary_clicked() {
                     name_pick = Some((lane, lane == self.arr.sel_lane || hit.secondary_clicked()));
                 }
@@ -3932,7 +4010,7 @@ impl VinteriaApp {
         if portrait && !add_lane {
             // under the track names: add a MIDI / audio track, then the Master channel (like Ableton's master track)
             let clip = names.intersect(ui.clip_rect());
-            let mut y = scroll.inner.y + tracks as f32 * lane_h + 6.0;
+            let mut y = scroll.inner.y + row_count as f32 * lane_h + 6.0;
             let mut add = None;
             for (kind, label) in [(crate::arrangement::TrackKind::Midi, "+ MIDI"), (crate::arrangement::TrackKind::Audio, "+ Audio")] {
                 let r = Rect::from_min_size(pos2(panel.left() + 4.0, y), vec2(panel.width() - 8.0, 34.0));
@@ -3986,13 +4064,26 @@ impl VinteriaApp {
             let options = Rect::from_min_size(pos2(x - TOUCH, viewport.top()), vec2(TOUCH, ruler));
             self.m_playlist_options(ui, options);
         }
-        if let Some((lane, mute)) = mute_change {
+        if let Some(id) = group_toggle {
             self.m_playlist_undo_step();
-            self.project.arrangement.tracks[lane].mute = mute;
+            if let Some(group) = self.project.arrangement.groups.iter_mut().find(|group| group.id == id) {
+                group.collapsed = !group.collapsed;
+            }
+            ui.ctx().request_repaint();
         }
-        if let Some((lane, solo)) = solo_change {
+        if let Some((source, target)) = group_drop {
+            let (track, folder) = match target {
+                PlaylistRow::Track(target) => (Some(target), None),
+                PlaylistRow::Group(id) => (None, Some(id)),
+            };
             self.m_playlist_undo_step();
-            self.project.arrangement.tracks[lane].solo = solo;
+            self.project.arrangement.group_playlist_track(source, track, folder);
+            ui.ctx().request_repaint();
+        }
+        if let Some(lane) = ui.data(|d| d.get_temp::<usize>(options_id)).filter(|&lane| lane < tracks) {
+            if self.m_playlist_track_modal(ui.ctx(), lane, options_id) {
+                name_pick = Some((lane, true));
+            }
         }
         if let Some((lane, open_settings)) = name_pick {
             self.arr.sel_lane = lane;
@@ -4109,6 +4200,61 @@ impl VinteriaApp {
                 }
             }
         }
+    }
+
+    fn m_playlist_track_modal(&mut self, ctx: &egui::Context, lane: usize, id: egui::Id) -> bool {
+        let track = &self.project.arrangement.tracks[lane];
+        let title = track.name.clone();
+        let (muted_track, solo, grouped) = (track.mute, track.solo, track.group != 0);
+        let screen = ctx.screen_rect();
+        let width = (screen.width() - 48.0).clamp(1.0, 320.0);
+        let mut close = ctx.input(|input| input.key_pressed(egui::Key::Escape));
+        egui::Area::new(id.with("scrim")).order(egui::Order::Middle).fixed_pos(screen.min).movable(false)
+            .show(ctx, |ui| {
+                let (rect, hit) = ui.allocate_exact_size(screen.size(), Sense::click());
+                ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha(145));
+                close |= hit.clicked();
+            });
+        let mut main = false;
+        let mut toggle_mute = false;
+        let mut toggle_solo = false;
+        let mut ungroup = false;
+        egui::Area::new(id.with("dialog")).order(egui::Order::Foreground)
+            .anchor(Align2::CENTER_CENTER, [0.0, 0.0]).movable(false)
+            .show(ctx, |ui| {
+                Frame::none().fill(p_bg()).stroke(Stroke::new(1.0, outline())).rounding(16.0)
+                    .inner_margin(12.0).show(ui, |ui| {
+                        mobile_visuals(ui);
+                        ui.set_width(width);
+                        ui.horizontal(|ui| {
+                            ui.add_sized([(width - 52.0).max(1.0), 44.0], egui::Label::new(RichText::new(title).size(17.0).strong()).truncate());
+                            close |= p_button(ui, "×", false, vec2(44.0, 44.0)).clicked();
+                        });
+                        let size = vec2(width, TOUCH);
+                        main = p_button(ui, "Main", false, size).clicked();
+                        toggle_mute = p_button(ui, if muted_track { "Enable track" } else { "Disable track" }, muted_track, size).clicked();
+                        toggle_solo = p_button(ui, if solo { "Turn solo off" } else { "Solo" }, solo, size).clicked();
+                        if grouped {
+                            ungroup = p_button(ui, "Remove from group", false, size).clicked();
+                        }
+                    });
+            });
+        if toggle_mute || toggle_solo || ungroup {
+            self.m_playlist_undo_step();
+            self.project.arrangement.tracks[lane].mute ^= toggle_mute;
+            self.project.arrangement.tracks[lane].solo ^= toggle_solo;
+            if ungroup {
+                self.project.arrangement.ungroup_playlist_track(lane);
+            }
+            ctx.request_repaint();
+        }
+        if close || main || ungroup {
+            ctx.data_mut(|d| d.remove::<usize>(id));
+        }
+        if main {
+            ctx.data_mut(|d| d.insert_temp(egui::Id::new(("m_track_settings_page", lane)), 1_usize));
+        }
+        main
     }
 
     fn m_playlist_automation(&mut self, ui: &mut Ui, area: Rect, bar_width: f32, bars: u32, pinching: bool) {
@@ -4271,12 +4417,15 @@ impl VinteriaApp {
             let gap = 4.0;
             ui.spacing_mut().item_spacing.x = gap;
             let slot = (ui.available_width() - gap * 2.0).max(3.0);
-            for (tab, label, fraction) in [
-                (MobileMixerPage::Channels, "Channels", 0.30),
-                (MobileMixerPage::Effects, "Effects Chain", 0.43),
-                (MobileMixerPage::Master, "Master", 0.27),
+            for (tab, label) in [
+                (MobileMixerPage::Channels, "Channels"),
+                (MobileMixerPage::Effects, "FX"),
+                (MobileMixerPage::Master, "Master"),
             ] {
-                if ui.add_sized([slot * fraction, TOUCH], egui::Button::new(label).selected(page == tab).truncate()).clicked() {
+                if p_button(ui, label, page == tab, vec2(slot / 3.0, TOUCH)).clicked() {
+                    if page == MobileMixerPage::Master && tab == MobileMixerPage::Effects {
+                        channel = MobileMixerChannel::Master;
+                    }
                     page = tab;
                 }
             }
@@ -4287,13 +4436,7 @@ impl VinteriaApp {
                 match page {
                     MobileMixerPage::Channels => self.m_mixer_channels(ui, &mut channel, &mut page),
                     MobileMixerPage::Effects => self.m_mixer_effects(ui, channel),
-                    MobileMixerPage::Master => {
-                        self.m_mixer_master(ui);
-                        if p_button(ui, "Master Effects Chain", false, vec2(ui.available_width(), TOUCH)).clicked() {
-                            channel = MobileMixerChannel::Master;
-                            page = MobileMixerPage::Effects;
-                        }
-                    }
+                    MobileMixerPage::Master => self.m_mixer_master(ui),
                 }
             });
         ui.data_mut(|d| {
@@ -4451,17 +4594,33 @@ impl VinteriaApp {
     }
 
     fn m_mixer_master(&mut self, ui: &mut Ui) {
-        ui.label(RichText::new("Master output").strong());
-        widgets::meter(ui, vec2(32.0, 80.0), self.shared.peak(crate::mixer::NUM_STRIPS));
-        ui.add(egui::Slider::new(&mut self.project.master_volume, 0.0..=1.2).text("Volume"));
+        Frame::none().fill(card_fill()).rounding(12.0).inner_margin(10.0).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                widgets::meter(ui, vec2(24.0, 54.0), self.shared.peak(crate::mixer::NUM_STRIPS));
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("Output level").strong());
+                    ui.label(RichText::new(format!("{:+.1} dB", widgets::db(self.project.master_volume))).color(muted()));
+                });
+            });
+        });
+        let volume = &mut self.project.master_volume;
         let fx = &mut self.project.master_fx;
-        ui.add(egui::Slider::new(&mut fx.low_db, -18.0..=18.0).text("Low EQ").suffix(" dB"));
-        ui.add(egui::Slider::new(&mut fx.high_db, -18.0..=18.0).text("High EQ").suffix(" dB"));
-        ui.checkbox(&mut fx.comp_on, "Compressor");
+        let slider = |ui: &mut Ui, label, value: &mut f32, range, suffix| {
+            ui.label(label);
+            let width = ui.available_width();
+            ui.add_sized([width, 30.0], egui::Slider::new(value, range).suffix(suffix));
+        };
+        slider(ui, "Volume", volume, 0.0..=1.2, "");
+        slider(ui, "Low EQ", &mut fx.low_db, -18.0..=18.0, " dB");
+        slider(ui, "High EQ", &mut fx.high_db, -18.0..=18.0, " dB");
+        if p_button(ui, "Compressor", fx.comp_on, vec2(ui.available_width(), TOUCH)).clicked() {
+            fx.comp_on = !fx.comp_on;
+        }
         if fx.comp_on {
-            ui.add(egui::Slider::new(&mut fx.threshold_db, -48.0..=0.0).text("Threshold").suffix(" dB"));
-            ui.add(egui::Slider::new(&mut fx.ratio, 1.0..=20.0).text("Ratio"));
-            ui.add(egui::Slider::new(&mut fx.makeup_db, 0.0..=24.0).text("Makeup").suffix(" dB"));
+            slider(ui, "Threshold", &mut fx.threshold_db, -48.0..=0.0, " dB");
+            slider(ui, "Ratio", &mut fx.ratio, 1.0..=20.0, "");
+            slider(ui, "Makeup", &mut fx.makeup_db, 0.0..=24.0, " dB");
         }
     }
 

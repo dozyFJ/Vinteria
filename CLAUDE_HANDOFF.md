@@ -394,3 +394,8 @@ Browser открывается слева рядом с Playlist в обеих �
 
 - Playlist and Piano Roll choose one zoom axis from the initial change in finger spacing and keep that axis for the gesture. Horizontal pinches scale time and vertical pinches scale row height.
 - Pinching the Piano Roll suppresses note edits and marquee selection until release. Check diagonal gestures and transitions from one finger to two on Android.
+
+### Android 1.0.66
+
+- Drag a Playlist track by its colored handle onto another track or a folder. Folder cards collapse or expand the grouped rows without altering clip indices or playback. The track dialog includes enable/disable, solo, Main and removal from a group.
+- The Mixer has compact tabs and a simpler Master layout. Render joins the scrollable controls in the portrait Studio header.

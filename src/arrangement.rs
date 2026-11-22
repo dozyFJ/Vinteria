@@ -275,13 +275,46 @@ impl Arrangement {
         self.tracks.iter().filter(|t| t.group == g).count()
     }
 
+    pub fn group_playlist_track(&mut self, source: usize, target: Option<usize>, folder: Option<u16>) {
+        if source >= self.tracks.len() || target == Some(source) {
+            return;
+        }
+        let id = if let Some(target) = target.filter(|&lane| lane < self.tracks.len()) {
+            let existing = self.tracks[target].group;
+            if existing != 0 && self.groups.iter().any(|group| group.id == existing) {
+                existing
+            } else {
+                let Some(id) = (1..=u16::MAX).find(|id| !self.groups.iter().any(|group| group.id == *id)) else { return; };
+                self.groups.push(TrackGroup { id, name: format!("Group {id}"), collapsed: false });
+                self.tracks[target].group = id;
+                id
+            }
+        } else if let Some(id) = folder.filter(|id| *id != 0 && self.groups.iter().any(|group| group.id == *id)) {
+            id
+        } else {
+            return;
+        };
+        self.tracks[source].group = id;
+        self.prune_empty_groups();
+    }
+
+    pub fn ungroup_playlist_track(&mut self, lane: usize) {
+        if let Some(track) = self.tracks.get_mut(lane) {
+            track.group = 0;
+        }
+        self.prune_empty_groups();
+    }
+
+    fn prune_empty_groups(&mut self) {
+        self.groups.retain(|group| self.tracks.iter().any(|track| track.group == group.id));
+    }
+
     pub fn remove_track(&mut self, lane: usize) {
         if lane >= self.tracks.len() || self.tracks.len() <= 1 {
             return;
         }
         self.tracks.remove(lane);
-        let live: Vec<u16> = self.tracks.iter().map(|t| t.group).collect();
-        self.groups.retain(|g| live.contains(&g.id));
+        self.prune_empty_groups();
         self.clips.retain(|c| c.lane != lane);
         for c in self.clips.iter_mut() {
             if c.lane > lane {
