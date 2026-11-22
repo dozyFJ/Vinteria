@@ -412,3 +412,7 @@ Browser открывается слева рядом с Playlist в обеих �
 - Tap or drag the Piano Roll ruler to select notes by beat. Clone shifts the notes by the selected beat range. Tools → Slide marks new notes or toggles glide on an existing note.
 - Audio clip settings use touch-sized controls and omit desktop shortcut hints in the mobile sheet. The Piano Roll keyboard and grid use softer theme colors.
 - Clone replaces the two main selection and duplication buttons. Select notes remains in Tools. Undo and Redo are in Piano Roll, and individual note and velocity edits register undo steps.
+
+### Android 1.0.69
+
+- Playlist rewinds its viewport on Stop, Return to start and natural song completion. Fresh Play reveals its start point, Pause keeps the viewport, and follow-playhead can track a loop jumping left.
