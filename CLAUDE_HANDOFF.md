@@ -307,3 +307,12 @@ Browser открывается слева рядом с Playlist в обеих �
 - The bottom transport adds bar navigation and a scrubber, with Settings and Playlist shortcuts.
 - Playlist swipes, sample placement and double-tap clip editing share the original native arrangement. Track Settings groups controls under Main and stacks effects in a separate view.
 - The Mic action requests Android microphone permission and records through the native engine. Hardware microphone and touch behavior still need an on-device check.
+
+### Android 1.0.51
+
+- Portrait Studio keeps Menu, Winteria and Browser in the header. BPM, metronome, microphone and MIDI sit in a centered floating panel above the transport dock.
+- Browser is accessible from other Studio views through the Playlist. Phone testing is pending.
+
+### Android 1.0.52
+
+- Portrait Studio follows the 1.0.51 layout with the brand label removed from the header.

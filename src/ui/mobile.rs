@@ -574,6 +574,7 @@ impl VinteriaApp {
             } else if portrait {
                 self.m_studio_portrait_header(ctx);
                 self.m_studio_transport_dock(ctx);
+                self.m_studio_quick_controls(ctx);
                 self.m_mixer_sheet(ctx);
                 self.m_nav_drawer(ctx);
             } else {
@@ -762,60 +763,73 @@ impl VinteriaApp {
         }
     }
 
-    /// portrait header like Reddit's: menu button, the "Winteria" wordmark, then undo/redo and the transport
     fn m_studio_portrait_header(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("m_studio_portrait_header").show_separator_line(false)
-            .frame(Frame::none().fill(bar_fill()).inner_margin(Margin::symmetric(4.0, 4.0)))
+            .frame(Frame::none().fill(bar_fill()).inner_margin(Margin::symmetric(6.0, 4.0)))
             .show(ctx, |ui| {
                 mobile_visuals(ui);
-                let narrow = ui.available_width() < 352.0;
-                if narrow {
-                    ui.label(RichText::new("Winteria").size(18.0).strong().color(ink()))
-                        .on_hover_text(&self.project.name);
-                }
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
-                    if studio_icon(ui, 40.0, Icon::Menu, false, "Menu").clicked() {
+                    if studio_icon(ui, 44.0, Icon::Menu, false, "Menu").clicked() {
                         ctx.data_mut(|d| d.insert_temp(egui::Id::new(DRAWER_OPEN), true));
                     }
-                    if !narrow {
-                        ui.add_space(2.0);
-                        ui.label(RichText::new("Winteria").size(18.0).strong().color(ink()))
-                            .on_hover_text(&self.project.name);
-                        ui.add_space(2.0);
-                    }
-                    self.m_studio_tempo(ui, 58.0, true);
-                    if studio_icon(ui, 44.0, Icon::Clock, self.project.metronome, "Metronome").clicked() {
-                        self.project.metronome = !self.project.metronome;
-                    }
-                    if p_button(ui, "Mic", self.rec_mode == 1 && self.record, vec2(44.0, 44.0))
-                        .on_hover_text("Record microphone to audio track").clicked()
-                    {
-                        self.m_voice_record();
-                    }
-                    if p_button(ui, "MIDI", self.rec_mode == 0 && self.record, vec2(46.0, 44.0))
-                        .on_hover_text("Record notes in Piano Roll").clicked()
-                    {
-                        if self.record && self.rec_mode == 1 {
-                            self.m_voice_record();
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if self.m_sec == SEC_PLAYLIST {
+                            self.m_studio_browser_button(ui, ctx, 44.0);
+                        } else if studio_icon(ui, 44.0, Icon::Folder, false, "Open Browser").clicked() {
+                            self.m_select_studio_section(ctx, SEC_PLAYLIST);
+                            ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_browser_open"), true));
                         }
-                        self.rec_mode = 0;
-                        self.record = !self.record;
-                        if self.record {
-                            self.m_select_studio_section(ctx, SEC_PIANO);
-                            ctx.data_mut(|d| d.insert_temp(egui::Id::new(("m_piano_record", self.project.current_pattern)), 0_usize));
-                        } else {
-                            ctx.data_mut(|d| d.remove::<usize>(egui::Id::new(("m_piano_record", self.project.current_pattern))));
-                        }
-                    }
-                    if self.m_sec == SEC_PLAYLIST {
-                        self.m_studio_browser_button(ui, ctx, 44.0);
-                    }
+                    });
                 });
             });
     }
 
-    /// bottom bar of the portrait studio: undo/redo, the project name in the middle, then play/stop and the tempo
+    fn m_studio_quick_controls(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::bottom("m_studio_quick_controls").show_separator_line(false)
+            .frame(Frame::none().inner_margin(Margin::symmetric(8.0, 6.0)))
+            .show(ctx, |ui| {
+                mobile_visuals(ui);
+                ui.horizontal(|ui| {
+                    const PANEL_WIDTH: f32 = 232.0;
+                    ui.add_space(((ui.available_width() - PANEL_WIDTH) * 0.5).max(0.0));
+                    Frame::none()
+                        .fill(card_fill())
+                        .stroke(Stroke::new(1.0, outline()))
+                        .rounding(18.0)
+                        .inner_margin(Margin::symmetric(10.0, 4.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                self.m_studio_tempo(ui, 58.0, true);
+                                if studio_icon(ui, 44.0, Icon::Clock, self.project.metronome, "Metronome").clicked() {
+                                    self.project.metronome = !self.project.metronome;
+                                }
+                                if p_button(ui, "Mic", self.rec_mode == 1 && self.record, vec2(44.0, 44.0))
+                                    .on_hover_text("Record microphone to audio track").clicked()
+                                {
+                                    self.m_voice_record();
+                                }
+                                if p_button(ui, "MIDI", self.rec_mode == 0 && self.record, vec2(46.0, 44.0))
+                                    .on_hover_text("Record notes in Piano Roll").clicked()
+                                {
+                                    if self.record && self.rec_mode == 1 {
+                                        self.m_voice_record();
+                                    }
+                                    self.rec_mode = 0;
+                                    self.record = !self.record;
+                                    if self.record {
+                                        self.m_select_studio_section(ctx, SEC_PIANO);
+                                        ctx.data_mut(|d| d.insert_temp(egui::Id::new(("m_piano_record", self.project.current_pattern)), 0_usize));
+                                    } else {
+                                        ctx.data_mut(|d| d.remove::<usize>(egui::Id::new(("m_piano_record", self.project.current_pattern))));
+                                    }
+                                }
+                            });
+                        });
+                });
+            });
+    }
+
     fn m_studio_transport_dock(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("m_studio_transport_dock").show_separator_line(false)
             .frame(Frame::none().fill(bar_fill()).inner_margin(Margin { left: 6.0, right: 6.0, top: 6.0, bottom: 12.0 }))
