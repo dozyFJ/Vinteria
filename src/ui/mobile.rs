@@ -104,6 +104,7 @@ enum Icon {
     Share,
     Undo,
     Redo,
+    Menu,
 }
 
 fn icon(p: &Painter, kind: Icon, c: Pos2, col: Color32) {
@@ -257,6 +258,11 @@ fn icon(p: &Painter, kind: Icon, c: Pos2, col: Color32) {
             p.line_segment([c + vec2(-7.0, 0.0), c + vec2(7.0, 0.0)], Stroke::new(2.2, col));
             p.line_segment([c + vec2(0.0, -7.0), c + vec2(0.0, 7.0)], Stroke::new(2.2, col));
         }
+        Icon::Menu => {
+            for dy in [-6.0, 0.0, 6.0] {
+                p.line_segment([c + vec2(-9.0, dy), c + vec2(9.0, dy)], Stroke::new(2.0, col));
+            }
+        }
     }
 }
 
@@ -361,6 +367,21 @@ const STUDIO_SECTIONS: [(&str, Icon); 6] = [
     ("Session", Icon::Session), ("Mixer", Icon::Mixer), ("Tracks", Icon::Tracks),
 ];
 const SEC_PLAYLIST: usize = 0;
+const DRAWER_OPEN: &str = "m_nav_drawer_open";
+
+/// one line of the navigation drawer: icon + label, the active one on a filled pill
+fn drawer_row(ui: &mut Ui, symbol: Icon, label: &str, active: bool) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 48.0), Sense::click());
+    let p = ui.painter();
+    if active {
+        p.rect_filled(rect, 12.0, selected_fill());
+    } else if resp.is_pointer_button_down_on() {
+        p.rect_filled(rect, 12.0, card_fill());
+    }
+    icon(p, symbol, rect.left_center() + vec2(26.0, 0.0), ink());
+    p.text(rect.left_center() + vec2(52.0, 0.0), Align2::LEFT_CENTER, label, FontId::proportional(16.0), ink());
+    resp
+}
 const SEC_PIANO: usize = 2;
 
 /// Export & Share sheet of the phone layout: renders on a worker thread, then hands the WAV to Android's share sheet.
@@ -518,9 +539,7 @@ impl VinteriaApp {
                     // track names in a row right under the header (portrait); landscape keeps the list on the left
                     self.m_playlist_track_nav(ctx);
                 }
-                if self.m_tab == 1 {
-                    self.m_studio_dock(ctx);
-                }
+                self.m_nav_drawer(ctx);
             } else {
                 self.m_studio_sidebar(ctx);
             }
@@ -707,100 +726,133 @@ impl VinteriaApp {
         }
     }
 
+    /// portrait header like Reddit's: menu button, the "Winteria" wordmark, then undo/redo and the transport
     fn m_studio_portrait_header(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("m_studio_portrait_header").show_separator_line(false)
-            .frame(Frame::none().fill(bar_fill()).inner_margin(Margin::symmetric(6.0, 4.0)))
+            .frame(Frame::none().fill(bar_fill()).inner_margin(Margin::symmetric(4.0, 4.0)))
             .show(ctx, |ui| {
                 mobile_visuals(ui);
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    let width = 44.0;
-                    self.m_studio_full_view_button(ui, ctx, width);
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    if studio_icon(ui, 40.0, Icon::Menu, false, "Menu").clicked() {
+                        ctx.data_mut(|d| d.insert_temp(egui::Id::new(DRAWER_OPEN), true));
+                    }
                     let folder = self.m_sec == SEC_PLAYLIST;
-                    let button_slot = width + ui.spacing().item_spacing.x;
-                    let tempo_width = 70.0;
-                    let reserved = tempo_width + 4.0 + (2 + usize::from(folder)) as f32 * button_slot + 2.0 * (36.0 + 4.0);
-                    let title_width = (ui.available_width() - reserved).max(1.0);
-                    ui.add_sized([title_width, 44.0], egui::Label::new(RichText::new(&self.project.name)
-                        .strong().size(14.0).color(ink())).truncate());
-                    self.m_studio_undo_redo(ui, 36.0);
-                    self.m_studio_play_stop(ui, ctx, width);
-                    self.m_studio_tempo(ui, tempo_width, true);
+                    let (play_w, tempo_w, small) = (40.0, 50.0, 32.0);
+                    let right = 2.0 * small + 2.0 * play_w + tempo_w + if folder { play_w } else { 0.0 } + 6.0 * 2.0;
+                    let space = (ui.available_width() - right).max(0.0);
+                    let (rect, _) = ui.allocate_exact_size(vec2(space, 44.0), Sense::hover());
+                    if space > 48.0 {
+                        let font = FontId::proportional(if space > 96.0 { 20.0 } else { 15.0 });
+                        let galley = ui.painter().layout_no_wrap("Winteria".into(), font, ink());
+                        if galley.size().x <= space - 4.0 {
+                            ui.painter().galley(pos2(rect.left() + 2.0, rect.center().y - galley.size().y * 0.5), galley, ink());
+                        }
+                    }
+                    self.m_studio_undo_redo(ui, small);
+                    self.m_studio_play_stop(ui, ctx, play_w);
+                    self.m_studio_tempo(ui, tempo_w, false);
                     if folder {
-                        self.m_studio_browser_button(ui, ctx, width);
+                        self.m_studio_browser_button(ui, ctx, play_w);
                     }
                 });
             });
     }
 
-    fn m_studio_dock(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::bottom("m_studio_port_dock")
-            .show_separator_line(false)
-            .frame(Frame::none().fill(bar_fill()).inner_margin(Margin { left: 7.0, right: 7.0, top: 6.0, bottom: 12.0 }))
+    /// left drawer like the Claude app: sections (the active one highlighted) and the project actions
+    fn m_nav_drawer(&mut self, ctx: &egui::Context) {
+        let open_id = egui::Id::new(DRAWER_OPEN);
+        let open = ctx.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
+        let t = ctx.animate_bool_with_time(open_id.with("anim"), open, 0.16);
+        if t <= 0.0 {
+            return;
+        }
+        let screen = ctx.screen_rect();
+        let width = (screen.width() * 0.8).min(320.0);
+        let mut close = false;
+        egui::Area::new(open_id.with("scrim")).order(egui::Order::Middle).fixed_pos(screen.min)
             .show(ctx, |ui| {
-                mobile_visuals(ui);
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 1.0;
-                    let width = (ui.available_width() - 5.0) / 6.0;
-                    for (index, (label, symbol)) in STUDIO_SECTIONS.into_iter().take(5).enumerate() {
-                        let (rect, response) = ui.allocate_exact_size(vec2(width, 50.0), Sense::click());
-                        let p = ui.painter();
-                        if self.m_sec == index {
-                            p.rect_filled(rect, 11.0, selected_fill());
-                        }
-                        icon(p, symbol, rect.center_top() + vec2(0.0, 16.0), ink());
-                        p.text(rect.center_bottom() - vec2(0.0, 5.0), Align2::CENTER_BOTTOM, label,
-                            FontId::proportional(10.0), ink());
-                        if response.clicked() {
-                            self.m_select_studio_section(ctx, index);
-                        }
-                    }
-                    ui.spacing_mut().button_padding.x = 4.0;
-                    // drawn dots instead of the "⋯" glyph: the app fonts have no such character (it showed as a square)
-                    let menu = egui::Button::new("\nMore").min_size(vec2(width, 50.0));
-                    let more = egui::menu::menu_custom_button(ui, menu, |ui| {
-                        if ui.button("Tracks").clicked() {
-                            self.m_select_studio_section(ctx, 5);
-                            ui.close_menu();
-                        }
-                        if ui.button("Return to start").clicked() {
-                            self.return_to_start(ctx, self.playing());
-                            ui.close_menu();
-                        }
-                        let rec = if self.record { "Disarm recording" } else { "Arm recording" };
-                        if ui.button(rec).clicked() {
-                            self.m_toggle_studio_record(ctx);
-                            ui.close_menu();
-                        }
-                        if ui.button("Save project").clicked() {
-                            self.m_save_project_to_list(ctx);
-                            ui.close_menu();
-                        }
-                        if ui.button("Export or share").clicked() {
-                            self.m_export.open = true;
-                            self.m_export.song = self.m_sec == SEC_PLAYLIST;
-                            ui.close_menu();
-                        }
-                        #[cfg(target_os = "android")]
-                        {
-                            let id = egui::Id::new("m_studio_landscape");
-                            let landscape = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
-                            if ui.button(if landscape { "Switch to portrait" } else { "Switch to landscape" }).clicked() {
-                                ctx.data_mut(|d| d.insert_temp(id, !landscape));
-                                ui.close_menu();
-                            }
-                        }
-                        if ui.button("Leave project").clicked() {
-                            self.m_leave_studio(ctx);
-                            ui.close_menu();
-                        }
-                    });
-                    let top = more.response.rect.center_top() + vec2(0.0, 16.0);
-                    for dx in [-6.0, 0.0, 6.0] {
-                        ui.painter().circle_filled(top + vec2(dx, 0.0), 2.0, ink());
-                    }
-                });
+                let (rect, resp) = ui.allocate_exact_size(screen.size(), Sense::click_and_drag());
+                ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha((150.0 * t) as u8));
+                if resp.clicked() || resp.drag_stopped() {
+                    close = true;
+                }
             });
+        let mut section = None;
+        let mut action = None;
+        egui::Area::new(open_id.with("panel")).order(egui::Order::Foreground)
+            .fixed_pos(pos2(screen.left() - width * (1.0 - t), screen.top()))
+            .show(ctx, |ui| {
+                Frame::none().fill(bar_fill()).rounding(egui::Rounding { ne: 16.0, se: 16.0, ..Default::default() })
+                    .inner_margin(Margin { left: 12.0, right: 12.0, top: 18.0, bottom: 18.0 })
+                    .show(ui, |ui| {
+                        mobile_visuals(ui);
+                        ui.set_min_size(vec2(width - 24.0, screen.height() - 36.0));
+                        ui.set_max_width(width - 24.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(6.0);
+                            ui.label(RichText::new("Winteria").size(26.0).strong().color(ink()));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.add_space(6.0);
+                            ui.add(egui::Label::new(RichText::new(&self.project.name).size(13.0).color(muted())).truncate());
+                        });
+                        ui.add_space(14.0);
+                        egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
+                            for (index, (label, symbol)) in STUDIO_SECTIONS.into_iter().enumerate() {
+                                if index == SEC_PIANO {
+                                    continue; // the piano roll opens from a clip
+                                }
+                                if drawer_row(ui, symbol, label, self.m_sec == index).clicked() {
+                                    section = Some(index);
+                                }
+                            }
+                            ui.add_space(6.0);
+                            ui.separator();
+                            ui.add_space(6.0);
+                            let rec = if self.record { "Disarm recording" } else { "Arm recording" };
+                            let mut items = vec![
+                                (Icon::Rewind, "Return to start", 0),
+                                (Icon::Record, rec, 1),
+                                (Icon::Folder, "Save project", 2),
+                                (Icon::Share, "Export or share", 3),
+                                (Icon::FullView, "Full view", 4),
+                            ];
+                            if cfg!(target_os = "android") {
+                                items.push((Icon::Orientation, "Switch to landscape", 5));
+                            }
+                            items.push((Icon::Exit, "Leave project", 6));
+                            for (symbol, label, id) in items {
+                                if drawer_row(ui, symbol, label, id == 1 && self.record).clicked() {
+                                    action = Some(id);
+                                }
+                            }
+                        });
+                    });
+            });
+        if let Some(index) = section {
+            self.m_select_studio_section(ctx, index);
+            close = true;
+        }
+        if let Some(id) = action {
+            close = true;
+            match id {
+                0 => self.return_to_start(ctx, self.playing()),
+                1 => self.m_toggle_studio_record(ctx),
+                2 => { self.m_save_project_to_list(ctx); }
+                3 => {
+                    self.m_export.open = true;
+                    self.m_export.song = self.m_sec == SEC_PLAYLIST;
+                }
+                4 => ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_studio_full_view"), true)),
+                5 => ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_studio_landscape"), true)),
+                _ => self.m_leave_studio(ctx),
+            }
+        }
+        if close {
+            ctx.data_mut(|d| d.insert_temp(open_id, false));
+        }
+        ctx.request_repaint();
     }
 
     fn m_playlist_track_nav(&mut self, ctx: &egui::Context) {
@@ -898,7 +950,7 @@ impl VinteriaApp {
             self.m_export.song = self.m_sec == SEC_PLAYLIST;
         }
         ui.separator();
-        for (index, (title, icon)) in STUDIO_SECTIONS.into_iter().enumerate() {
+        for (index, (title, icon)) in STUDIO_SECTIONS.into_iter().enumerate().filter(|(i, _)| *i != SEC_PIANO) {
             if studio_icon(ui, width, icon, self.m_sec == index, title).clicked() {
                 self.m_select_studio_section(ctx, index);
             }
