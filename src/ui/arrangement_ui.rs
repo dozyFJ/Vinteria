@@ -2660,25 +2660,37 @@ fn audio_lane_to_midi(project: &mut Project, lane: usize) -> Option<usize> {
 }
 
 fn place_audio(project: &mut Project, lib: &mut Library, path: &std::path::Path, lane: usize, start: u32, bpm: f32) {
-    match lib.get(path) {
-        Ok(data) => {
-            let secs = data.mono.len() as f32 / data.rate as f32;
-            let name = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-            let idx = project.pool_index(&name, &path.to_string_lossy(), data);
-            let mut c = Clip::new(idx, lane, start, audio_ticks(secs, bpm), true);
-            // not enough room before the next clip: the new one is cut short to fit (like a MIDI clip), it was silently dropped before
-            if let Some(next) = project.arrangement.clips.iter().filter(|o| o.lane == lane && o.start >= c.start).map(|o| o.start).min() {
-                c.len = c.len.min(next.saturating_sub(c.start));
-            }
-            if c.len >= 6 && project.arrangement.can_place(&c, None) {
-                project.arrangement.clips.push(c);
-                project.song_mode = true;
-            } else {
-                lib.message = "No room for the sound here: it would overlap another clip".into();
-            }
+    let data = match lib.get(path) {
+        Ok(data) => data,
+        Err(error) => {
+            lib.message = format!("Load failed: {error}");
+            return;
         }
-        Err(e) => lib.message = format!("Load failed: {e}"),
+    };
+    let name = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+    let sample = project.pool_index(&name, &path.to_string_lossy(), data);
+    match place_audio_from_pool(project, sample, lane, start, bpm) {
+        Ok(_) => project.arrangement.tracks[lane].audio_brush = Some(sample),
+        Err(error) => lib.message = error.into(),
     }
+}
+
+pub(super) fn place_audio_from_pool(project: &mut Project, sample: usize, lane: usize, start: u32, bpm: f32) -> Result<usize, &'static str> {
+    let data = project.audio_pool.get(sample).and_then(|sample| sample.data.as_ref())
+        .ok_or("This sample could not be loaded.")?;
+    let secs = data.mono.len() as f32 / data.rate as f32;
+    let mut clip = Clip::new(sample, lane, start, audio_ticks(secs, bpm), true);
+    if let Some(next) = project.arrangement.clips.iter()
+        .filter(|other| other.lane == lane && other.start >= start).map(|other| other.start).min()
+    {
+        clip.len = clip.len.min(next - start);
+    }
+    if clip.len < 6 || !project.arrangement.can_place(&clip, None) {
+        return Err("No room for the sound here: it would overlap another clip");
+    }
+    project.arrangement.clips.push(clip);
+    project.song_mode = true;
+    Ok(project.arrangement.clips.len() - 1)
 }
 
 fn alpha_c(c: Color32, a: f32) -> Color32 {

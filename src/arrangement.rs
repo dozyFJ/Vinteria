@@ -76,6 +76,9 @@ pub fn auto_at(points: &[AutoPoint], tick: u32) -> Option<f32> {
 pub struct ArrTrack {
     pub name: String,
     pub kind: TrackKind,
+    /// Sample pool entry used when tapping an empty cell on this audio track.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_brush: Option<usize>,
     pub mute: bool,
     /// MIDI tracks: every note plays this instrument (None = the instrument stored in each note)
     #[serde(default)]
@@ -218,10 +221,10 @@ impl Arrangement {
     pub fn starter_tracks() -> Vec<ArrTrack> {
         let mut t = vec![];
         for i in 1..=3 {
-            t.push(ArrTrack { name: format!("MIDI {i}"), kind: TrackKind::Midi, mute: false, instrument: None, output: None, transpose: 0, blank: true, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0 });
+            t.push(ArrTrack { name: format!("MIDI {i}"), kind: TrackKind::Midi, mute: false, instrument: None, output: None, transpose: 0, blank: true, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, solo: false, arm: false, input: 0, volume: 1.0, group: 0 });
         }
         for i in 1..=3 {
-            t.push(ArrTrack { name: format!("Audio {i}"), kind: TrackKind::Audio, mute: false, instrument: None, output: None, transpose: 0, blank: false, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0 });
+            t.push(ArrTrack { name: format!("Audio {i}"), kind: TrackKind::Audio, mute: false, instrument: None, output: None, transpose: 0, blank: false, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, solo: false, arm: false, input: 0, volume: 1.0, group: 0 });
         }
         t
     }
@@ -229,10 +232,10 @@ impl Arrangement {
     pub fn default_tracks() -> Vec<ArrTrack> {
         let mut t = vec![];
         for i in 1..=4 {
-            t.push(ArrTrack { name: format!("MIDI {i}"), kind: TrackKind::Midi, mute: false, instrument: None, output: None, transpose: 0, blank: false, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0 });
+            t.push(ArrTrack { name: format!("MIDI {i}"), kind: TrackKind::Midi, mute: false, instrument: None, output: None, transpose: 0, blank: false, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, solo: false, arm: false, input: 0, volume: 1.0, group: 0 });
         }
         for i in 1..=4 {
-            t.push(ArrTrack { name: format!("Audio {i}"), kind: TrackKind::Audio, mute: false, instrument: None, output: None, transpose: 0, blank: false, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0 });
+            t.push(ArrTrack { name: format!("Audio {i}"), kind: TrackKind::Audio, mute: false, instrument: None, output: None, transpose: 0, blank: false, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, solo: false, arm: false, input: 0, volume: 1.0, group: 0 });
         }
         t
     }
@@ -255,7 +258,7 @@ impl Arrangement {
             TrackKind::Midi => format!("MIDI {n}"),
             TrackKind::Audio => format!("Audio {n}"),
         };
-        self.tracks.push(ArrTrack { name, kind, mute: false, instrument: None, output: None, transpose: 0, blank: kind == TrackKind::Midi, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0 });
+        self.tracks.push(ArrTrack { name, kind, mute: false, instrument: None, output: None, transpose: 0, blank: kind == TrackKind::Midi, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, solo: false, arm: false, input: 0, volume: 1.0, group: 0 });
     }
 
     /// a track inside a collapsed folder that is not the folder's first track: not drawn in the Playlist

@@ -892,6 +892,9 @@ impl Project {
     /// Index of `path` in the audio pool, adding it if needed.
     pub fn pool_index(&mut self, name: &str, path: &str, data: Arc<SampleData>) -> usize {
         if let Some(i) = self.audio_pool.iter().position(|s| s.path == path) {
+            if self.audio_pool[i].data.is_none() {
+                self.audio_pool[i].data = Some(data);
+            }
             return i;
         }
         self.audio_pool.push(SampleRef { name: name.to_string(), path: path.to_string(), data: Some(data) });

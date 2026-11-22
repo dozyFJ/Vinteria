@@ -316,3 +316,9 @@ Browser открывается слева рядом с Playlist в обеих �
 ### Android 1.0.52
 
 - Portrait Studio follows the 1.0.51 layout with the brand label removed from the header.
+
+### Android 1.0.53
+
+- Playlist audio tracks remember the last chosen sound. A tap on an empty grid cell repeats it at the current snap interval. Empty tracks still prompt for a sound.
+- The visible 1/32 subdivisions align with the placement grid.
+- Horizontal two-finger zoom keeps the Playlist centered at the gesture. BPM, metronome, microphone and MIDI now sit in the Studio header between Menu and Browser.

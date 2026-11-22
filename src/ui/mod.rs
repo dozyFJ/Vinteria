@@ -2225,7 +2225,7 @@ impl eframe::App for VinteriaApp {
                         let index = if self.project.arrangement.clips.len() > before {
                             Ok(before)
                         } else {
-                            self.lib.insert_audio_clip(&mut self.project, &path, placed_lane)
+                            self.lib.insert_audio_clip(&mut self.project, &path, placed_lane, 1)
                         };
                         match index {
                             Ok(index) => {

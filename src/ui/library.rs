@@ -520,10 +520,10 @@ impl Library {
         let lane = if new_track { None } else {
             project.arrangement.tracks.iter().position(|t| t.kind == crate::arrangement::TrackKind::Audio)
         };
-        let _ = self.insert_audio_clip(project, f, lane);
+        let _ = self.insert_audio_clip(project, f, lane, 1);
     }
 
-    pub(super) fn insert_audio_clip(&mut self, project: &mut Project, f: &Path, lane: Option<usize>) -> Result<usize, String> {
+    pub(super) fn insert_audio_clip(&mut self, project: &mut Project, f: &Path, lane: Option<usize>, snap: u32) -> Result<usize, String> {
         use crate::arrangement::{Clip, TrackKind};
         let data = self.get(f)?;
         let secs = data.mono.len() as f32 / data.rate as f32;
@@ -539,6 +539,8 @@ impl Library {
             }
         };
         let start = project.arrangement.clips.iter().filter(|c| c.lane == lane).map(|c| c.end_tick()).max().unwrap_or(0);
+        let snap = snap.max(1);
+        let start = start.div_ceil(snap).saturating_mul(snap);
         let ticks = ((secs * project.bpm / 60.0 * crate::sequencer::PPQ as f32).round() as u32).max(24);
         let c = Clip::new(idx, lane, start, ticks, true);
         if !project.arrangement.can_place(&c, None) {
