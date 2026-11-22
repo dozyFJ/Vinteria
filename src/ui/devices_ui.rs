@@ -265,7 +265,25 @@ fn pill_tab(ui: &mut Ui, label: &str, on: bool) -> bool {
     resp.clicked()
 }
 
+/// touch-sized pill (phone Track Settings tabs and toggles)
+fn mobile_pill(ui: &mut Ui, label: &str, on: bool) -> bool {
+    let font = egui::FontId::proportional(14.0);
+    let w = ui.fonts(|f| f.layout_no_wrap(label.to_string(), font.clone(), TEXT()).size().x) + 30.0;
+    let (rect, resp) = ui.allocate_exact_size(vec2(w, 36.0), Sense::click());
+    let p = ui.painter();
+    if on {
+        p.rect_filled(rect, rect.height() * 0.5, tint(PANEL2(), TEAL(), if is_dark() { 0.45 } else { 0.30 }));
+    } else {
+        p.rect_filled(rect, rect.height() * 0.5, PANEL2());
+        p.rect_stroke(rect, rect.height() * 0.5, Stroke::new(1.0, border()));
+    }
+    p.text(rect.center(), egui::Align2::CENTER_CENTER, label, font, if on { TEXT() } else { DIM() });
+    resp.clicked()
+}
+
 fn section(ui: &mut Ui, title: &str, width: f32, content: impl FnOnce(&mut Ui)) {
+    // an infinite width = fill the row (phone): the frame's margins and stroke come off first
+    let width = if width.is_finite() { width } else { ui.available_width() - 22.0 };
     egui::Frame::none().fill(PANEL2()).rounding(card()).stroke(Stroke::new(1.0, border())).inner_margin(10.0).show(ui, |ui| {
         ui.vertical(|ui| {
             ui.set_width(width.min(ui.available_width()));
@@ -284,9 +302,15 @@ fn track_settings(ui: &mut Ui, p: &mut Project, lane: usize, mobile: bool, mut e
     // the pages depend on what was picked: a MIDI track has an instrument, an audio track has a sound to time-stretch / pitch
     let is_midi = p.arrangement.tracks.get(lane).map_or(true, |t| t.kind == TrackKind::Midi);
     // three pages like a sampler panel: Main (name, instrument, level, pitch) / Instrument (clip options + editor) / Routing (in, out, sidechain)
-    let pages = if is_midi {
-        let main = if mobile { vec![1] } else { vec![1, 5] };
-        [("Main", main), ("Instrument", vec![0]), ("Routing", vec![2, 4]), ("Effects", vec![6])]
+    let pages = if mobile {
+        // phone: one big card per page, 7 = the phone's General card (name, level, mute/solo/rec, pitch)
+        if is_midi {
+            [("Main", vec![7]), ("Instrument", vec![0]), ("Routing", vec![2, 4]), ("Effects", vec![6])]
+        } else {
+            [("Main", vec![7]), ("Sample", vec![0]), ("Routing", vec![2, 4]), ("Effects", vec![6])]
+        }
+    } else if is_midi {
+        [("Main", vec![1, 5]), ("Instrument", vec![0]), ("Routing", vec![2, 4]), ("Effects", vec![6])]
     } else {
         [("Main", vec![1, 3]), ("Sample", vec![0]), ("Routing", vec![2, 4]), ("Effects", vec![6])]
     };
@@ -294,15 +318,17 @@ fn track_settings(ui: &mut Ui, p: &mut Project, lane: usize, mobile: bool, mut e
     let tab_id = egui::Id::new(("ts_page", lane, mobile));
     let mut cur_tab = ui.data(|d| d.get_temp::<usize>(tab_id)).unwrap_or(0).min(page_count - 1);
     let body_rect = if mobile {
-        let area = ui.available_rect_before_wrap();
-        let width = area.width().min(400.0) * 0.28;
-        let left = Rect::from_min_size(area.min, vec2(width, area.height()));
-        let mut nav = ui.new_child(egui::UiBuilder::new().max_rect(left).layout(egui::Layout::top_down(egui::Align::LEFT)));
-        nav.set_clip_rect(left.intersect(ui.clip_rect()));
-        for (i, (label, _)) in pages.iter().enumerate() {
-            if side_tab(&mut nav, label, cur_tab == i) { cur_tab = i; }
-        }
-        Rect::from_min_max(pos2(left.right() + 8.0, area.top()), area.max)
+        // pill bar under the header, the page below it at full width
+        egui::ScrollArea::horizontal().id_salt(("ts_pills", lane)).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                for (i, (label, _)) in pages.iter().enumerate() {
+                    if mobile_pill(ui, label, cur_tab == i) { cur_tab = i; }
+                }
+            });
+        });
+        ui.add_space(8.0);
+        ui.available_rect_before_wrap()
     } else {
         ui.horizontal(|ui| {
             ui.label(RichText::new(format!("Track Settings – {name}")).strong().size(14.0));
@@ -320,10 +346,12 @@ fn track_settings(ui: &mut Ui, p: &mut Project, lane: usize, mobile: bool, mut e
     if mobile {
         ui.set_clip_rect(body_rect.intersect(ui.clip_rect()));
     }
-    let k = 1.0f32;
+    // cards fill the width on the phone (section() clamps to the room there is)
+    let k = if mobile { f32::INFINITY } else { 1.0f32 };
     let scroll = if mobile { egui::ScrollArea::vertical() } else { egui::ScrollArea::both() };
     scroll.id_salt(("track_settings", lane, cur_tab)).auto_shrink([false, false]).show(ui, |ui| {
-        ui.horizontal_wrapped(|ui| {
+        let layout = if mobile { egui::Layout::top_down_justified(egui::Align::LEFT) } else { egui::Layout::left_to_right(egui::Align::TOP).with_main_wrap(true) };
+        ui.with_layout(layout, |ui| {
             ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
             for &tid in tids {
             if tid == 0 {
@@ -336,6 +364,28 @@ fn track_settings(ui: &mut Ui, p: &mut Project, lane: usize, mobile: bool, mut e
             }
             let Some(tr) = p.arrangement.tracks.get_mut(lane) else { continue };
             match tid {
+                7 => section(ui, if kind == TrackKind::Midi { "MIDI track" } else { "Audio track" }, k, |ui| {
+                    ui.spacing_mut().slider_width = (ui.available_width() - 96.0).max(80.0);
+                    ui.label(RichText::new("Name").small().color(DIM()));
+                    ui.add(egui::TextEdit::singleline(&mut tr.name).desired_width(f32::INFINITY));
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        let mute = tr.mute;
+                        if mobile_pill(ui, "Mute", mute) { tr.mute = !mute; }
+                        let solo = tr.solo;
+                        if mobile_pill(ui, "Solo", solo) { tr.solo = !solo; }
+                        let arm = tr.arm;
+                        if mobile_pill(ui, "Rec", arm) { tr.arm = !arm; }
+                    });
+                    ui.add_space(10.0);
+                    ui.label(RichText::new("Volume").small().color(DIM()));
+                    ui.add(egui::Slider::new(&mut tr.volume, 0.0..=1.5)
+                        .custom_formatter(|v, _| format!("{:+.1} dB", super::widgets::db(v as f32))));
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(if kind == TrackKind::Midi { "Transpose (notes)" } else { "Pitch (resample)" }).small().color(DIM()));
+                    ui.add(egui::Slider::new(&mut tr.transpose, -24..=24).suffix(" st"));
+                }),
                 1 => section(ui, "General", 260.0 * k, |ui| {
                     ui.label(RichText::new(if kind == TrackKind::Midi { "MIDI track" } else { "Audio track" }).small().strong().color(TEAL()));
                     ui.label(RichText::new("Track Name").small().color(DIM()));
