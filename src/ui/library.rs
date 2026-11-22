@@ -5,7 +5,7 @@ use crate::audio_engine::Cmd;
 use super::widgets::lerp_color;
 use crate::project::{load_wav, Project, SampleData, SampleRef};
 use crate::sequencer::{DRUM_NAMES, NUM_DRUMS};
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_arch = "wasm32"))]
 use crate::rfd;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

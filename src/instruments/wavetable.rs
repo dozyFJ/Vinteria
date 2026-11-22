@@ -506,7 +506,7 @@ mod bench_tests {
                 }
             }
             let n = 48000 * 2;
-            let t0 = std::time::Instant::now();
+            let t0 = web_time::Instant::now();
             let mut acc = 0.0f32;
             for _ in 0..n {
                 for s in synths.iter_mut() {

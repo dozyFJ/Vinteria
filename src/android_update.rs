@@ -93,6 +93,19 @@ impl Updater {
         });
     }
 
+    pub(crate) fn request_microphone_permission(&self) -> Result<(), String> {
+        with_activity(&self.app, |env, activity| {
+            env.call_method(activity, "requestMicrophonePermission", "()V", &[])?;
+            Ok(())
+        }).map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn microphone_permission_state(&self) -> Result<i32, String> {
+        with_activity(&self.app, |env, activity| {
+            env.call_method(activity, "microphonePermissionState", "()I", &[])?.i()
+        }).map_err(|error| error.to_string())
+    }
+
     pub(crate) fn choose_sounds(&self) -> Result<(), String> {
         with_activity(&self.app, |env, activity| {
             env.call_method(activity, "chooseSounds", "()V", &[])?;

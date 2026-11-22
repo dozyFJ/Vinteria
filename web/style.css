@@ -1,0 +1,39 @@
+:root {
+  color-scheme: dark;
+  background: #191e25;
+  color: #e2e9ef;
+  font: 16px system-ui, sans-serif;
+}
+body { margin: 0; overflow: hidden; }
+#studio { display: block; width: 100vw; height: 100dvh; touch-action: none; }
+#launcher {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  background: #191e25;
+  text-align: center;
+  padding: 24px;
+}
+#launcher[hidden] { display: none; }
+button {
+  min-height: 48px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 10px;
+  color: #191e25;
+  background: #dde7ef;
+  font: inherit;
+}
+button:disabled { opacity: .55; }
+dialog {
+  max-width: min(350px, calc(100vw - 48px));
+  background: #252d37;
+  color: #e2e9ef;
+  border: 1px solid #536171;
+  border-radius: 12px;
+  padding: 20px;
+}
+dialog::backdrop { background: #0009; }
+dialog input { display: block; margin: 12px 0; max-width: 100%; }

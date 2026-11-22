@@ -50,6 +50,34 @@ public final class WinteriaActivity extends NativeActivity {
         super.onCreate(state);
     }
 
+    private static final int REQUEST_MICROPHONE = 430;
+    private volatile boolean microphoneRequestPending;
+
+    public void requestMicrophonePermission() {
+        if (microphoneRequestPending || microphonePermissionState() == 1) {
+            return;
+        }
+        microphoneRequestPending = true;
+        runOnUiThread(() -> requestPermissions(
+            new String[] {android.Manifest.permission.RECORD_AUDIO}, REQUEST_MICROPHONE));
+    }
+
+    public int microphonePermissionState() {
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
+                == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            return 1;
+        }
+        return microphoneRequestPending ? 0 : -1;
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_MICROPHONE) {
+            microphoneRequestPending = false;
+        }
+    }
+
     public void chooseSounds() {
         runOnUiThread(() -> {
             if (importPending) {

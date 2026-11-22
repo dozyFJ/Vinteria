@@ -36,7 +36,7 @@ use crate::project::Project;
 use crate::sequencer::*;
 use crossbeam_channel::{unbounded, Receiver};
 use egui::{pos2, vec2, Color32, Key, RichText, Stroke};
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_arch = "wasm32"))]
 use crate::rfd;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -157,6 +157,8 @@ fn set_sync_folder(p: Option<&std::path::Path>) {
 /// Every project the hub knows: the hub folder, the Documents folder and the recent list, newest first.
 fn hub_projects(recent: &[PathBuf]) -> Vec<(PathBuf, std::time::SystemTime, u64)> {
     let hub = hub_dir();
+    #[cfg(target_arch = "wasm32")]
+    return crate::web::projects(&hub);
     let mut files: Vec<PathBuf> = Vec::new();
     for dir in [Some(hub.clone()), hub.parent().map(|p| p.to_path_buf())].into_iter().flatten() {
         if let Ok(rd) = std::fs::read_dir(dir) {
@@ -252,11 +254,11 @@ pub struct VinteriaApp {
     sent_lane: usize,
     /// how many times a split-off channel clip is repeated in the Playlist
     split_repeat: u32,
-    last_auto_check: std::time::Instant,
+    last_auto_check: web_time::Instant,
     /// undo history: snapshots of the project before an edit (edits within 0.4 s are one step)
     undo: Vec<Arc<Project>>,
     redo: Vec<Arc<Project>>,
-    last_undo: std::time::Instant,
+    last_undo: web_time::Instant,
     undo_skip: bool,
     /// the Piano Roll page exists only after a MIDI track (or a Channel Rack sound) was picked
     roll_tab: bool,
@@ -268,12 +270,12 @@ pub struct VinteriaApp {
     /// Retrospective Record: the notes played so far (the keyboard / MIDI), kept even while not recording
     retro: Vec<crate::project::RetroNote>,
     retro_held: HashMap<u8, (f64, u8)>,
-    started: std::time::Instant,
+    started: web_time::Instant,
     /// the project as it was last saved / opened (what "unsaved changes" are measured against)
     saved: Arc<Project>,
-    last_autosave: std::time::Instant,
+    last_autosave: web_time::Instant,
     /// start of the logo splash shown when the program opens
-    splash: std::time::Instant,
+    splash: web_time::Instant,
     /// phone layout: dock tab (0 Projects, 1 Studio, 2 Settings, 3 Profile) and the section picked in the icon rail
     m_tab: usize,
     m_sec: usize,
@@ -281,7 +283,7 @@ pub struct VinteriaApp {
     /// waveform of the whole arrangement (signature it was rendered for, peaks), the render in flight and the one waiting
     song_wave: Option<(u64, Vec<f32>)>,
     song_rx: Option<Receiver<(u64, Vec<f32>)>>,
-    song_pending: Option<(u64, std::time::Instant)>,
+    song_pending: Option<(u64, web_time::Instant)>,
     hub_cache: Option<Vec<(PathBuf, std::time::SystemTime, u64)>>,
     last_sel_lane: usize,
     dock_prev: Tab,
@@ -302,13 +304,13 @@ pub struct VinteriaApp {
     updater: crate::updater::Updater,
     #[cfg(target_os = "android")]
     pub(crate) android_updater: Option<crate::android_update::Updater>,
-    update_seen: Option<(std::time::SystemTime, std::time::Instant)>,
-    last_update_check: std::time::Instant,
+    update_seen: Option<(std::time::SystemTime, web_time::Instant)>,
+    last_update_check: web_time::Instant,
     export: ExportUi,
     path: Option<PathBuf>,
     status: String,
     /// short notices at the bottom centre: (text, born, kind 0 info / 1 done / 2 problem)
-    toasts: Vec<(String, std::time::Instant, u8)>,
+    toasts: Vec<(String, web_time::Instant, u8)>,
     last_status: String,
     record: bool,
     /// what the record button captures: 0 notes (keyboard / MIDI), 1 audio (input device), 2 both
@@ -316,6 +318,8 @@ pub struct VinteriaApp {
     recorder: crate::audio_rec::AudioRecorder,
     /// song position (ticks) where the audio recording began
     rec_from: u32,
+    #[cfg(target_arch = "wasm32")]
+    voice_lane: usize,
     octave: i32,
     live_track: Track,
     key_held: HashMap<Key, u8>,
@@ -358,9 +362,9 @@ impl VinteriaApp {
             project,
             retro: Vec::new(),
             retro_held: HashMap::new(),
-            started: std::time::Instant::now(),
+            started: web_time::Instant::now(),
             saved: Arc::clone(&published),
-            last_autosave: std::time::Instant::now(),
+            last_autosave: web_time::Instant::now(),
             published,
             shared,
             audio,
@@ -379,16 +383,16 @@ impl VinteriaApp {
             rack_mode: 0,
             sent_lane: usize::MAX,
             split_repeat: 4,
-            last_auto_check: std::time::Instant::now().checked_sub(std::time::Duration::from_secs(60)).unwrap_or_else(std::time::Instant::now),
+            last_auto_check: web_time::Instant::now().checked_sub(std::time::Duration::from_secs(60)).unwrap_or_else(web_time::Instant::now),
             undo: vec![],
             redo: vec![],
-            last_undo: std::time::Instant::now(),
+            last_undo: web_time::Instant::now(),
             undo_skip: false,
             roll_tab: false,
             recent: std::fs::read_to_string("recent_projects.txt").map(|t| t.lines().map(PathBuf::from).filter(|p| p.exists()).collect()).unwrap_or_default(),
             show_projects: false,
             hub_open: false,
-            splash: std::time::Instant::now(),
+            splash: web_time::Instant::now(),
             m_tab: 0,
             m_sec: 0,
             m_export: Default::default(),
@@ -415,7 +419,7 @@ impl VinteriaApp {
             #[cfg(target_os = "android")]
             android_updater: None,
             update_seen: None,
-            last_update_check: std::time::Instant::now(),
+            last_update_check: web_time::Instant::now(),
             export: ExportUi { open: false, rate: 44100, depth: BitDepth::Pcm24, bars: 8, tail: 2.0, song: true, only_picked: false, pick: Vec::new(), rx: None, result: String::new(), path: None },
             path: None,
             status,
@@ -425,6 +429,8 @@ impl VinteriaApp {
             rec_mode: 0,
             recorder: Default::default(),
             rec_from: 0,
+            #[cfg(target_arch = "wasm32")]
+            voice_lane: 0,
             octave: 4,
             live_track: Track::Synth,
             key_held: HashMap::new(),
@@ -455,7 +461,7 @@ impl VinteriaApp {
                 } else {
                     0
                 };
-                self.toasts.push((text, std::time::Instant::now(), kind));
+                self.toasts.push((text, web_time::Instant::now(), kind));
                 if self.toasts.len() > 3 {
                     self.toasts.remove(0);
                 }
@@ -544,7 +550,7 @@ impl VinteriaApp {
         if self.last_update_check.elapsed() < std::time::Duration::from_millis(1000) {
             return;
         }
-        self.last_update_check = std::time::Instant::now();
+        self.last_update_check = web_time::Instant::now();
         ctx.request_repaint_after(std::time::Duration::from_secs(1));
         let Ok(meta) = std::fs::metadata(&orig) else { return };
         let Ok(m) = meta.modified() else { return };
@@ -559,7 +565,7 @@ impl VinteriaApp {
                     self.restart_into(&orig, m);
                 }
             }
-            _ => self.update_seen = Some((m, std::time::Instant::now())),
+            _ => self.update_seen = Some((m, web_time::Instant::now())),
         }
     }
 
@@ -604,7 +610,7 @@ impl VinteriaApp {
         if !self.dirty() || !holds_something {
             return None;
         }
-        let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let secs = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
         let name: String = self.project.name.chars().map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' { c } else { '_' }).collect();
         let path = backup_dir().join(format!("{name} {secs}.wd"));
         if self.project.save(&path).is_err() {
@@ -632,7 +638,7 @@ impl VinteriaApp {
                 self.redo.clear();
             }
             if !self.undo_skip {
-                self.last_undo = std::time::Instant::now();
+                self.last_undo = web_time::Instant::now();
             }
             self.undo_skip = false;
             let snap = Arc::new(self.project.clone());
@@ -803,7 +809,11 @@ impl VinteriaApp {
             Some(p) if p.parent() == Some(dir.as_path()) => path = p.clone(),
             _ => {
                 let mut n = 2;
-                while path.exists() {
+                #[cfg(target_arch = "wasm32")]
+                let exists = |path: &std::path::Path| crate::web::read_project(path).is_ok();
+                #[cfg(not(target_arch = "wasm32"))]
+                let exists = |path: &std::path::Path| path.exists();
+                while exists(&path) {
                     path = dir.join(format!("{stem} {n}.wd"));
                     n += 1;
                 }
@@ -1408,7 +1418,7 @@ impl VinteriaApp {
         let sig = song_signature(&self.project);
         if self.song_wave.as_ref().map(|w| w.0) != Some(sig) {
             if self.song_pending.map(|p| p.0) != Some(sig) {
-                self.song_pending = Some((sig, std::time::Instant::now()));
+                self.song_pending = Some((sig, web_time::Instant::now()));
             }
             if let Some((ps, t0)) = self.song_pending {
                 if ps == sig && t0.elapsed().as_secs_f32() > 1.5 && self.song_rx.is_none() {
@@ -1857,6 +1867,16 @@ impl VinteriaApp {
     fn audio_recording(&mut self) {
         let want = self.record && self.rec_mode != 0;
         if want && !self.recorder.active() {
+            #[cfg(target_os = "android")]
+            match self.android_updater.as_ref().and_then(|android| android.microphone_permission_state().ok()) {
+                Some(1) => {}
+                Some(0) => return,
+                _ => {
+                    self.record = false;
+                    self.status = "Microphone permission is required for voice recording".into();
+                    return;
+                }
+            }
             match self.recorder.start() {
                 Ok(()) => {
                     self.rec_from = self.shared.position.load(Ordering::Relaxed);
@@ -1920,6 +1940,8 @@ impl VinteriaApp {
         if self.project.arrangement.can_place(&c, None) {
             self.project.arrangement.clips.push(c);
             self.project.song_mode = true;
+            self.arr.sel_lane = c.lane;
+            self.arr.sel_clip = Some(self.project.arrangement.clips.len() - 1);
             self.status = format!("Recorded {secs:.1} s -> {}", path.display());
         }
     }
@@ -2159,7 +2181,7 @@ impl eframe::App for VinteriaApp {
         self.render_overlay(ctx);
         // rolling autosave of unsaved work (not while playing: writing a big file must not touch the audio)
         if self.last_autosave.elapsed() > std::time::Duration::from_secs(90) {
-            self.last_autosave = std::time::Instant::now();
+            self.last_autosave = web_time::Instant::now();
             if self.dirty() && !self.playing() {
                 let _ = self.project.save(&backup_dir().join("_autosave.wd"));
             }
@@ -2181,6 +2203,47 @@ impl eframe::App for VinteriaApp {
         // phones get their own layout (Pulse style); the PC keeps the AOS desktop
         if self.is_mobile() {
             self.hub_open = false;
+            #[cfg(not(target_arch = "wasm32"))]
+            self.audio_recording();
+            #[cfg(target_arch = "wasm32")]
+            if let Some(voice) = crate::web::take_voice_result() {
+                if self.rec_mode == 1 {
+                    self.record = false;
+                }
+                match voice {
+                    Ok(path) => {
+                        use crate::arrangement::TrackKind;
+                        let lane = Some(self.voice_lane)
+                            .filter(|&lane| self.project.arrangement.tracks.get(lane).is_some_and(|track| track.kind == TrackKind::Audio))
+                            .or_else(|| self.project.arrangement.tracks.iter().position(|track| track.kind == TrackKind::Audio))
+                            .unwrap_or(self.project.arrangement.tracks.len());
+                        let before = self.project.arrangement.clips.len();
+                        let bpm = self.project.bpm;
+                        let item = browser::DragItem::Sample(path.clone());
+                        self.lib.message.clear();
+                        let placed_lane = arrangement_ui::drop_item(&mut self.project, &mut self.lib, &item, lane, self.rec_from, bpm);
+                        let index = if self.project.arrangement.clips.len() > before {
+                            Ok(before)
+                        } else {
+                            self.lib.insert_audio_clip(&mut self.project, &path, placed_lane)
+                        };
+                        match index {
+                            Ok(index) => {
+                                let clip = self.project.arrangement.clips[index];
+                                self.arr.sel_lane = clip.lane;
+                                self.arr.sel_clip = Some(index);
+                                ctx.data_mut(|d| {
+                                    d.insert_temp(egui::Id::new("m_playlist_reveal_tick"), clip.start);
+                                    d.insert_temp(egui::Id::new("m_playlist_reveal_track"), clip.lane);
+                                });
+                                self.status = "Voice recording added to Playlist".into();
+                            }
+                            Err(error) => self.status = error,
+                        }
+                    }
+                    Err(error) => self.status = error,
+                }
+            }
             self.mobile_ui(ctx);
             self.publish_edits();
             return;
@@ -2192,7 +2255,7 @@ impl eframe::App for VinteriaApp {
         }
         // automatic day / night theme
         if auto() && self.last_auto_check.elapsed() > std::time::Duration::from_secs(20) {
-            self.last_auto_check = std::time::Instant::now();
+            self.last_auto_check = web_time::Instant::now();
             if night_now() != is_dark() {
                 set_dark(night_now());
                 apply_visuals(ctx);

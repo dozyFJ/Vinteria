@@ -300,3 +300,10 @@ Browser открывается слева рядом с Playlist в обеих �
 ### Android 1.0.49
 
 Отдельная кнопка Grid перенесена в круглое меню справа от шкалы Playlist. В меню раскрываются Playlist (шаг сетки и следование за курсором), Clips (открыть, дублировать и изменить длину выбранного клипа) и Audio (браузер, настройки аудиоклипа и экспорт). Положение меню и действия нужно проверить на телефоне.
+
+### Android 1.0.50
+
+- Portrait Studio retains the Winteria wordmark and puts BPM, metronome, Mic and MIDI in the header.
+- The bottom transport adds bar navigation and a scrubber, with Settings and Playlist shortcuts.
+- Playlist swipes, sample placement and double-tap clip editing share the original native arrangement. Track Settings groups controls under Main and stacks effects in a separate view.
+- The Mic action requests Android microphone permission and records through the native engine. Hardware microphone and touch behavior still need an on-device check.

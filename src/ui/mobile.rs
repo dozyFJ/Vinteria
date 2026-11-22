@@ -95,6 +95,7 @@ enum Icon {
     FullView,
     Orientation,
     Rewind,
+    Forward,
     Play,
     Pause,
     Record,
@@ -105,6 +106,7 @@ enum Icon {
     Undo,
     Redo,
     Menu,
+    Settings,
 }
 
 fn icon(p: &Painter, kind: Icon, c: Pos2, col: Color32) {
@@ -217,9 +219,19 @@ fn icon(p: &Painter, kind: Icon, c: Pos2, col: Color32) {
             p.line_segment([c + vec2(7.0, 3.0), c + vec2(4.0, 0.0)], s);
             p.line_segment([c + vec2(7.0, 3.0), c + vec2(10.0, 0.0)], s);
         }
-        Icon::Rewind => {
-            p.line_segment([c + vec2(-8.0, -7.0), c + vec2(-8.0, 7.0)], s);
-            p.add(Shape::convex_polygon(vec![c + vec2(5.0, -7.0), c + vec2(-5.0, 0.0), c + vec2(5.0, 7.0)], col, Stroke::NONE));
+        Icon::Settings => {
+            p.circle_stroke(c, 6.0, s);
+            p.circle_stroke(c, 2.0, s);
+            for tooth in 0..8 {
+                let angle = tooth as f32 * std::f32::consts::FRAC_PI_4;
+                let direction = vec2(angle.cos(), angle.sin());
+                p.line_segment([c + direction * 6.0, c + direction * 9.0], s);
+            }
+        }
+        Icon::Rewind | Icon::Forward => {
+            let d = if kind == Icon::Rewind { 1.0 } else { -1.0 };
+            p.line_segment([c + vec2(-8.0 * d, -7.0), c + vec2(-8.0 * d, 7.0)], s);
+            p.add(Shape::convex_polygon(vec![c + vec2(5.0 * d, -7.0), c + vec2(-5.0 * d, 0.0), c + vec2(5.0 * d, 7.0)], col, Stroke::NONE));
         }
         Icon::Pause => {
             for x in [-3.0, 3.0] {
@@ -429,7 +441,7 @@ fn export_dir() -> PathBuf {
 
 impl VinteriaApp {
     pub(super) fn is_mobile(&self) -> bool {
-        cfg!(target_os = "android") || std::env::var_os("SYNTHESIA_MOBILE").is_some()
+        cfg!(any(target_os = "android", target_arch = "wasm32")) || std::env::var_os("SYNTHESIA_MOBILE").is_some()
     }
 
     pub(super) fn mobile_ui(&mut self, ctx: &egui::Context) {
@@ -542,6 +554,8 @@ impl VinteriaApp {
             }
         }
         step("background");
+        #[cfg(target_arch = "wasm32")]
+        ctx.style_mut(|style| style.animation_time = 0.12);
         mobile_background(ctx);
         step("header");
         let screen = ctx.screen_rect();
@@ -754,16 +768,48 @@ impl VinteriaApp {
             .frame(Frame::none().fill(bar_fill()).inner_margin(Margin::symmetric(4.0, 4.0)))
             .show(ctx, |ui| {
                 mobile_visuals(ui);
+                let narrow = ui.available_width() < 352.0;
+                if narrow {
+                    ui.label(RichText::new("Winteria").size(18.0).strong().color(ink()))
+                        .on_hover_text(&self.project.name);
+                }
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
                     if studio_icon(ui, 40.0, Icon::Menu, false, "Menu").clicked() {
                         ctx.data_mut(|d| d.insert_temp(egui::Id::new(DRAWER_OPEN), true));
                     }
-                    ui.label(RichText::new("Winteria").size(20.0).color(ink()));
+                    if !narrow {
+                        ui.add_space(2.0);
+                        ui.label(RichText::new("Winteria").size(18.0).strong().color(ink()))
+                            .on_hover_text(&self.project.name);
+                        ui.add_space(2.0);
+                    }
+                    self.m_studio_tempo(ui, 58.0, true);
+                    if studio_icon(ui, 44.0, Icon::Clock, self.project.metronome, "Metronome").clicked() {
+                        self.project.metronome = !self.project.metronome;
+                    }
+                    if p_button(ui, "Mic", self.rec_mode == 1 && self.record, vec2(44.0, 44.0))
+                        .on_hover_text("Record microphone to audio track").clicked()
+                    {
+                        self.m_voice_record();
+                    }
+                    if p_button(ui, "MIDI", self.rec_mode == 0 && self.record, vec2(46.0, 44.0))
+                        .on_hover_text("Record notes in Piano Roll").clicked()
+                    {
+                        if self.record && self.rec_mode == 1 {
+                            self.m_voice_record();
+                        }
+                        self.rec_mode = 0;
+                        self.record = !self.record;
+                        if self.record {
+                            self.m_select_studio_section(ctx, SEC_PIANO);
+                            ctx.data_mut(|d| d.insert_temp(egui::Id::new(("m_piano_record", self.project.current_pattern)), 0_usize));
+                        } else {
+                            ctx.data_mut(|d| d.remove::<usize>(egui::Id::new(("m_piano_record", self.project.current_pattern))));
+                        }
+                    }
                     if self.m_sec == SEC_PLAYLIST {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            self.m_studio_browser_button(ui, ctx, 44.0);
-                        });
+                        self.m_studio_browser_button(ui, ctx, 44.0);
                     }
                 });
             });
@@ -775,28 +821,44 @@ impl VinteriaApp {
             .frame(Frame::none().fill(bar_fill()).inner_margin(Margin { left: 6.0, right: 6.0, top: 6.0, bottom: 12.0 }))
             .show(ctx, |ui| {
                 mobile_visuals(ui);
-                // in the Playlist a swipe up on the dock pulls up the selected track's settings (the buttons only take taps)
-                if self.m_sec == SEC_PLAYLIST {
-                    let area = ui.max_rect().expand2(vec2(6.0, 6.0));
-                    let swipe = ui.interact(area, egui::Id::new("m_dock_swipe"), Sense::drag());
-                    if swipe.drag_stopped() && swipe.drag_delta().y < 0.0 || swipe.dragged() && ui.input(|i| {
-                        i.pointer.press_origin().zip(i.pointer.interact_pos()).is_some_and(|(a, b)| a.y - b.y > 24.0)
-                    }) {
-                        ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_track_sheet_open"), true));
-                    }
-                    let grip = Rect::from_center_size(pos2(area.center().x, area.top() + 4.0), vec2(36.0, 4.0));
-                    ui.painter().rect_filled(grip, 2.0, outline());
-                }
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
-                    let (play_w, tempo_w, small) = (44.0, 54.0, 36.0);
-                    self.m_studio_undo_redo(ui, small);
-                    let right = 2.0 * play_w + tempo_w + 3.0 * 2.0;
-                    let space = (ui.available_width() - right).max(1.0);
-                    ui.add_sized([space, 44.0], egui::Label::new(RichText::new(&self.project.name)
-                        .strong().size(14.0).color(ink())).truncate().selectable(false));
-                    self.m_studio_play_stop(ui, ctx, play_w);
-                    self.m_studio_tempo(ui, tempo_w, false);
+                    let width = 44.0;
+                    self.m_studio_play_stop(ui, ctx, width);
+                    let tick = self.shared.position.load(Ordering::Relaxed);
+                    let bar = tick / TICKS_PER_BAR;
+                    let bars = if self.m_sec == SEC_PLAYLIST {
+                        self.project.arrangement.song_end_bar().max(1)
+                    } else {
+                        self.project.patterns.get(self.project.current_pattern)
+                            .map_or(1, |p| u32::from(p.length_steps).div_ceil(16).max(1))
+                    };
+                    if studio_icon(ui, width, Icon::Rewind, false, "Previous bar").clicked() {
+                        let previous = if tick % TICKS_PER_BAR == 0 { bar.saturating_sub(1) } else { bar };
+                        self.m_seek(ctx, previous * TICKS_PER_BAR);
+                    }
+                    if studio_icon(ui, width, Icon::Forward, false, "Next bar").clicked() {
+                        self.m_seek(ctx, (bar + 1).min(bars - 1) * TICKS_PER_BAR);
+                    }
+                    let end = bars * TICKS_PER_BAR;
+                    let space = (ui.available_width() - 2.0 * (width + 2.0)).max(12.0);
+                    let (rect, scrub) = ui.allocate_exact_size(vec2(space, 44.0), Sense::click_and_drag());
+                    let track = Rect::from_center_size(rect.center(), vec2(rect.width(), 4.0));
+                    ui.painter().rect_filled(track, 2.0, outline());
+                    let progress = (tick as f32 / end as f32).clamp(0.0, 1.0);
+                    let head = track.left() + track.width() * progress;
+                    ui.painter().line_segment([track.left_center(), pos2(head, track.center().y)], Stroke::new(4.0, p_accent()));
+                    if let Some(point) = scrub.interact_pointer_pos().filter(|_| scrub.clicked() || scrub.dragged()) {
+                        let fraction = ((point.x - track.left()) / track.width()).clamp(0.0, 1.0);
+                        self.m_seek(ctx, ((fraction * end as f32) as u32).min(end - 1));
+                    }
+                    scrub.on_hover_text(format!("Bar {} of {bars}", bar.saturating_add(1).min(bars)));
+                    if studio_icon(ui, width, Icon::Settings, false, "Options and settings").clicked() {
+                        ctx.data_mut(|d| d.insert_temp(egui::Id::new(DRAWER_OPEN), true));
+                    }
+                    if studio_icon(ui, width, Icon::Timeline, self.m_sec == SEC_PLAYLIST, "Playlist").clicked() {
+                        self.m_select_studio_section(ctx, SEC_PLAYLIST);
+                    }
                 });
             });
     }
@@ -920,6 +982,7 @@ impl VinteriaApp {
                             if cfg!(target_os = "android") {
                                 items.push((Icon::Orientation, "Switch to landscape", 5));
                             }
+                            items.push((Icon::Settings, "Settings", 7));
                             items.push((Icon::Exit, "Leave project", 6));
                             for (symbol, label, id) in items {
                                 if drawer_row(ui, symbol, label, id == 1 && self.record).clicked() {
@@ -945,6 +1008,12 @@ impl VinteriaApp {
                 }
                 4 => ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_studio_full_view"), true)),
                 5 => ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_studio_landscape"), true)),
+                7 => {
+                    if self.m_save_pending_project(ctx) {
+                        self.m_tab = 2;
+                        self.m_sec = 0;
+                    }
+                }
                 _ => self.m_leave_studio(ctx),
             }
         }
@@ -1057,6 +1126,41 @@ impl VinteriaApp {
         }
         if self.m_sec == SEC_PLAYLIST {
             self.m_studio_browser_button(ui, ctx, width);
+        }
+    }
+
+    fn m_seek(&mut self, ctx: &egui::Context, tick: u32) {
+        let song = self.m_sec == SEC_PLAYLIST;
+        self.project.song_mode = song;
+        self.publish_edits();
+        let pattern = if song { usize::MAX } else { self.project.current_pattern };
+        if !self.m_transport_playing(ctx) {
+            ctx.data_mut(|d| d.insert_temp(egui::Id::new(Self::M_PAUSED_AT), (song, pattern)));
+        }
+        self.shared.send(Cmd::Seek(tick));
+    }
+
+    fn m_voice_record(&mut self) {
+        if self.record && self.rec_mode == 1 {
+            self.record = false;
+            #[cfg(target_arch = "wasm32")]
+            crate::web::record_voice(false);
+            return;
+        }
+        self.rec_mode = 1;
+        self.record = true;
+        #[cfg(target_os = "android")]
+        if let Err(error) = self.android_updater.as_ref().ok_or_else(|| "Android activity unavailable".to_owned())
+            .and_then(|android| android.request_microphone_permission())
+        {
+            self.record = false;
+            self.status = error;
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.rec_from = self.shared.position.load(Ordering::Relaxed);
+            self.voice_lane = self.arr.sel_lane;
+            crate::web::record_voice(true);
         }
     }
 
@@ -1202,6 +1306,9 @@ impl VinteriaApp {
 
     fn m_stop(&mut self, ctx: &egui::Context) {
         ctx.data_mut(|d| d.remove::<(bool, usize)>(egui::Id::new(Self::M_PAUSED_AT)));
+        if self.record && self.rec_mode == 1 {
+            self.m_voice_record();
+        }
         self.return_to_start(ctx, false);
         self.m_expect(ctx, false);
     }
@@ -2362,17 +2469,30 @@ impl VinteriaApp {
             bars: crate::audio_engine::export::default_bars(&p),
             tail_secs: 2.0,
         };
-        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let stamp = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
         let clean: String = p.name.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
-        let path = export_dir().join(format!("{}-{}.wav", if clean.is_empty() { "Winteria".to_string() } else { clean }, stamp % 1_000_000));
-        let (tx, rx) = crossbeam_channel::bounded(1);
-        std::thread::spawn(move || {
-            let res = crate::audio_engine::export::export(&p, &settings, &path).map(|_| path);
-            let _ = tx.send(res);
-        });
-        self.m_export.rx = Some(rx);
-        self.m_export.share_after = share;
-        self.m_export.status.clear();
+        let name = format!("{}-{}.wav", if clean.is_empty() { "Winteria".to_string() } else { clean }, stamp % 1_000_000);
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = share;
+            self.m_export.status = match crate::web::export_wav(&p, &settings, &name) {
+                Ok(()) => format!("Downloaded: {name}"),
+                Err(error) => error,
+            };
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let path = export_dir().join(name);
+            let (tx, rx) = crossbeam_channel::bounded(1);
+            std::thread::spawn(move || {
+                let res = crate::audio_engine::export::export(&p, &settings, &path).map(|_| path);
+                let _ = tx.send(res);
+            });
+            self.m_export.rx = Some(rx);
+            self.m_export.share_after = share;
+            self.m_export.status.clear();
+        }
+
     }
 
     fn m_share(&mut self, path: &std::path::Path) {
@@ -2453,6 +2573,20 @@ impl VinteriaApp {
             }
         });
         ui.add_space(2.0);
+        #[cfg(target_arch = "wasm32")]
+        if !plugins {
+            if let Some(files) = crate::web::take_sample_list() {
+                self.lib.files = files;
+            }
+            ui.horizontal_wrapped(|ui| {
+                if p_button(ui, "Import WAV", false, vec2(100.0, 40.0)).clicked() {
+                    crate::web::choose_sounds(false);
+                }
+                if p_button(ui, "Import folder", false, vec2(108.0, 40.0)).clicked() {
+                    crate::web::choose_sounds(true);
+                }
+            });
+        }
         #[cfg(target_os = "android")]
         if !plugins {
             let pending = egui::Id::new("m_sound_import_pending");
@@ -2508,7 +2642,12 @@ impl VinteriaApp {
             .filter(|&lane| lane < DRUM_NAMES.len() || (lane == midi_destination && midi_available));
         let picking_clip = ui.data(|d| d.get_temp::<(usize, u32)>(egui::Id::new("m_audio_clip_target"))).is_some();
         if !plugins && !picking_clip {
-            let destination = drum_destination.map_or("Audio clip", |lane| DRUM_NAMES.get(lane).copied().unwrap_or("Selected MIDI track"));
+            let destination = match drum_destination {
+                Some(lane) => DRUM_NAMES.get(lane).copied().unwrap_or("Selected MIDI track"),
+                None => self.project.arrangement.tracks.get(self.arr.sel_lane)
+                    .filter(|track| track.kind == crate::arrangement::TrackKind::Audio)
+                    .map_or("New audio track", |track| track.name.as_str()),
+            };
             let dest_button = egui::Button::new(RichText::new(format!("Tap to: {destination}")).size(12.0).color(muted()))
                 .min_size(vec2(ui.available_width(), 30.0)).truncate();
             egui::menu::menu_custom_button(ui, dest_button, |ui| {
@@ -2565,8 +2704,14 @@ impl VinteriaApp {
                     if !filter.is_empty() && !name.contains(&filter) {
                         continue;
                     }
+                    #[cfg(target_arch = "wasm32")]
+                    let root = std::path::Path::new("Browser samples");
+                    #[cfg(target_arch = "wasm32")]
+                    let roots = self.lib.dirs.iter().map(PathBuf::as_path).chain(std::iter::once(root));
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let roots = self.lib.dirs.iter().map(PathBuf::as_path);
                     let pack = if filter.is_empty() {
-                        self.lib.dirs.iter().find_map(|root| path.strip_prefix(root).ok())
+                        roots.into_iter().find_map(|root| path.strip_prefix(root).ok())
                             .filter(|rel| rel.components().count() > 1)
                             .and_then(|rel| rel.components().next())
                             .map(|c| c.as_os_str().to_string_lossy().to_string())
@@ -2651,9 +2796,14 @@ impl VinteriaApp {
             match self.lib.insert_audio_clip(&mut self.project, &path, Some(self.arr.sel_lane)) {
                 Ok(index) => {
                     self.arr.sel_clip = Some(index);
-                    self.arr.sel_lane = self.project.arrangement.clips[index].lane;
+                    let clip = self.project.arrangement.clips[index];
+                    self.arr.sel_lane = clip.lane;
                     self.arr.msg.clear();
-                    ui.data_mut(|d| d.insert_temp(egui::Id::new("m_browser_open"), false));
+                    ui.data_mut(|d| {
+                        d.insert_temp(egui::Id::new("m_browser_open"), false);
+                        d.insert_temp(egui::Id::new("m_playlist_reveal_tick"), clip.start);
+                        d.insert_temp(egui::Id::new("m_playlist_reveal_track"), clip.lane);
+                    });
                 }
                 Err(error) => self.arr.msg = error,
             }
@@ -2898,10 +3048,25 @@ impl VinteriaApp {
         let follow_id = egui::Id::new("m_playlist_offset_x");
         let shown_x = ui.data(|d| d.get_temp::<f32>(follow_id)).unwrap_or(0.0);
         let head_x = pos as f32 / TICKS_PER_BAR as f32 * bar_w;
-        let scroll = if playing && gesture.is_none() && head_x < shown_x {
-            scroll.horizontal_scroll_offset((head_x - 16.0).max(0.0))
-        } else if playing && gesture.is_none() && head_x > shown_x + grid.width() * 0.7 {
-            scroll.horizontal_scroll_offset(head_x - grid.width() * 0.7)
+        // Follow when playback crosses the page boundary, so a manual swipe
+        // can browse other bars without the playhead pulling the view back.
+        let head_id = follow_id.with("head");
+        let previous_head = ui.data(|d| d.get_temp::<f32>(head_id));
+        ui.data_mut(|d| d.insert_temp(head_id, head_x));
+        let follow_at = shown_x + grid.width() * 0.85;
+        let browsing = ui.input(|input| input.pointer.any_down() || input.smooth_scroll_delta.x != 0.0);
+        let reveal_tick = ui.data_mut(|d| d.remove_temp::<u32>(egui::Id::new("m_playlist_reveal_tick")));
+        let scroll = if let Some(tick) = reveal_tick {
+            let x = tick as f32 / TICKS_PER_BAR as f32 * bar_w;
+            if x < shown_x || x > shown_x + grid.width() * 0.85 {
+                scroll.horizontal_scroll_offset((x - grid.width() * 0.15).max(0.0))
+            } else {
+                scroll
+            }
+        } else if playing && gesture.is_none() && !browsing
+            && previous_head.is_some_and(|head| head >= shown_x && head <= follow_at && head_x > follow_at)
+        {
+            scroll.horizontal_scroll_offset(head_x - grid.width() * 0.15)
         } else {
             scroll
         };
@@ -3022,7 +3187,7 @@ impl VinteriaApp {
                 }
 
                 if clip.clicked() {
-                    let edit = clip.double_clicked() || self.arr.sel_clip == Some(i);
+                    let edit = clip.double_clicked();
                     selection = Some((c.lane, Some(i), Some(c.start), edit));
                 }
                 clip.context_menu(|ui| {

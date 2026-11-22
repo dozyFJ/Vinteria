@@ -1131,7 +1131,7 @@ mod diag {
                 e.play();
                 let secs = 8.0;
                 let mut buf = vec![0.0f32; 48000 * 8 * 2];
-                let t0 = std::time::Instant::now();
+                let t0 = web_time::Instant::now();
                 for c in buf.chunks_mut(512) {
                     e.render(c);
                 }

@@ -310,7 +310,7 @@ mod io {
         }
 
         fn fill<T: Copy>(&mut self, out: &mut [T], channels: usize, conv: impl Fn(f32) -> T) {
-            let started = std::time::Instant::now();
+            let started = web_time::Instant::now();
             if !self.prio_set {
                 self.prio_set = true;
                 raise_audio_thread_priority();

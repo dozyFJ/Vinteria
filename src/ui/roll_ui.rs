@@ -501,7 +501,7 @@ impl RollState {
 
     /// Alt+R "Randomizer": velocity and a little timing, different every time
     fn randomize(&mut self, pat: &mut Pattern) {
-        let mut x = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(1) | 1;
+        let mut x = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(1) | 1;
         let mut next = move || {
             x ^= x << 13;
             x ^= x >> 17;
@@ -2174,7 +2174,7 @@ fn shape_values(st: &mut RollState, pat: &mut Pattern, param: u8, kind: u8) {
     let (a, b) = (st.ramp_from, st.ramp_to);
     let n = idx.len();
     let old: Vec<f32> = idx.iter().map(|&i| lane_get(&pat.notes[i], param)).collect();
-    let mut seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(1) | 1;
+    let mut seed = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(1) | 1;
     for (k, &i) in idx.iter().enumerate() {
         let u = if n < 2 { 0.0 } else { k as f32 / (n - 1) as f32 };
         let v = match kind {

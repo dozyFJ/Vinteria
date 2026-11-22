@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#191e25">
+  <title>Winteria</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="apple-touch-icon" href="./assets/icon-192.png">
+  <link rel="icon" href="./assets/icon-192.png">
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./boot.js"></script>
+</head>
+<body>
+  <canvas id="studio" aria-label="Winteria Studio"></canvas>
+  <main id="launcher">
+    <img src="./assets/icon-192.png" width="72" height="72" alt="">
+    <h1>Winteria</h1>
+    <button id="open" disabled>Загрузка…</button>
+    <p id="status" role="status"></p>
+  </main>
+  <dialog id="sound-picker">
+    <form method="dialog">
+      <label id="sound-label" for="sounds">Выбрать WAV</label>
+      <input id="sounds" type="file" accept=".wav,audio/wav,audio/x-wav" multiple>
+      <p id="sound-status" role="status"></p>
+      <button>Готово</button>
+    </form>
+  </dialog>
+</body>
+</html>

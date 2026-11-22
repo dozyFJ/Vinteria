@@ -78,3 +78,24 @@ Z..M lower piano row, Q..P upper piano row (number keys are sharps) - minus/equa
 - Plugin Grid Template (`src/ui/plugin_ui.rs`): one adaptive editor (header, presets, graph, knob grid, dry/wet) for every built-in plugin.
 - 20 Essentials FX + signature plugins **ViHalla** (12 modes, Shimmer, Freeze, Ducking, Dual Space A/B) and **ViGross** (Reverse, Stutter, volume pattern, Pattern Morph) in `src/fx.rs` / `src/fx_ext.rs`. Old projects load unchanged (`FxSlot::x` defaults to zeros).
 - Smart Steps (`src/ui/smart_steps.rs`): per-step Velocity / Pitch / Pan / Slide / Probability for drum lanes, Step Paint, waveform, Morph A/B. Stored in `sequencer::Step` (serde defaults keep old projects valid).
+
+## Winteria PWA
+
+The PWA uses Winteria's Rust engine and original editors via WebAssembly and Web Audio.
+
+Install the Rust target and the `wasm-bindgen-cli` version from `Cargo.lock`
+(currently `0.2.129`), then build and serve the static files.
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version 0.2.129 --locked
+./tools/build-web.sh
+python3 -m http.server 8080 -d target/winteria-pwa
+```
+
+Open `http://localhost:8080` and tap **Открыть Studio**. For other devices,
+host the contents of `target/winteria-pwa` over HTTPS. The browser can install
+the app from its menu and cache it for offline use after the first load.
+Projects and imported WAV files stay in the browser profile for that address.
+Microphone recording needs browser permission. MIDI recording uses the
+on-screen Piano Roll keys. USB MIDI input is currently native-only.

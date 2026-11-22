@@ -1,10 +1,10 @@
 //! Audio recording: the default input device (microphone / line in) is captured to a mono buffer while the record button is on.
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(target_arch = "wasm32"))]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Default)]
 pub struct AudioRecorder {
     stream: Option<cpal::Stream>,
@@ -12,14 +12,14 @@ pub struct AudioRecorder {
     rate: u32,
 }
 
-#[cfg(target_os = "android")]
+#[cfg(target_arch = "wasm32")]
 #[derive(Default)]
 pub struct AudioRecorder {
     buf: Arc<Mutex<Vec<f32>>>,
     rate: u32,
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(target_arch = "wasm32"))]
 impl AudioRecorder {
     pub fn active(&self) -> bool {
         self.stream.is_some()
@@ -63,7 +63,7 @@ impl AudioRecorder {
     }
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(target_arch = "wasm32"))]
 fn push(buf: &Arc<Mutex<Vec<f32>>>, it: impl Iterator<Item = f32>, ch: usize) {
     let all: Vec<f32> = it.collect();
     if let Ok(mut b) = buf.lock() {
@@ -71,10 +71,10 @@ fn push(buf: &Arc<Mutex<Vec<f32>>>, it: impl Iterator<Item = f32>, ch: usize) {
     }
 }
 
-#[cfg(target_os = "android")]
+#[cfg(target_arch = "wasm32")]
 impl AudioRecorder {
     pub fn active(&self) -> bool { false }
-    pub fn start(&mut self) -> Result<(), String> { Err("Audio recording not available on Android".into()) }
+    pub fn start(&mut self) -> Result<(), String> { Err("Use the browser microphone recorder".into()) }
     pub fn stop(&mut self) -> Option<(Vec<f32>, u32)> { None }
 }
 

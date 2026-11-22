@@ -100,7 +100,16 @@ impl PartialEq for SampleRef {
 }
 
 pub fn load_wav(path: &Path) -> Result<SampleData, String> {
-    let mut r = hound::WavReader::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    #[cfg(target_arch = "wasm32")]
+    if let Some(bytes) = crate::web::sample_bytes(path) {
+        return decode_wav(std::io::Cursor::new(bytes));
+    }
+    let input = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    decode_wav(std::io::BufReader::new(input))
+}
+
+pub(crate) fn decode_wav(input: impl std::io::Read) -> Result<SampleData, String> {
+    let mut r = hound::WavReader::new(input).map_err(|e| format!("invalid WAV: {e}"))?;
     let spec = r.spec();
     let ch = spec.channels.max(1) as usize;
     let max_samples = (spec.sample_rate as usize).saturating_mul(60).saturating_mul(ch);
@@ -892,6 +901,10 @@ impl Project {
     pub fn save(&self, path: &Path) -> Result<(), String> {
         let w = FileWrapper { app: "SYNTHESIA".into(), version: FILE_VERSION, project: self.clone() };
         let json = serde_json::to_string_pretty(&w).map_err(|e| e.to_string())?;
+        #[cfg(target_arch = "wasm32")]
+        return crate::web::save_project(path, &json);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
         // write beside the file and swap it in: a crash or a full disk in the middle never destroys the old project
         let mut tmp = path.as_os_str().to_owned();
         tmp.push(".tmp");
@@ -901,10 +914,14 @@ impl Project {
             let _ = std::fs::remove_file(&tmp);
             format!("{}: {e}", path.display())
         })
+        }
     }
 
     /// Returns the project and a list of warnings (e.g. missing sample files).
     pub fn load(path: &Path) -> Result<(Project, Vec<String>), String> {
+        #[cfg(target_arch = "wasm32")]
+        let text = crate::web::read_project(path)?;
+        #[cfg(not(target_arch = "wasm32"))]
         let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let w: FileWrapper = serde_json::from_str(&text).map_err(|e| format!("invalid project file: {e}"))?;
         if w.app != "SYNTHESIA" {

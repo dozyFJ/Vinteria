@@ -75,51 +75,63 @@ pub fn sample_panel(ui: &mut Ui, project: &mut Project, lane: usize, sel_sample:
         ui.label(egui::RichText::new("Drag a WAV sound from the Browser onto the track in the Playlist.").color(DIM()));
         return;
     };
-    ui.horizontal_top(|ui| {
-        ui.vertical(|ui| {
-            ui.set_width((ui.available_width() - 300.0).max(300.0));
-            ui.label(egui::RichText::new(&sample.name).size(18.0).strong().color(TEXT()));
-            let Some(d) = sample.data.clone() else {
-                ui.label(egui::RichText::new("sound data is not loaded").color(RED));
-                return;
-            };
-            let secs = d.mono.len() as f32 / d.rate as f32;
-            let bars = secs * project.bpm / 60.0 / 4.0;
-            ui.label(egui::RichText::new(format!("{:.1} kHz  -  {secs:.2} s  -  {bars:.2} bars at {:.0} BPM  -  {}", d.rate as f32 / 1000.0, project.bpm, sample.path)).color(DIM()).size(11.0));
-            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), (ui.available_height() - 36.0).clamp(80.0, 180.0)), Sense::click());
-            let p = ui.painter_at(rect);
-            p.rect_filled(rect, corner(), INSET());
-            let n = d.mono.len();
-            let w = rect.width().max(1.0) as usize;
-            let mid = rect.center().y;
-            for x in 0..w {
-                let a0 = x * n / w;
-                let a1 = ((x + 1) * n / w).max(a0 + 1).min(n);
-                let stride = ((a1 - a0) / 32).max(1);
-                let (mut pk, mut i) = (0.0f32, a0);
-                while i < a1 {
-                    pk = pk.max(d.mono[i].abs());
-                    i += stride;
-                }
-                let h = pk.min(1.0) * (rect.height() * 0.5 - 3.0);
-                p.line_segment([pos2(rect.left() + x as f32, mid - h), pos2(rect.left() + x as f32, mid + h)], Stroke::new(1.0, TEAL()));
+    let stacked = ui.available_width() < 600.0;
+    let bpm = project.bpm;
+    let waveform = |ui: &mut Ui| {
+        ui.label(egui::RichText::new(&sample.name).size(18.0).strong().color(TEXT()));
+        let Some(d) = sample.data.clone() else {
+            ui.label(egui::RichText::new("sound data is not loaded").color(RED));
+            return;
+        };
+        let secs = d.mono.len() as f32 / d.rate as f32;
+        let bars = secs * bpm / 60.0 / 4.0;
+        ui.label(egui::RichText::new(format!("{:.1} kHz  -  {secs:.2} s  -  {bars:.2} bars at {:.0} BPM  -  {}", d.rate as f32 / 1000.0, bpm, sample.path)).color(DIM()).size(11.0));
+        let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), (ui.available_height() - 36.0).clamp(80.0, 180.0)), Sense::click());
+        let p = ui.painter_at(rect);
+        p.rect_filled(rect, corner(), INSET());
+        let n = d.mono.len();
+        let w = rect.width().max(1.0) as usize;
+        let mid = rect.center().y;
+        for x in 0..w {
+            let a0 = x * n / w;
+            let a1 = ((x + 1) * n / w).max(a0 + 1).min(n);
+            let stride = ((a1 - a0) / 32).max(1);
+            let (mut pk, mut i) = (0.0f32, a0);
+            while i < a1 {
+                pk = pk.max(d.mono[i].abs());
+                i += stride;
             }
-            // bar lines at the project tempo
-            let bar_px = 60.0 / project.bpm * 4.0 / secs * rect.width();
-            let mut x = bar_px;
-            while x < rect.width() && bar_px > 6.0 {
-                p.line_segment([pos2(rect.left() + x, rect.top()), pos2(rect.left() + x, rect.bottom())], Stroke::new(1.0, LIGHT().linear_multiply(0.35)));
-                x += bar_px;
-            }
-            p.text(rect.left_top() + vec2(8.0, 6.0), Align2::LEFT_TOP, "click to preview", FontId::proportional(10.0), LIGHT());
-            if resp.clicked() {
-                shared.send(Cmd::Preview(d));
-            }
-            let _ = TICKS_PER_BAR;
+            let h = pk.min(1.0) * (rect.height() * 0.5 - 3.0);
+            p.line_segment([pos2(rect.left() + x as f32, mid - h), pos2(rect.left() + x as f32, mid + h)], Stroke::new(1.0, TEAL()));
+        }
+        // bar lines at the project tempo
+        let bar_px = 60.0 / bpm * 4.0 / secs * rect.width();
+        let mut x = bar_px;
+        while x < rect.width() && bar_px > 6.0 {
+            p.line_segment([pos2(rect.left() + x, rect.top()), pos2(rect.left() + x, rect.bottom())], Stroke::new(1.0, LIGHT().linear_multiply(0.35)));
+            x += bar_px;
+        }
+        p.text(rect.left_top() + vec2(8.0, 6.0), Align2::LEFT_TOP, "click to preview", FontId::proportional(10.0), LIGHT());
+        if resp.clicked() {
+            shared.send(Cmd::Preview(d));
+        }
+        let _ = TICKS_PER_BAR;
+    };
+    if stacked {
+        ui.vertical(waveform);
+        ui.add_space(8.0);
+        ui.spacing_mut().slider_width = (ui.available_width() - 98.0).clamp(50.0, 120.0);
+        strip_sliders(ui, project, CH_AUDIO, "Audio channel (shared by all audio tracks)");
+    } else {
+        ui.horizontal_top(|ui| {
+            ui.vertical(|ui| {
+                ui.set_width((ui.available_width() - 300.0).max(300.0));
+                waveform(ui);
+            });
+            ui.add_space(20.0);
+            ui.vertical(|ui| strip_sliders(ui, project, CH_AUDIO, "Audio channel (shared by all audio tracks)"));
         });
-        ui.add_space(20.0);
-        ui.vertical(|ui| strip_sliders(ui, project, CH_AUDIO, "Audio channel (shared by all audio tracks)"));
-    });
+    }
 }
 
 /// Track strip stacked vertically (for the narrow column under the Playlist's track list).

@@ -204,22 +204,24 @@ fn graph(ui: &mut Ui, slot: &FxSlot) {
 
 /// Small peak indicator next to the header (driven by the slot's wet level setting, not the audio thread).
 fn header(ui: &mut Ui, slot: &mut FxSlot) {
-    ui.horizontal(|ui| {
+    let compact = ui.available_width() < 350.0;
+    ui.horizontal_wrapped(|ui| {
         super::widgets::led_tip(ui, &mut slot.on, "Enable / bypass");
         ui.label(RichText::new(slot.kind.name()).strong().size(15.0));
-        ui.label(RichText::new(slot.kind.category()).small().color(DIM()));
-        if slot.kind.is_signature() {
-            ui.label(RichText::new("WINTERIA").small().color(CYAN()));
+        if !compact {
+            ui.label(RichText::new(slot.kind.category()).small().color(DIM()));
+            if slot.kind.is_signature() {
+                ui.label(RichText::new("WINTERIA").small().color(CYAN()));
+            }
         }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let presets = slot.kind.presets();
-            egui::ComboBox::from_id_salt(("preset", slot.kind as u8)).selected_text("Presets").width(120.0).show_ui(ui, |ui| {
-                for (name, vals) in &presets {
-                    if ui.selectable_label(false, *name).clicked() {
-                        slot.set_all(vals);
-                    }
+        let presets = slot.kind.presets();
+        let width = if compact { 72.0 } else { 120.0 };
+        egui::ComboBox::from_id_salt(("preset", slot.kind as u8)).selected_text("Presets").width(width).show_ui(ui, |ui| {
+            for (name, vals) in &presets {
+                if ui.selectable_label(false, *name).clicked() {
+                    slot.set_all(vals);
                 }
-            });
+            }
         });
     });
 }

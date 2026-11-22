@@ -81,13 +81,18 @@ impl ExportSettings {
 }
 
 pub fn write_wav(path: &Path, data: &[f32], s: &ExportSettings) -> Result<(), String> {
+    let file = std::fs::File::create(path).map_err(|error| error.to_string())?;
+    write_wav_to(std::io::BufWriter::new(file), data, s)
+}
+
+pub(crate) fn write_wav_to(output: impl std::io::Write + std::io::Seek, data: &[f32], s: &ExportSettings) -> Result<(), String> {
     let (bits, fmt) = match s.depth {
         BitDepth::Pcm16 => (16, hound::SampleFormat::Int),
         BitDepth::Pcm24 => (24, hound::SampleFormat::Int),
         BitDepth::Float32 => (32, hound::SampleFormat::Float),
     };
     let spec = hound::WavSpec { channels: 2, sample_rate: s.sample_rate, bits_per_sample: bits, sample_format: fmt };
-    let mut w = hound::WavWriter::create(path, spec).map_err(|e| e.to_string())?;
+    let mut w = hound::WavWriter::new(output, spec).map_err(|e| e.to_string())?;
     let mut seed = 0x9E37_79B9u32;
     let mut rnd = move || {
         seed ^= seed << 13;

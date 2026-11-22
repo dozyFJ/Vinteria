@@ -115,7 +115,7 @@ fn dec(s: &str) -> String {
 }
 
 fn nonce() -> String {
-    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(1);
+    let t = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(1);
     format!("{:x}{:x}", t, std::process::id())
 }
 
@@ -168,7 +168,7 @@ fn run(cfg: &Config) -> Result<Profile, String> {
     Command::new("rundll32").args(["url.dll,FileProtocolHandler", &url]).spawn().map_err(|e| format!("could not open the browser: {e}"))?;
     // give up after 3 minutes
     listener.set_nonblocking(true).map_err(|e| e.to_string())?;
-    let started = std::time::Instant::now();
+    let started = web_time::Instant::now();
     let (mut stream, _) = loop {
         match listener.accept() {
             Ok(c) => break c,

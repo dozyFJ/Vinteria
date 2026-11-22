@@ -11,7 +11,7 @@ use crate::fx::{FxKind, FxSlot};
 use crate::mixer::NUM_INSERTS;
 use crate::piano_roll::Track;
 use crate::project::Project;
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_arch = "wasm32"))]
 use crate::rfd;
 use egui::{pos2, vec2, Align2, Color32, FontId, Painter, Pos2, Rect, RichText, Sense, Shape, Stroke, Ui};
 use std::path::PathBuf;

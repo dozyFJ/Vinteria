@@ -1,3 +1,5 @@
+#[cfg(target_arch = "wasm32")]
+mod web;
 pub mod arrangement;
 pub mod audio_engine;
 pub mod audio_rec;
@@ -68,7 +70,7 @@ fn bench() {
             e.play();
             let secs = 10.0;
             let mut buf = vec![0.0f32; 48000 * 10 * 2];
-            let t0 = std::time::Instant::now();
+            let t0 = web_time::Instant::now();
             for c in buf.chunks_mut(512) {
                 e.render(c);
             }
@@ -87,7 +89,7 @@ fn bench_variant(label: &str, mutate: impl Fn(&mut project::Project)) {
     e.set_project(Arc::new(p));
     e.play();
     let mut buf = vec![0.0f32; 48000 * 10 * 2];
-    let t0 = std::time::Instant::now();
+    let t0 = web_time::Instant::now();
     for c in buf.chunks_mut(512) {
         e.render(c);
     }
@@ -95,7 +97,7 @@ fn bench_variant(label: &str, mutate: impl Fn(&mut project::Project)) {
 }
 
 fn micro() {
-    use std::time::Instant;
+    use web_time::Instant;
     let n = 480000usize;
     let sr = 48000.0f32;
     let p = project::Project::default();
@@ -344,11 +346,16 @@ pub fn desktop_main() -> eframe::Result<()> {
     });
     let win_size = forced.unwrap_or([1440.0, 900.0]);
     let min_size = if forced.is_some() { [200.0, 200.0] } else { [1100.0, 720.0] };
+    #[cfg(target_arch = "wasm32")]
+    return Ok(());
+    #[cfg(not(target_arch = "wasm32"))]
+    {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size(win_size).with_min_inner_size(min_size).with_title("Winteria DAW").with_decorations(false).with_resizable(true).with_maximized(forced.is_none()).with_icon(std::sync::Arc::new(make_icon())),
         ..Default::default()
     };
     eframe::run_native("Winteria DAW", options, Box::new(|cc| Ok(Box::new(ui::VinteriaApp::new(cc)))))
+    }
 }
 
 /// Launch the shared DAW interface from Android’s native activity.
@@ -459,7 +466,7 @@ fn android_panic_hook() {
 }
 
 /// Route named saves to private app storage until Android file pickers are available.
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_arch = "wasm32"))]
 pub mod rfd {
     use std::path::{Path, PathBuf};
     #[derive(Default)]

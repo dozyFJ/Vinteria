@@ -31,10 +31,12 @@ fn show(ui: &mut Ui, p: &mut Project, st: &mut ArrState, dc: &mut DetailCtx, plu
     let lane = st.sel_lane;
     let Some(track) = p.arrangement.tracks.get(lane) else { return };
     let mobile_instrument = part == 3;
-    let instrument_width = if mobile_instrument { (ui.available_width() - 22.0).clamp(120.0, 286.0) } else { 286.0 };
+    let mobile_effects = part == 4;
+    let effects_only = part == 2 || mobile_effects;
+    let instrument_width = if mobile_instrument { (ui.available_width() - 22.0).max(0.0) } else { 286.0 };
     let (name, kind, out) = (track.name.clone(), track.kind, track.output.filter(|&i| i < NUM_INSERTS));
     p.insert_fx.resize_with(NUM_INSERTS, Vec::new);
-    if !mobile_instrument {
+    if !mobile_instrument && !mobile_effects {
         ui.horizontal(|ui| {
             ui.label(RichText::new("Device chain").strong());
             ui.label(RichText::new(name).color(lane_col(lane)));
@@ -44,9 +46,8 @@ fn show(ui: &mut Ui, p: &mut Project, st: &mut ArrState, dc: &mut DetailCtx, plu
         ui.add_space(6.0);
     }
     let mut add_fx = None;
-    egui::ScrollArea::horizontal().id_salt(("track_device_chain", lane, mobile_instrument)).auto_shrink([false, false]).show(ui, |ui| {
-        ui.horizontal(|ui| {
-            if part == 2 || mobile_instrument {} else if let Some(i) = st.sel_clip.filter(|&i| p.arrangement.clips.get(i).map_or(false, |c| c.lane == lane)) {
+    let chain_content = |ui: &mut Ui| {
+            if effects_only || mobile_instrument {} else if let Some(i) = st.sel_clip.filter(|&i| p.arrangement.clips.get(i).map_or(false, |c| c.lane == lane)) {
                 ui.push_id(("device_clip_options", lane, i), |ui| {
                     card_ui(ui, 270.0, |ui| {
                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
@@ -67,8 +68,8 @@ fn show(ui: &mut Ui, p: &mut Project, st: &mut ArrState, dc: &mut DetailCtx, plu
                     ui.label(RichText::new("Select a clip to edit its options").small().color(DIM()));
                 });
             }
-            if part != 2 && !mobile_instrument { ui.label(RichText::new("→").color(DIM())); }
-            if part == 2 {} else if kind == TrackKind::Midi {
+            if !effects_only && !mobile_instrument { ui.label(RichText::new("→").color(DIM())); }
+            if effects_only {} else if kind == TrackKind::Midi {
                 let mut picked = None;
                 let current = p.arrangement.tracks[lane].instrument;
                 let response = card_ui(ui, instrument_width, |ui| {
@@ -136,13 +137,19 @@ fn show(ui: &mut Ui, p: &mut Project, st: &mut ArrState, dc: &mut DetailCtx, plu
                 let len = chain.len(); let mut clear = None; let mut swap = None;
                 for k in 0..len {
                     if chain[k].empty { continue; }
-                    ui.label(RichText::new("→").color(DIM()));
+                    if !mobile_effects {
+                        ui.label(RichText::new("→").color(DIM()));
+                    }
                     ui.push_id(("chain_device", lane, i, k), |ui| {
                         let slot = &mut chain[k];
                         // Ableton style: a click on the device's strip folds it into a narrow vertical bar, a click on the bar opens it again
                         let fold_id = egui::Id::new(("device_folded", lane, i, k));
                         let folded = ui.data(|d| d.get_temp::<bool>(fold_id)).unwrap_or(false);
-                        let response = if folded {
+                        let response = if mobile_effects {
+                            card_ui(ui, (ui.available_width() - 22.0).max(0.0), |ui| {
+                                super::plugin_ui::plugin_grid(ui, slot);
+                            })
+                        } else if folded {
                             let h = ui.available_height().max(150.0).min(240.0);
                             let (rect, r) = ui.allocate_exact_size(vec2(34.0, h), Sense::click());
                             let p = ui.painter();
@@ -168,16 +175,20 @@ fn show(ui: &mut Ui, p: &mut Project, st: &mut ArrState, dc: &mut DetailCtx, plu
                         };
                         response.context_menu(|ui| {
                             if ui.button("Clear device").clicked() { clear = Some(k); ui.close_menu(); }
-                            if ui.add_enabled(k > 0, egui::Button::new("Move left")).clicked() { swap = Some((k - 1, k)); ui.close_menu(); }
-                            if ui.add_enabled(k + 1 < len, egui::Button::new("Move right")).clicked() { swap = Some((k, k + 1)); ui.close_menu(); }
+                            if ui.add_enabled(k > 0, egui::Button::new(if mobile_effects { "Move up" } else { "Move left" })).clicked() { swap = Some((k - 1, k)); ui.close_menu(); }
+                            if ui.add_enabled(k + 1 < len, egui::Button::new(if mobile_effects { "Move down" } else { "Move right" })).clicked() { swap = Some((k, k + 1)); ui.close_menu(); }
                         });
                     });
                 }
                 if let Some(k) = clear { chain[k] = FxSlot::empty(); }
                 if let Some((a, b)) = swap { chain.swap(a, b); }
             }
-            if part != 1 && !mobile_instrument { ui.label(RichText::new("→").color(DIM()));
-            card_ui(ui, 184.0, |ui| {
+            if part != 1 && !mobile_instrument {
+            if !mobile_effects {
+                ui.label(RichText::new("→").color(DIM()));
+            }
+            let width = if mobile_effects { (ui.available_width() - 22.0).max(0.0) } else { 184.0 };
+            card_ui(ui, width, |ui| {
                 ui.label(RichText::new("Audio effects").strong()); ui.separator();
                 ui.label(RichText::new("Add the next device\nto this signal chain").small().color(DIM()));
                 ui.add_space(10.0);
@@ -185,8 +196,14 @@ fn show(ui: &mut Ui, p: &mut Project, st: &mut ArrState, dc: &mut DetailCtx, plu
                     for kind in ALL { if ui.button(kind.name()).clicked() { add_fx = Some(kind); ui.close_menu(); } }
                 });
             }); }
+    };
+    if mobile_instrument || mobile_effects {
+        ui.vertical(chain_content);
+    } else {
+        egui::ScrollArea::horizontal().id_salt(("track_device_chain", lane)).auto_shrink([false, false]).show(ui, |ui| {
+            ui.horizontal(chain_content);
         });
-    });
+    }
     if let Some(kind) = add_fx {
         if let Some(i) = out.or_else(|| free_insert(p)) {
             p.arrangement.tracks[lane].output = Some(i);
@@ -299,41 +316,34 @@ fn section(ui: &mut Ui, title: &str, width: f32, content: impl FnOnce(&mut Ui)) 
 /// `lead` draws extra cards in front of the track's own (the options of the selected clip), in the same flow.
 fn track_settings(ui: &mut Ui, p: &mut Project, lane: usize, mobile: bool, mut extra: impl FnMut(&mut Ui, &mut Project, u8)) {
     let Some((kind, name)) = p.arrangement.tracks.get(lane).map(|t| (t.kind, t.name.clone())) else { return };
-    // the pages depend on what was picked: a MIDI track has an instrument, an audio track has a sound to time-stretch / pitch
-    let is_midi = p.arrangement.tracks.get(lane).map_or(true, |t| t.kind == TrackKind::Midi);
-    // three pages like a sampler panel: Main (name, instrument, level, pitch) / Instrument (clip options + editor) / Routing (in, out, sidechain)
-    let pages = if mobile {
-        // phone: one big card per page, 7 = the phone's General card (name, level, mute/solo/rec, pitch)
-        if is_midi {
-            [("Main", vec![7]), ("Instrument", vec![0]), ("Routing", vec![2, 4]), ("Effects", vec![6])]
-        } else {
-            [("Main", vec![7]), ("Sample", vec![0]), ("Routing", vec![2, 4]), ("Effects", vec![6])]
-        }
+    let is_midi = kind == TrackKind::Midi;
+    let pages: &[(&str, &[u8])] = if mobile {
+        &[("Main", &[7, 0, 2, 4]), ("Effects", &[6])]
     } else if is_midi {
-        [("Main", vec![1, 5]), ("Instrument", vec![0]), ("Routing", vec![2, 4]), ("Effects", vec![6])]
+        &[("Main", &[1, 5]), ("Instrument", &[0]), ("Routing", &[2, 4])]
     } else {
-        [("Main", vec![1, 3]), ("Sample", vec![0]), ("Routing", vec![2, 4]), ("Effects", vec![6])]
+        &[("Main", &[1, 3]), ("Sample", &[0]), ("Routing", &[2, 4])]
     };
-    let page_count = if mobile { 4 } else { 3 };
-    let tab_id = egui::Id::new(("ts_page", lane, mobile));
-    let mut cur_tab = ui.data(|d| d.get_temp::<usize>(tab_id)).unwrap_or(0).min(page_count - 1);
+    let tab_id = if mobile { egui::Id::new(("m_track_settings_page", lane)) } else { egui::Id::new(("ts_page", lane, mobile)) };
+    let mut cur_tab = ui.data(|d| d.get_temp::<usize>(tab_id)).unwrap_or(0).min(pages.len() - 1);
     let body_rect = if mobile {
-        // pill bar under the header, the page below it at full width
-        egui::ScrollArea::horizontal().id_salt(("ts_pills", lane)).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                for (i, (label, _)) in pages.iter().enumerate() {
-                    if mobile_pill(ui, label, cur_tab == i) { cur_tab = i; }
-                }
-            });
-        });
         ui.add_space(8.0);
-        ui.available_rect_before_wrap()
+        let mut body = ui.available_rect_before_wrap();
+        let rail = Rect::from_min_size(body.min, vec2(76.0, body.height()));
+        ui.painter().rect_filled(rail, card(), PANEL2());
+        let mut tabs = ui.new_child(egui::UiBuilder::new().max_rect(rail.shrink(4.0)).layout(egui::Layout::top_down(egui::Align::LEFT)));
+        for (i, (label, _)) in pages.iter().enumerate() {
+            if tabs.add_sized([68.0, 44.0], egui::Button::new(*label).selected(cur_tab == i)).clicked() {
+                cur_tab = i;
+            }
+        }
+        body.min.x = rail.right() + 8.0;
+        body
     } else {
         ui.horizontal(|ui| {
             ui.label(RichText::new(format!("Track Settings – {name}")).strong().size(14.0));
             ui.add_space(16.0);
-            for (i, (label, _)) in pages.iter().take(page_count).enumerate() {
+            for (i, (label, _)) in pages.iter().enumerate() {
                 if pill_tab(ui, label, cur_tab == i) { cur_tab = i; }
             }
         });
@@ -341,7 +351,7 @@ fn track_settings(ui: &mut Ui, p: &mut Project, lane: usize, mobile: bool, mut e
         ui.available_rect_before_wrap()
     };
     ui.data_mut(|d| d.insert_temp(tab_id, cur_tab));
-    let tids = &pages[cur_tab].1;
+    let tids = pages[cur_tab].1;
     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(body_rect).layout(egui::Layout::top_down(egui::Align::LEFT)), |ui| {
     if mobile {
         ui.set_clip_rect(body_rect.intersect(ui.clip_rect()));
@@ -369,7 +379,7 @@ fn track_settings(ui: &mut Ui, p: &mut Project, lane: usize, mobile: bool, mut e
                     ui.label(RichText::new("Name").small().color(DIM()));
                     ui.add(egui::TextEdit::singleline(&mut tr.name).desired_width(f32::INFINITY));
                     ui.add_space(8.0);
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing.x = 6.0;
                         let mute = tr.mute;
                         if mobile_pill(ui, "Mute", mute) { tr.mute = !mute; }
@@ -400,7 +410,7 @@ fn track_settings(ui: &mut Ui, p: &mut Project, lane: usize, mobile: bool, mut e
                     });
                 }),
                 2 => section(ui, "Input / Output", 340.0 * k, |ui| {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         ui.vertical(|ui| {
                             ui.label(RichText::new("Input").small().color(DIM()));
                             let names = crate::arrangement::input_names(kind);
@@ -413,9 +423,11 @@ fn track_settings(ui: &mut Ui, p: &mut Project, lane: usize, mobile: bool, mut e
                             ui.label(RichText::new("Output").small().color(DIM()));
                             super::mixer_ui::output_picker(ui, ("ts_output", lane), &mut tr.output);
                         });
-                        ui.vertical(|ui| {
-                            super::widgets::knob(ui, "Volume", &mut tr.volume, 0.0, 1.5, false, |v| format!("{:+.1} dB", super::widgets::db(v)));
-                        });
+                        if !mobile {
+                            ui.vertical(|ui| {
+                                super::widgets::knob(ui, "Volume", &mut tr.volume, 0.0, 1.5, false, |v| format!("{:+.1} dB", super::widgets::db(v)));
+                            });
+                        }
                     });
                 }),
                 5 => section(ui, "Instrument", 300.0 * k, |ui| {
@@ -468,9 +480,11 @@ pub(super) fn mobile_track_settings(
     let audio = project.arrangement.kind(lane) == TrackKind::Audio;
     track_settings(ui, project, lane, true, |ui, project, part| {
         match part {
-            0 if audio => super::track_ui::sample_panel(ui, project, lane, state.sel_sample, library, shared),
+            0 if audio => section(ui, "Sample", f32::INFINITY, |ui| {
+                super::track_ui::sample_panel(ui, project, lane, state.sel_sample, library, shared);
+            }),
             0 => show(ui, project, state, detail, plugin_window, library, shared.position.load(std::sync::atomic::Ordering::Relaxed), 3),
-            2 => show(ui, project, state, detail, plugin_window, library, shared.position.load(std::sync::atomic::Ordering::Relaxed), 2),
+            2 => show(ui, project, state, detail, plugin_window, library, shared.position.load(std::sync::atomic::Ordering::Relaxed), 4),
             _ => {}
         }
     });

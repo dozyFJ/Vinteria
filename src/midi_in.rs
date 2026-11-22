@@ -3,7 +3,7 @@ use crate::audio_engine::device::Shared;
 use crate::audio_engine::Cmd;
 use crate::piano_roll::Track;
 use crossbeam_channel::{bounded, Receiver, Sender};
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
 use midir::{MidiInput, MidiInputConnection};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -15,7 +15,7 @@ pub struct MidiEvent {
     pub vel: u8,
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
 pub struct MidiIn {
     pub ports: Vec<String>,
     pub selected: Option<String>,
@@ -26,7 +26,7 @@ pub struct MidiIn {
     pub error: Option<String>,
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
 impl MidiIn {
     pub fn new(shared: Arc<Shared>) -> Self {
         let (tx, rx) = bounded(256);
@@ -94,7 +94,7 @@ impl MidiIn {
 }
 
 /// Android: no MIDI input in the first beta.
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_arch = "wasm32"))]
 pub struct MidiIn {
     pub ports: Vec<String>,
     pub selected: Option<String>,
@@ -102,7 +102,7 @@ pub struct MidiIn {
     pub error: Option<String>,
 }
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_arch = "wasm32"))]
 impl MidiIn {
     pub fn new(_shared: Arc<Shared>) -> Self {
         let (_tx, rx) = bounded(1);

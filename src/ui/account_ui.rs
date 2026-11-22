@@ -1,6 +1,6 @@
 //! Account panel: a left panel of its own (apart from the Browser) with the Google profile and the local storage of projects.
 use super::{theme::*, VinteriaApp};
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_arch = "wasm32"))]
 use crate::rfd;
 use crate::google_auth as g;
 use egui::{pos2, vec2, Align2, FontId, RichText, Sense, Stroke};
