@@ -72,6 +72,38 @@ pub fn auto_at(points: &[AutoPoint], tick: u32) -> Option<f32> {
     points.last().map(|p| p.v)
 }
 
+/// A time-bounded envelope for one parameter of a track's insert effect.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct FxAutomationClip {
+    pub effect: u64,
+    pub param: usize,
+    pub label: String,
+    pub start: u32,
+    pub len: u32,
+    pub min: f32,
+    pub max: f32,
+    pub points: Vec<AutoPoint>,
+}
+
+impl FxAutomationClip {
+    pub fn end(&self) -> u32 {
+        self.start.saturating_add(self.len)
+    }
+
+    pub fn value_at(&self, tick: u32) -> Option<f32> {
+        if !(self.start..self.end()).contains(&tick) {
+            return None;
+        }
+        let level = auto_at(&self.points, tick - self.start)?;
+        level.is_finite().then(|| self.min + (self.max - self.min) * level.clamp(0.0, 1.0))
+    }
+
+    pub fn overlaps(&self, other: &Self) -> bool {
+        self.effect == other.effect && self.param == other.param
+            && self.start < other.end() && other.start < self.end()
+    }
+}
+
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArrTrack {
     pub name: String,
@@ -124,6 +156,8 @@ pub struct ArrTrack {
     pub group: u16,
     #[serde(default)]
     pub playlist_locked: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fx_automation: Vec<FxAutomationClip>,
 }
 
 /// A folder of tracks in the Playlist: collapsed, only its first track shows (the others are hidden but still play).
@@ -226,10 +260,10 @@ impl Arrangement {
     pub fn starter_tracks() -> Vec<ArrTrack> {
         let mut t = vec![];
         for i in 1..=3 {
-            t.push(ArrTrack { name: format!("MIDI {i}"), kind: TrackKind::Midi, mute: false, instrument: None, output: None, transpose: 0, blank: true, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, rendered_mix: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0, playlist_locked: false });
+            t.push(ArrTrack { name: format!("MIDI {i}"), kind: TrackKind::Midi, mute: false, instrument: None, output: None, transpose: 0, blank: true, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, rendered_mix: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0, playlist_locked: false, fx_automation: Vec::new() });
         }
         for i in 1..=3 {
-            t.push(ArrTrack { name: format!("Audio {i}"), kind: TrackKind::Audio, mute: false, instrument: None, output: None, transpose: 0, blank: false, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, rendered_mix: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0, playlist_locked: false });
+            t.push(ArrTrack { name: format!("Audio {i}"), kind: TrackKind::Audio, mute: false, instrument: None, output: None, transpose: 0, blank: false, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, rendered_mix: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0, playlist_locked: false, fx_automation: Vec::new() });
         }
         t
     }
@@ -237,10 +271,10 @@ impl Arrangement {
     pub fn default_tracks() -> Vec<ArrTrack> {
         let mut t = vec![];
         for i in 1..=4 {
-            t.push(ArrTrack { name: format!("MIDI {i}"), kind: TrackKind::Midi, mute: false, instrument: None, output: None, transpose: 0, blank: false, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, rendered_mix: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0, playlist_locked: false });
+            t.push(ArrTrack { name: format!("MIDI {i}"), kind: TrackKind::Midi, mute: false, instrument: None, output: None, transpose: 0, blank: false, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, rendered_mix: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0, playlist_locked: false, fx_automation: Vec::new() });
         }
         for i in 1..=4 {
-            t.push(ArrTrack { name: format!("Audio {i}"), kind: TrackKind::Audio, mute: false, instrument: None, output: None, transpose: 0, blank: false, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, rendered_mix: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0, playlist_locked: false });
+            t.push(ArrTrack { name: format!("Audio {i}"), kind: TrackKind::Audio, mute: false, instrument: None, output: None, transpose: 0, blank: false, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, rendered_mix: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0, playlist_locked: false, fx_automation: Vec::new() });
         }
         t
     }
@@ -263,7 +297,7 @@ impl Arrangement {
             TrackKind::Midi => format!("MIDI {n}"),
             TrackKind::Audio => format!("Audio {n}"),
         };
-        self.tracks.push(ArrTrack { name, kind, mute: false, instrument: None, output: None, transpose: 0, blank: kind == TrackKind::Midi, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, rendered_mix: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0, playlist_locked: false });
+        self.tracks.push(ArrTrack { name, kind, mute: false, instrument: None, output: None, transpose: 0, blank: kind == TrackKind::Midi, sampler: Default::default(), snd: Default::default(), auto_vol: Vec::new(), sidechain_src: false, audio_brush: None, rendered_mix: false, solo: false, arm: false, input: 0, volume: 1.0, group: 0, playlist_locked: false, fx_automation: Vec::new() });
     }
 
     /// a track inside a collapsed folder that is not the folder's first track: not drawn in the Playlist

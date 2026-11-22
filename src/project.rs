@@ -283,6 +283,15 @@ struct FileWrapper {
 }
 
 impl Project {
+    /// Track-local effect automation needs a mixer insert dedicated to that track.
+    pub fn track_automation_insert(&self, lane: usize) -> Option<usize> {
+        let insert = self.arrangement.tracks.get(lane)?.output.filter(|&out| out < crate::mixer::NUM_INSERTS)?;
+        let shared = self.arrangement.tracks.iter().enumerate()
+            .any(|(index, track)| index != lane && track.output == Some(insert))
+            || self.channels.iter().take(crate::mixer::NUM_CH).any(|channel| channel.output == Some(insert));
+        (!shared).then_some(insert)
+    }
+
     /// A ready-to-play trap beat so that Play makes sound immediately.
     pub fn demo() -> Self {
         let mut p = Project { name: "Demo Trap".into(), ..Default::default() };

@@ -433,3 +433,8 @@ Browser открывается слева рядом с Playlist в обеих �
 - Swipe a Playlist track name horizontally for track actions, including locking and confirmed removal. Vertical dragging still groups tracks. Lock protects the track's clips and automation from Playlist edits while preserving playback.
 - Playlist options can enable or disable all tracks. Playing track cards show a stronger pulse and clip progress.
 - Playlist has Select, Clone, Undo and Redo. Tap individual clips or drag a marquee from an empty cell to select them. Clone preserves relative timing and lanes for mixed Audio and MIDI selections.
+
+### Android 1.0.73
+
+- Piano Roll uses its ruler to select a beat-aligned playback loop. Tap seeks, hold or Clear loop clears the range. The older note Select and Clone controls were removed.
+- Playlist track actions open Effects. On a dedicated track insert, supported Mix, Cutoff and Feedback parameters offer Create automation clip. The automation row supports drawing, dragging, resizing, cloning and deletion. The engine restores the configured effect parameter outside the clip.

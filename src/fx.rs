@@ -195,6 +195,8 @@ impl FxKind {
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct FxSlot {
+    #[serde(default, skip_serializing_if = "is_no_automation")]
+    pub automation_key: u64,
     #[serde(default)]
     pub empty: bool,
     #[serde(default = "full_wet")]
@@ -207,6 +209,8 @@ pub struct FxSlot {
     pub x: [f32; 8],
 }
 
+fn is_no_automation(key: &u64) -> bool { *key == 0 }
+
 fn full_wet() -> f32 { 1.0 }
 
 impl FxSlot {
@@ -216,7 +220,7 @@ impl FxSlot {
         for (i, sp) in s.iter().enumerate() {
             v[i] = sp.3;
         }
-        FxSlot { empty: false, wet: 1.0, kind, on: true, p: [v[0], v[1], v[2], v[3]], x: [v[4], v[5], v[6], v[7], v[8], v[9], v[10], v[11]] }
+        FxSlot { automation_key: 0, empty: false, wet: 1.0, kind, on: true, p: [v[0], v[1], v[2], v[3]], x: [v[4], v[5], v[6], v[7], v[8], v[9], v[10], v[11]] }
     }
 
     /// all parameters as one array
@@ -462,8 +466,25 @@ impl FxChain {
     }
 
     #[inline]
-    pub fn process(&mut self, slots: &[FxSlot], mut l: f32, mut r: f32, bpm: f32, sr: f32) -> (f32, f32) {
-        for ((_, run), slot) in self.runs.iter_mut().zip(slots) {
+    pub fn process(&mut self, slots: &[FxSlot], l: f32, r: f32, bpm: f32, sr: f32) -> (f32, f32) {
+        self.process_automated(slots, &[], l, r, bpm, sr)
+    }
+
+    #[inline]
+    pub fn process_automated(&mut self, slots: &[FxSlot], values: &[[f32; MAX_PARAMS]],
+        mut l: f32, mut r: f32, bpm: f32, sr: f32) -> (f32, f32)
+    {
+        for (index, ((_, run), original)) in self.runs.iter_mut().zip(slots).enumerate() {
+            let mut adjusted;
+            let slot = if let Some(values) = values.get(index).filter(|values| values.iter().any(|value| value.is_finite())) {
+                adjusted = original.clone();
+                for (param, &value) in values.iter().enumerate().filter(|(_, value)| value.is_finite()) {
+                    adjusted.set(param, value);
+                }
+                &adjusted
+            } else {
+                original
+            };
             if slot.empty || !slot.on {
                 continue;
             }

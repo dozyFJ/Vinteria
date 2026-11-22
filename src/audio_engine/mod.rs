@@ -22,6 +22,7 @@ use std::sync::Arc;
 pub enum Cmd {
     Play,
     PatternLoop(bool),
+    PatternRange(Option<(usize, u32, u32)>),
     /// halt without rewinding: the next Play goes on from the same place
     Pause,
     /// move the playhead: while playing the song jumps there, when stopped the next Play starts from there
@@ -265,6 +266,7 @@ pub struct Engine {
     /// the live player: a song that reaches its end starts again until the user presses Stop (export and tests stop at the end)
     pub live_loop: bool,
     pattern_loop: bool,
+    pattern_range: Option<(usize, u32, u32)>,
     /// velocity multiplier of the MIDI clip being fired (its fade in / out)
     clip_fade: f32,
     fx_run: Vec<crate::fx::FxChain>,
@@ -314,6 +316,7 @@ impl Engine {
             duck_env: 0.0,
             live_loop: false,
             pattern_loop: true,
+            pattern_range: None,
             clip_fade: 1.0,
             fx_run: (0..NUM_INSERTS).map(|_| crate::fx::FxChain::new()).collect(),
             master_run: crate::fx::FxChain::new(),
@@ -351,6 +354,7 @@ impl Engine {
         match c {
             Cmd::Play => self.play(),
             Cmd::PatternLoop(looping) => self.pattern_loop = looping,
+            Cmd::PatternRange(range) => self.pattern_range = range,
             Cmd::Stop => self.stop(),
             Cmd::Pause => {
                 if self.playing {
@@ -699,12 +703,28 @@ impl Engine {
                 }
             }
         } else if let Some(pat) = proj.patterns.get(proj.current_pattern) {
-            let local = self.song_tick % pat.len_ticks();
+            let period = pat.len_ticks().max(1);
+            let range = self.pattern_range.filter(|&(pattern, start, end)| {
+                self.pattern_loop && pattern == proj.current_pattern && start < end && end <= period
+            });
+            let mut local = self.song_tick % period;
+            if let Some((_, start, end)) = range {
+                if !(start..end).contains(&local) {
+                    self.song_tick = start;
+                    local = start;
+                }
+            }
             self.tick_metronome(local);
-            self.fire(0, None, pat, local, abs, u64::MAX, swing, None, 0);
+            let remaining = range.map_or(u64::MAX, |(_, _, end)| u64::from(end - local));
+            self.fire(0, None, pat, local, abs, remaining, swing, None, 0);
             self.position = local;
             self.song_tick = self.song_tick.wrapping_add(1);
-            if !self.pattern_loop && local + 1 >= pat.len_ticks() {
+            if let Some((_, start, end)) = range {
+                if local + 1 >= end {
+                    self.song_tick = start;
+                    self.release_everything();
+                }
+            } else if !self.pattern_loop && local + 1 >= period {
                 self.stop();
             }
         }
@@ -800,6 +820,26 @@ impl Engine {
     }
 
     /// Render interleaved stereo into `out`.
+    fn update_fx_automation(proj: &Project, tick: u32, owners: &[Option<usize>; NUM_INSERTS],
+        values: &mut [[[f32; crate::fx::MAX_PARAMS]; 10]; NUM_INSERTS])
+    {
+        for (insert, owner) in owners.iter().enumerate() {
+            let Some(lane) = owner else { continue; };
+            let Some(slots) = proj.insert_fx.get(insert) else { continue; };
+            let values = &mut values[insert];
+            values.fill([f32::NAN; crate::fx::MAX_PARAMS]);
+            for clip in &proj.arrangement.tracks[*lane].fx_automation {
+                if clip.effect == 0 || clip.param >= crate::fx::MAX_PARAMS {
+                    continue;
+                }
+                let Some(value) = clip.value_at(tick) else { continue; };
+                if let Some(slot) = slots.iter().take(values.len()).position(|slot| !slot.empty && slot.automation_key == clip.effect) {
+                    values[slot][clip.param] = value;
+                }
+            }
+        }
+    }
+
     pub fn render(&mut self, out: &mut [f32]) {
         let proj = Arc::clone(&self.project);
         let sr = self.sr;
@@ -831,10 +871,26 @@ impl Engine {
             self.fx_run[i].sync(slots, sr);
         }
         self.master_run.sync(&proj.master_chain, sr);
+        let mut owners = [None; NUM_INSERTS];
+        if proj.song_mode && self.playing {
+            for (lane, _) in proj.arrangement.tracks.iter().enumerate().filter(|(_, track)| !track.fx_automation.is_empty()) {
+                if let Some(insert) = proj.track_automation_insert(lane) {
+                    owners[insert] = Some(lane);
+                }
+            }
+        }
+        let mut values = [[[f32::NAN; crate::fx::MAX_PARAMS]; 10]; NUM_INSERTS];
+        let automated = owners.iter().any(Option::is_some);
+        if automated {
+            Self::update_fx_automation(&proj, self.position, &owners, &mut values);
+        }
         for frame in out.chunks_exact_mut(2) {
             if self.playing {
                 if self.countdown <= 0.0 {
                     self.on_tick();
+                    if automated && self.playing {
+                        Self::update_fx_automation(&proj, self.position, &owners, &mut values);
+                    }
                     self.countdown += spt;
                 }
                 self.countdown -= 1.0;
@@ -974,7 +1030,8 @@ impl Engine {
             for i in 0..NUM_INSERTS {
                 if let Some(slots) = proj.insert_fx.get(i) {
                     if !slots.is_empty() {
-                        let (a, b) = self.fx_run[i].process(slots, ins_l[i], ins_r[i], bpm, sr);
+                        let overrides: &[_] = if self.playing && owners[i].is_some() { &values[i] } else { &[] };
+                        let (a, b) = self.fx_run[i].process_automated(slots, overrides, ins_l[i], ins_r[i], bpm, sr);
                         ins_l[i] = a;
                         ins_r[i] = b;
                     }

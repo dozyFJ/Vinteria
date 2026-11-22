@@ -54,10 +54,12 @@ fn cat_color(cat: &str) -> Color32 {
 pub fn add_to_insert(project: &mut Project, insert: usize, slot: &FxSlot) -> bool {
     project.insert_fx.resize_with(NUM_INSERTS, Vec::new);
     let chain = if insert == NUM_INSERTS { &mut project.master_chain } else if let Some(c) = project.insert_fx.get_mut(insert) { c } else { return false };
+    let mut copy = slot.clone();
+    copy.automation_key = 0;
     if let Some(k) = chain.iter().position(|s| s.empty) {
-        chain[k] = slot.clone();
+        chain[k] = copy;
     } else if chain.len() < MAX_SLOTS {
-        chain.push(slot.clone());
+        chain.push(copy);
     } else {
         return false;
     }
