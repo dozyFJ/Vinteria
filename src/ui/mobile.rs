@@ -346,6 +346,70 @@ fn segmented(ui: &mut Ui, id_salt: &str, items: &[&str]) -> usize {
 }
 
 /// egui widgets (sliders, text fields, drag values) restyled with solid fills.
+#[derive(Clone, Default)]
+struct GridPinch {
+    touches: Vec<(egui::TouchId, Pos2)>,
+    axis: Option<usize>,
+    baseline: Option<egui::Vec2>,
+    previous: egui::Vec2,
+    suppressed: bool,
+}
+
+fn grid_pinch(ui: &Ui, id: egui::Id, grid: Rect) -> (bool, Option<(usize, f32, Pos2)>) {
+    let mut state = ui.data_mut(|d| d.remove_temp::<GridPinch>(id)).unwrap_or_default();
+    let (pressed, ended) = ui.input(|input| {
+        let mut ended = false;
+        for event in &input.events {
+            if let egui::Event::Touch { id, phase, pos, .. } = event {
+                match phase {
+                    egui::TouchPhase::Start if grid.contains(*pos) => state.touches.push((*id, *pos)),
+                    egui::TouchPhase::Move => {
+                        if let Some((_, active)) = state.touches.iter_mut().find(|(active, _)| active == id) {
+                            *active = *pos;
+                        }
+                    }
+                    egui::TouchPhase::End | egui::TouchPhase::Cancel => {
+                        if let Some(index) = state.touches.iter().position(|(active, _)| active == id) {
+                            state.touches.remove(index);
+                            ended = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        (input.pointer.primary_down(), ended)
+    });
+    let mut zoom = None;
+    if let [(_, a), (_, b)] = state.touches.as_slice() {
+        state.suppressed = true;
+        let span = (*a - *b).abs();
+        if ended {
+            state.baseline = None;
+            state.axis = None;
+        }
+        let baseline = *state.baseline.get_or_insert(span);
+        let delta = (span - baseline).abs();
+        if state.axis.is_none() && delta.max_elem() >= 8.0 {
+            state.axis = Some(usize::from(delta.y > delta.x));
+            state.previous = baseline;
+        }
+        if let Some(axis) = state.axis {
+            let factor = span[axis].max(12.0) / state.previous[axis].max(12.0);
+            zoom = Some((axis, factor, a.lerp(*b, 0.5)));
+        }
+        state.previous = span;
+    } else {
+        state.baseline = None;
+        state.axis = None;
+    }
+    let suppress = state.suppressed;
+    if pressed || !state.touches.is_empty() {
+        ui.data_mut(|d| d.insert_temp(id, state));
+    }
+    (suppress, zoom)
+}
+
 fn mobile_scroll(area: egui::ScrollArea) -> egui::ScrollArea {
     area.scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
 }
@@ -1897,7 +1961,8 @@ impl VinteriaApp {
         let base = oct * 12;
         let high_pitch = 127_u8;
         let rows = usize::from(high_pitch) + 1;
-        let row_h = 24.0;
+        let row_id = zoom_id.with("row_height");
+        let mut row_h = ui.data(|d| d.get_temp::<f32>(row_id)).unwrap_or(24.0);
         let velocity_h = if show_velocity { (ui.available_height() * 0.22).clamp(54.0, 105.0) } else { 0.0 };
         let track = self.project.arrangement.tracks.get(self.arr.sel_lane).and_then(|track| track.instrument)
             .or_else(|| self.project.patterns[pi].notes.first().map(|note| note.track)).unwrap_or(Track::Synth);
@@ -1911,17 +1976,38 @@ impl VinteriaApp {
         let view_h = (ui.available_height() - velocity_h - if show_velocity { 12.0 } else { 4.0 }).max(timeline_height + 1.0);
         let (viewport, _) = ui.allocate_exact_size(vec2(ui.available_width(), view_h), Sense::hover());
         let grid = Rect::from_min_max(viewport.min + vec2(ruler_width, timeline_height), viewport.max);
+        let (pinching, zoom) = grid_pinch(ui, zoom_id.with("pinch"), grid);
+        let offset_id = zoom_id.with("scroll_offset");
+        let mut zoom_offset = None;
+        if let Some((axis, factor, center)) = zoom {
+            let previous = vec2(step_w, row_h);
+            step_w = if axis == 0 { (step_w * factor).clamp(8.0, 72.0) } else { step_w };
+            row_h = if axis == 1 { (row_h * factor).clamp(14.0, 54.0) } else { row_h };
+            let scale = vec2(step_w, row_h)[axis] / previous[axis];
+            if scale != 1.0 {
+                let anchor = (center - grid.min)[axis];
+                let scroll_offset = ui.data(|d| d.get_temp::<egui::Vec2>(offset_id)).unwrap_or_default();
+                zoom_offset = Some((axis, ((scroll_offset[axis] + anchor) * scale - anchor).max(0.0)));
+                ui.data_mut(|d| {
+                    d.insert_temp(zoom_id, step_w);
+                    d.insert_temp(row_id, row_h);
+                });
+            }
+        }
         let mut grid_ui = ui.new_child(egui::UiBuilder::new().max_rect(grid));
         grid_ui.set_clip_rect(grid.intersect(ui.clip_rect()));
         let grid_id = ("m_piano_grid_pc", editor);
         let initialized = egui::Id::new((grid_id, "initialized"));
         let mut scroll = mobile_scroll(egui::ScrollArea::both()).id_salt(grid_id)
-            .drag_to_scroll(!select_mode).max_height(grid.height()).auto_shrink([false, false]);
+            .drag_to_scroll(!select_mode && !pinching).max_height(grid.height()).auto_shrink([false, false]);
         // no auto-follow: the view stays where the user scrolled it, only the playhead line moves
         let first_view = !ui.data(|d| d.get_temp::<bool>(initialized)).unwrap_or(false);
         if first_view || oct != previous_oct {
             scroll = scroll.vertical_scroll_offset(f32::from(high_pitch - base - 11) * row_h);
             ui.data_mut(|d| d.insert_temp(initialized, true));
+        }
+        if let Some((axis, offset)) = zoom_offset {
+            scroll = if axis == 0 { scroll.horizontal_scroll_offset(offset) } else { scroll.vertical_scroll_offset(offset) };
         }
         let out = scroll.show(&mut grid_ui, |ui| {
             let (rect, resp) = ui.allocate_exact_size(vec2(steps as f32 * step_w, rows as f32 * row_h), if select_mode { Sense::click_and_drag() } else { Sense::click() });
@@ -1961,14 +2047,14 @@ impl VinteriaApp {
             let pattern_end = steps as u32 * TICKS_PER_STEP;
             let tap_id = resp.id.with("last_piano_note_tap");
             let grab_selection = selection_id.with("origin");
-            if select_mode && resp.drag_started() {
+            if !pinching && select_mode && resp.drag_started() {
                 if let Some(origin) = ui.input(|input| input.pointer.press_origin()) {
                     ui.data_mut(|d| d.insert_temp(grab_selection, origin));
                 }
             }
             let selection_origin = ui.data(|d| d.get_temp::<Pos2>(grab_selection));
             let pointer = resp.interact_pointer_pos();
-            let selection_box = if select_mode && (resp.dragged() || resp.drag_stopped()) {
+            let selection_box = if !pinching && select_mode && (resp.dragged() || resp.drag_stopped()) {
                 selection_origin.zip(pointer).map(|(a, b)| Rect::from_two_pos(a, b).intersect(rect))
             } else { None };
             let mut box_hits = Vec::new();
@@ -1992,7 +2078,7 @@ impl VinteriaApp {
                     if inside {
                         box_hits.push(index);
                     }
-                    if resp.clicked() && pointer.is_some_and(|point| original.expand(1.0).contains(point)) {
+                    if !pinching && resp.clicked() && pointer.is_some_and(|point| original.expand(1.0).contains(point)) {
                         selected_tap = Some(index);
                     }
                     let highlighted = if selection_box.is_some() { inside } else { selected.contains(&index) };
@@ -2003,19 +2089,21 @@ impl VinteriaApp {
                     continue;
                 }
                 let id = resp.id.with(("note", index));
-                let note_response = ui.interact(original.expand(1.0), id, Sense::click_and_drag())
+                let note_response = ui.interact(original.expand(1.0), id, if pinching { Sense::hover() } else { Sense::click_and_drag() })
                     .on_hover_cursor(egui::CursorIcon::Grab);
                 let edge = Rect::from_min_max(
                     pos2(original.right() - original.width().min(14.0), original.top()),
                     original.right_bottom());
-                let handle = ui.interact(edge, id.with("length"), Sense::click_and_drag())
+                let handle = ui.interact(edge, id.with("length"), if pinching { Sense::hover() } else { Sense::click_and_drag() })
                     .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
                 let max_len = pattern_end - note.start;
                 let mut len = note.len;
                 let mut pitch = note.pitch;
                 let mut start = note.start;
                 let grab_id = id.with("grab");
-                if handle.drag_started() || note_response.drag_started() {
+                if pinching {
+                    ui.data_mut(|d| d.remove::<(Pos2, bool)>(grab_id));
+                } else if handle.drag_started() || note_response.drag_started() {
                     ui.data_mut(|d| d.remove::<(usize, u32, u8, f64)>(tap_id));
                     if let (Some(origin), Some(pointer)) = (
                         ui.input(|input| input.pointer.press_origin()),
@@ -2027,7 +2115,7 @@ impl VinteriaApp {
                     }
                 }
                 let stopped = handle.drag_stopped() || note_response.drag_stopped();
-                if handle.dragged() || note_response.dragged() || stopped {
+                if !pinching && (handle.dragged() || note_response.dragged() || stopped) {
                     if let (Some((origin, resize)), Some(pointer)) = (
                         ui.data(|d| d.get_temp::<(egui::Pos2, bool)>(grab_id)),
                         handle.interact_pointer_pos().or(note_response.interact_pointer_pos()),
@@ -2063,9 +2151,9 @@ impl VinteriaApp {
                         format!("{}{}", names[usize::from(pitch % 12)], i16::from(pitch) / 12 - 1),
                         FontId::proportional(10.0), Color32::from_gray(18));
                 }
-                if note_response.secondary_clicked() || handle.secondary_clicked() {
+                if !pinching && (note_response.secondary_clicked() || handle.secondary_clicked()) {
                     remove = Some(index);
-                } else if note_response.clicked() || handle.clicked() {
+                } else if !pinching && (note_response.clicked() || handle.clicked()) {
                     let now = ui.input(|input| input.time);
                     let repeat = ui.data(|d| d.get_temp::<(usize, u32, u8, f64)>(tap_id))
                         .is_some_and(|(last_index, start, pitch, time)| {
@@ -2080,7 +2168,12 @@ impl VinteriaApp {
                     }
                 }
             }
-            if select_mode {
+            if pinching {
+                ui.data_mut(|d| {
+                    d.remove::<Pos2>(grab_selection);
+                    d.remove::<(usize, u32, u8, f64)>(tap_id);
+                });
+            } else if select_mode {
                 if let Some(area) = selection_box {
                     p.rect_filled(area, 2.0, p_accent().gamma_multiply(0.18));
                     p.rect_stroke(area, 2.0, Stroke::new(1.2, p_accent()));
@@ -2155,10 +2248,11 @@ impl VinteriaApp {
             d.insert_temp(select_mode_id, select_mode);
             d.insert_temp(selection_id, selected);
         });
+        ui.data_mut(|d| d.insert_temp(offset_id, out.state.offset));
         // keys down the left side, one per row of the grid (like the PC piano roll): press one to hear it (and record it)
         let ruler = Rect::from_min_max(pos2(viewport.left(), grid.top()), pos2(grid.left() - 2.0, grid.bottom()));
         let side = ui.interact(ruler, ui.id().with(("m_piano_side_keys", pi)), Sense::click_and_drag());
-        let side_pressed = if side.is_pointer_button_down_on() {
+        let side_pressed = if !pinching && side.is_pointer_button_down_on() {
             side.interact_pointer_pos().filter(|pt| ruler.contains(*pt)).map(|pt| {
                 let row = (((pt.y - out.inner.y) / row_h).max(0.0) as usize).min(rows - 1);
                 high_pitch - row as u8
@@ -3381,20 +3475,6 @@ impl VinteriaApp {
         let width_id = egui::Id::new("m_playlist_bar_width");
         let previous_bar_w = ui.data(|d| d.get_temp::<f32>(width_id)).unwrap_or(64.0);
         let height_id = egui::Id::new("m_playlist_lane_height");
-        let gesture = ui.input(|input| input.multi_touch());
-        let viewport = ui.available_rect_before_wrap().intersect(ui.clip_rect());
-        let zoom = gesture.filter(|touch| viewport.contains(touch.start_pos));
-        let lane_h = ui.data_mut(|d| {
-            let height = d.get_temp::<f32>(height_id).unwrap_or(52.0);
-            if let Some(touch) = zoom {
-                let height = (height * touch.zoom_delta_2d.y).clamp(42.0, 140.0);
-                d.insert_temp(height_id, height);
-                height
-            } else {
-                height
-            }
-        });
-        let lane_h = if automation { lane_h.max(84.0) } else { lane_h };
         let tracks = self.project.arrangement.tracks.len();
         if tracks == 0 {
             ui.label(RichText::new("No tracks yet. Open a template in Projects.").color(muted()));
@@ -3409,7 +3489,6 @@ impl VinteriaApp {
         let add_lane = egui::DragAndDrop::has_payload_of_type::<browser::DragItem>(ui.ctx());
         // portrait: room under the lanes for "+ MIDI" / "+ Audio" and the Master row of the right column
         let extra_h = if portrait_view(ui) && !add_lane { 2.0 * 40.0 + 8.0 + 56.0 + 12.0 } else { 0.0 };
-        let full_h = (tracks + usize::from(add_lane)) as f32 * lane_h + extra_h;
         let panel_id = egui::Id::new("m_playlist_track_names");
         let panel_open = ui.data(|d| d.get_temp::<bool>(panel_id)).unwrap_or(false);
         let screen = ui.ctx().screen_rect();
@@ -3426,46 +3505,21 @@ impl VinteriaApp {
             grid.min.x += panel_width.min((viewport.width() - 1.0).max(0.0));
         }
         grid.min.y += ruler.min((viewport.height() - 1.0).max(0.0));
-        let touch_id = egui::Id::new("m_playlist_touches");
-        let touch_events: Vec<_> = ui.input(|input| input.events.iter().filter_map(|event| {
-            if let egui::Event::Touch { id, phase, pos, .. } = event {
-                Some((*id, *phase, *pos))
-            } else {
-                None
-            }
-        }).collect());
-        let pinch_center = ui.data_mut(|d| {
-            let mut touches = d.remove_temp::<Vec<(egui::TouchId, Pos2)>>(touch_id).unwrap_or_default();
-            for (id, phase, pos) in touch_events {
-                touches.retain(|(active, _)| *active != id);
-                if matches!(phase, egui::TouchPhase::Start | egui::TouchPhase::Move) {
-                    touches.push((id, pos));
-                }
-            }
-            let center = (touches.len() >= 2).then(|| {
-                let sum = touches.iter().fold(egui::Vec2::ZERO, |sum, (_, pos)| sum + pos.to_vec2());
-                (sum / touches.len() as f32).to_pos2()
+        let (pinching, zoom) = grid_pinch(ui, egui::Id::new("m_playlist_pinch"), grid);
+        let previous_height = ui.data(|d| d.get_temp::<f32>(height_id)).unwrap_or(52.0);
+        let height = zoom.filter(|(axis, _, _)| *axis == 1)
+            .map_or(previous_height, |(_, factor, _)| (previous_height * factor).clamp(42.0, 140.0));
+        let bar_w = zoom.filter(|(axis, _, _)| *axis == 0)
+            .map_or(previous_bar_w, |(_, factor, _)| (previous_bar_w * factor).clamp(28.0, 240.0));
+        if zoom.is_some() {
+            ui.data_mut(|d| {
+                d.insert_temp(height_id, height);
+                d.insert_temp(width_id, bar_w);
             });
-            if !touches.is_empty() {
-                d.insert_temp(touch_id, touches);
-            }
-            center
-        });
-        let horizontal_zoom = gesture.zip(pinch_center)
-            .filter(|(touch, _)| grid.contains(touch.start_pos) && touch.zoom_delta_2d.x.is_finite());
-        let bar_w = horizontal_zoom.map_or(previous_bar_w, |(touch, _)| {
-            (previous_bar_w * touch.zoom_delta_2d.x).clamp(28.0, 240.0)
-        });
-        if bar_w != previous_bar_w {
-            ui.data_mut(|d| d.insert_temp(width_id, bar_w));
         }
-        let pinch_id = touch_id.with("pinching");
-        let pointer_down = ui.input(|input| input.pointer.primary_down() || input.pointer.primary_released());
-        let pinching = ui.data_mut(|d| {
-            let pinching = gesture.is_some() || (pointer_down && d.get_temp::<bool>(pinch_id).unwrap_or(false));
-            d.insert_temp(pinch_id, pinching);
-            pinching
-        });
+        let lane_h = if automation { height.max(84.0) } else { height };
+        let previous_lane_h = if automation { previous_height.max(84.0) } else { previous_height };
+        let full_h = (tracks + usize::from(add_lane)) as f32 * lane_h + extra_h;
         let mut grid_ui = ui.new_child(egui::UiBuilder::new().max_rect(grid));
         grid_ui.set_clip_rect(grid.intersect(ui.clip_rect()));
         let mut selection = None;
@@ -3493,10 +3547,9 @@ impl VinteriaApp {
         let follow_at = shown_x + grid.width() * 0.85;
         let browsing = ui.input(|input| input.pointer.any_down() || input.smooth_scroll_delta.x != 0.0);
         let reveal_tick = ui.data_mut(|d| d.remove_temp::<u32>(egui::Id::new("m_playlist_reveal_tick")));
-        let scroll = if let Some((touch, center)) = horizontal_zoom.filter(|_| bar_w != previous_bar_w) {
+        let scroll = if let Some((_, _, center)) = zoom.filter(|_| bar_w != previous_bar_w) {
             let anchor = center.x - grid.left();
-            let previous_anchor = anchor - touch.translation_delta.x;
-            let offset = (shown_x + previous_anchor) * bar_w / previous_bar_w - anchor;
+            let offset = (shown_x + anchor) * bar_w / previous_bar_w - anchor;
             scroll.horizontal_scroll_offset(offset.max(0.0))
         } else if let Some(tick) = reveal_tick {
             let x = tick as f32 / TICKS_PER_BAR as f32 * bar_w;
@@ -3506,7 +3559,7 @@ impl VinteriaApp {
                 scroll
             }
         } else if playing && ui.data(|d| d.get_temp::<bool>(egui::Id::new("m_playlist_follow"))).unwrap_or(true)
-            && gesture.is_none() && !browsing
+            && !pinching && !browsing
             && previous_head.is_some_and(|head| head >= shown_x && head <= follow_at && head_x > follow_at)
         {
             scroll.horizontal_scroll_offset(head_x - grid.width() * 0.15)
@@ -3518,6 +3571,14 @@ impl VinteriaApp {
         let scroll = match ui.data_mut(|d| d.remove_temp::<f32>(names_scroll_id)) {
             Some(y) => scroll.vertical_scroll_offset(y.clamp(0.0, (full_h - grid.height()).max(0.0))),
             None => scroll,
+        };
+        let zoom_y_id = follow_id.with("vertical");
+        let scroll = if let Some((_, _, center)) = zoom.filter(|_| lane_h != previous_lane_h) {
+            let shown_y = ui.data(|d| d.get_temp::<f32>(zoom_y_id)).unwrap_or_default();
+            let anchor = center.y - grid.top();
+            scroll.vertical_scroll_offset(((shown_y + anchor) * lane_h / previous_lane_h - anchor).max(0.0))
+        } else {
+            scroll
         };
         let scroll = scroll.show(&mut grid_ui, |ui| {
             let (rect, resp) = ui.allocate_exact_size(
@@ -3744,7 +3805,10 @@ impl VinteriaApp {
             }
             rect.min
         });
-        ui.data_mut(|d| d.insert_temp(follow_id, scroll.state.offset.x));
+        ui.data_mut(|d| {
+            d.insert_temp(follow_id, scroll.state.offset.x);
+            d.insert_temp(zoom_y_id, scroll.state.offset.y);
+        });
         let offset_y = scroll.state.offset.y;
         let timeline = Rect::from_min_max(pos2(grid.left(), viewport.top()), pos2(grid.right(), grid.top()));
         let painter = ui.painter_at(timeline);

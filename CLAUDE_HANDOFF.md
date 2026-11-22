@@ -389,3 +389,8 @@ Browser открывается слева рядом с Playlist в обеих �
 - The 1.0.63 source and APK were unavailable. This release starts from the published 1.0.62 code and the shared handoff updates.
 - Playlist clips clear pending move and resize state when a pinch takes over or automation drawing is active. A fresh clip drag starts with fresh state.
 - Check clip resize, drag, pinch, and drawing on Android. Official builds use the existing OTA signing certificate.
+
+### Android 1.0.65
+
+- Playlist and Piano Roll choose one zoom axis from the initial change in finger spacing and keep that axis for the gesture. Horizontal pinches scale time and vertical pinches scale row height.
+- Pinching the Piano Roll suppresses note edits and marquee selection until release. Check diagonal gestures and transitions from one finger to two on Android.
