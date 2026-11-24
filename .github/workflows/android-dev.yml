@@ -1,7 +1,7 @@
 name: Android Dev APK
 
 # A test build that installs NEXT TO the real app: package com.winteria.daw.dev, label "Winteria Dev",
-# signed with a throw-away key. It never goes to the OTA channel and does not need the release key.
+# signed with a throw-away key. It has its own OTA channel and does not need the release key.
 
 on:
   push:
@@ -82,10 +82,28 @@ jobs:
             export CARGO_APK_RELEASE_KEYSTORE_PASSWORD=android
           fi
           export CARGO_APK_RELEASE_KEYSTORE="$RUNNER_TEMP/dev.keystore"
+          export WINTERIA_DEV_REPOSITORY="$GITHUB_REPOSITORY"
           ./tools/build-android.sh --release
           version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
           mkdir -p out && cp target/release/apk/Winteria.apk "out/WinteriaDev-$version.apk"
           echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Verify Dev signing continuity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          apk="out/WinteriaDev-$VERSION.apk"
+          apksigner="${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools/34.0.0/apksigner"
+          signer=$("$apksigner" verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          test "${#signer}" -eq 64
+          if gh release view dev-ota >/dev/null 2>&1; then
+            gh release download dev-ota --pattern latest.json --output "$RUNNER_TEMP/previous-dev.json"
+            jq -e --arg signer "$signer" '.signerSha256 == $signer' "$RUNNER_TEMP/previous-dev.json" >/dev/null || {
+              echo "::error::Dev signing key changed. Restore the previous key before publishing updates."
+              exit 1
+            }
+          fi
+          echo "DEV_SIGNER=$signer" >> "$GITHUB_ENV"
 
       - name: Publish dev release
         env:
@@ -96,3 +114,30 @@ jobs:
           gh release create "$tag" out/*.apk --target "$GITHUB_SHA" --prerelease \
             --title "Winteria Dev $VERSION (test build, installs next to Winteria)" \
             --notes "Test build of ${GITHUB_SHA::7}. Separate app (com.winteria.daw.dev); not an update of Winteria."
+
+      - name: Publish Dev update manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          apk="out/WinteriaDev-$VERSION.apk"
+          aapt="${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools/34.0.0/aapt"
+          code=$("$aapt" dump badging "$apk" | sed -n "s/^package: name='com.winteria.daw.dev' versionCode='\([0-9]*\)'.*/\1/p")
+          test -n "$code"
+          if [ -f "$RUNNER_TEMP/previous-dev.json" ]; then
+            previous=$(jq -r .versionCode "$RUNNER_TEMP/previous-dev.json")
+            if [ "$code" -lt "$previous" ]; then
+              echo "A newer Dev update is already published."
+              exit 0
+            fi
+          fi
+          sha=$(sha256sum "$apk" | cut -d' ' -f1)
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/dev-v$VERSION/WinteriaDev-$VERSION.apk"
+          jq -n --argjson versionCode "$code" --arg versionName "$VERSION" --arg url "$url" \
+            --arg sha256 "$sha" --arg signerSha256 "$DEV_SIGNER" --arg sourceCommit "$GITHUB_SHA" \
+            '$ARGS.named' > out/latest.json
+          if [ -f "$RUNNER_TEMP/previous-dev.json" ]; then
+            gh release upload dev-ota out/latest.json --clobber
+          else
+            gh release create dev-ota out/latest.json --target "$GITHUB_SHA" --prerelease \
+              --title "Winteria Dev update channel" --notes "Manifest used by Winteria Dev."
+          fi

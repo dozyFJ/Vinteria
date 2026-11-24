@@ -7,6 +7,21 @@ use jni::{JNIEnv, JavaVM};
 use serde::Deserialize;
 
 const FEED: &str = "https://raw.githubusercontent.com/dozyFJ/pulse-updates/winteria/";
+const DEV_REPOSITORY: Option<&str> = option_env!("WINTERIA_DEV_REPOSITORY");
+
+fn manifest_url() -> String {
+    match DEV_REPOSITORY {
+        Some(repo) => format!("https://github.com/{repo}/releases/download/dev-ota/latest.json"),
+        None => format!("{FEED}latest.json"),
+    }
+}
+
+fn apk_url(version: &str) -> String {
+    match DEV_REPOSITORY {
+        Some(repo) => format!("https://github.com/{repo}/releases/download/dev-v{version}/WinteriaDev-{version}.apk"),
+        None => format!("{FEED}releases/Winteria-{version}.apk"),
+    }
+}
 const CHECK_INTERVAL: Duration = Duration::from_secs(600);
 const MAX_MANIFEST_BYTES: usize = 16 * 1024;
 const MAX_APK_BYTES: usize = 64 * 1024 * 1024;
@@ -26,7 +41,7 @@ impl Release {
         !self.version_name.is_empty()
             && self.version_name.len() <= 32
             && self.version_name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'.' || c == b'-')
-            && self.url == format!("{FEED}releases/Winteria-{}.apk", self.version_name)
+            && self.url == apk_url(&self.version_name)
             && self.sha256.len() == 64
             && self.sha256.bytes().all(|c| c.is_ascii_hexdigit())
     }
@@ -78,7 +93,7 @@ impl Updater {
         std::thread::spawn(move || {
             let result = with_activity(&app, |env, activity| {
                 let installed = installed_version(env, activity)?;
-                let bytes = get_bytes(env, &format!("{FEED}latest.json"), MAX_MANIFEST_BYTES)?;
+                let bytes = get_bytes(env, &manifest_url(), MAX_MANIFEST_BYTES)?;
                 Ok((installed, bytes))
             });
             *status.lock().unwrap() = match result {

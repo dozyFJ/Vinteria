@@ -597,3 +597,9 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 
 - Bring Material 3-inspired controls into the Pulse mobile interface. Hub navigation uses icons, captions and a tonal pill for the selected destination. Shared mobile buttons have rounded outlines and hover, focus and pressed states.
 - Transport and editor gestures are unchanged. Native Android visual testing is pending.
+
+### Android 1.0.102
+
+- Improve Playlist grid contrast at bar, snap and track boundaries in both themes.
+- Dev builds check their own repository's update manifest and reuse the Android in-app installer. CI publishes the manifest after the signed APK and checks signer continuity against the previous manifest. Official builds keep their existing feed.
+- Native Android installation and touch testing are pending.

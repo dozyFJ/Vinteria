@@ -4663,7 +4663,7 @@ impl VinteriaApp {
                 if lane == self.arr.sel_lane {
                     p.rect_filled(Rect::from_min_size(r.min, vec2(3.0, r.height())), 0.0, lane_col(lane));
                 }
-                p.line_segment([r.left_top(), r.right_top()], Stroke::new(0.6, grid_line()));
+                p.line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, pick(0xFF566A84, 0xFF92A7BF)));
             }
             for (index, item) in rows.iter().enumerate() {
                 if let PlaylistRow::FxAutomation(lane, clip) = *item {
@@ -4689,7 +4689,7 @@ impl VinteriaApp {
                     for division in first..=last {
                         let x = gx + division as f32 * gap;
                         p.line_segment([pos2(x, gy), pos2(x, gy + full_h)],
-                            Stroke::new(0.45, grid_line().gamma_multiply(0.42)));
+                            Stroke::new(0.85, pick(0xFF455872, 0xFFAABBD0)));
                     }
                 }
             }
@@ -4697,7 +4697,8 @@ impl VinteriaApp {
                 let x = gx + b as f32 * bar_w;
                 let strong = b % 4 == 0;
                 p.line_segment([pos2(x, gy), pos2(x, gy + full_h)],
-                    Stroke::new(if strong { 1.0 } else { 0.45 }, if strong { outline() } else { grid_line() }));
+                    Stroke::new(if strong { 1.5 } else { 1.0 },
+                        if strong { pick(0xFF879DBA, 0xFF637C9C) } else { pick(0xFF627896, 0xFF839AB6) }));
             }
             for (i, c) in self.project.arrangement.clips.iter().enumerate() {
                 let Some(row) = track_rows.get(c.lane).copied().flatten() else { continue; };
