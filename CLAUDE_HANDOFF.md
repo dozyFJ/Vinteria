@@ -470,5 +470,5 @@ Browser открывается слева рядом с Playlist в обеих �
 
 ### Android 1.0.79
 
-- Landscape studio moves transport and section controls from the left sidebar into a collapsible drawer centered on the right edge. The bottom chevron stays available. Portrait keeps its existing layout.
+- Landscape studio moves transport and section controls from the left sidebar into a collapsible drawer on the right. The chevron stays at the bottom-right corner and opens the drawer upward. Portrait keeps its existing layout.
 - Native Android touch testing is pending.
