@@ -916,7 +916,7 @@ impl VinteriaApp {
             });
     }
 
-    /// Select / Clone / Undo / Redo for the Playlist: a floating pill in portrait, the bottom dock in landscape.
+    /// Select, Clone, Undo and Redo controls shared by both Playlist docks.
     fn m_playlist_tool_buttons(&mut self, ui: &mut Ui) {
         let select_id = egui::Id::new("m_playlist_select");
         let mut select_mode = ui.data(|d| d.get_temp::<bool>(select_id)).unwrap_or(false) && !self.arr.auto_edit;
@@ -953,7 +953,7 @@ impl VinteriaApp {
     /// Landscape Playlist: one bottom bar with the edit tools and every studio control (transport, tempo,
     /// automation, render, export, sections), so the Playlist needs no right-hand drawer.
     fn m_landscape_playlist_dock(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::bottom("m_playlist_dock").show_separator_line(false).exact_height(52.0)
+        egui::TopBottomPanel::bottom("m_playlist_dock").show_separator_line(false).exact_height(58.0)
             .frame(Frame::none().fill(glass_fill()).stroke(Stroke::new(1.0, glass_edge()))
                 .inner_margin(Margin { left: 6.0, right: 6.0, top: 4.0, bottom: 4.0 }))
             .show(ctx, |ui| {
@@ -961,7 +961,10 @@ impl VinteriaApp {
                 mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_playlist_dock_scroll")
                     .auto_shrink([false, true]).show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            self.m_playlist_tool_buttons(ui);
+                            Frame::none().fill(card_fill()).rounding(16.0)
+                                .inner_margin(Margin::symmetric(4.0, 2.0)).show(ui, |ui| {
+                                    ui.horizontal(|ui| self.m_playlist_tool_buttons(ui));
+                                });
                             ui.separator();
                             self.m_studio_controls(ui, ctx, 44.0);
                         });
@@ -1114,7 +1117,8 @@ impl VinteriaApp {
 
     fn m_studio_portrait_header(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("m_studio_portrait_header").show_separator_line(false)
-            .frame(Frame::none().fill(bar_fill()).inner_margin(Margin::symmetric(6.0, 4.0)))
+            .frame(Frame::none().fill(glass_fill()).stroke(Stroke::new(1.0, glass_edge()))
+                .inner_margin(Margin::symmetric(6.0, 4.0)))
             .show(ctx, |ui| {
                 mobile_visuals(ui);
                 ui.horizontal(|ui| {
@@ -1226,11 +1230,16 @@ impl VinteriaApp {
     }
 
     fn m_studio_transport_dock(&mut self, ctx: &egui::Context) {
+        let playlist = self.m_sec == SEC_PLAYLIST;
         egui::TopBottomPanel::bottom("m_studio_transport_dock").show_separator_line(false)
             .frame(Frame::none().fill(glass_fill()).stroke(Stroke::new(1.0, glass_edge()))
-                .inner_margin(Margin { left: 6.0, right: 6.0, top: 6.0, bottom: 12.0 }))
+                .inner_margin(Margin { left: 6.0, right: 6.0, top: 4.0, bottom: 10.0 }))
             .show(ctx, |ui| {
                 mobile_visuals(ui);
+                if playlist {
+                    ui.horizontal(|ui| self.m_playlist_tool_buttons(ui));
+                    ui.separator();
+                }
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
                     let width = 44.0;
@@ -1271,6 +1280,10 @@ impl VinteriaApp {
                     }
                 });
             });
+        if playlist {
+            let pass = ctx.cumulative_pass_nr();
+            ctx.data_mut(|d| d.insert_temp(egui::Id::new(PLAYLIST_DOCK_PASS), pass));
+        }
     }
 
     /// Playlist: the mixer as a right side bar, full height. A swipe from the right edge pulls it in; a swipe to the
@@ -4693,7 +4706,7 @@ impl VinteriaApp {
         if !self.arr.msg.is_empty() {
             ui.colored_label(RED, &self.arr.msg);
         }
-        // in landscape the edit tools live in the bottom dock next to the studio controls chevron
+        // Full view keeps the edit tools accessible when the regular dock is hidden.
         let docked = ui.data(|d| d.get_temp::<u64>(egui::Id::new(PLAYLIST_DOCK_PASS)))
             == Some(ui.ctx().cumulative_pass_nr());
         if !docked {
@@ -4703,7 +4716,7 @@ impl VinteriaApp {
                 .fixed_pos(pos2(viewport.left() + 8.0, (viewport.bottom() - 58.0).max(viewport.top())))
                 .show(ui.ctx(), |ui| {
                     mobile_visuals(ui);
-                    Frame::none().fill(bar_fill()).stroke(Stroke::new(1.0, outline()))
+                    Frame::none().fill(glass_fill()).stroke(Stroke::new(1.0, glass_edge()))
                         .rounding(14.0).inner_margin(Margin::symmetric(5.0, 3.0)).show(ui, |ui| {
                             ui.horizontal(|ui| self.m_playlist_tool_buttons(ui));
                         });
@@ -4921,12 +4934,15 @@ impl VinteriaApp {
                 };
                 let track = &self.project.arrangement.tracks[lane];
                 let audio = track.kind == crate::arrangement::TrackKind::Audio;
-                let row_fill = if lane == self.arr.sel_lane {
-                    selected_fill()
-                } else if audio {
+                let base_fill = if audio {
                     pick(0xFF202D34, 0xFFDDEBED)
                 } else {
                     pick(0xFF222B3A, 0xFFE1E9F3)
+                };
+                let row_fill = if lane == self.arr.sel_lane {
+                    tint(base_fill, selected_fill(), 0.24)
+                } else {
+                    base_fill
                 };
                 p.rect_filled(r, 0.0, row_fill);
                 if lane == self.arr.sel_lane {
@@ -4952,7 +4968,7 @@ impl VinteriaApp {
             let snap = self.arr.snap.max(1);
             if snap > 1 && snap < TICKS_PER_BAR {
                 let pixels_per_tick = bar_w / TICKS_PER_BAR as f32;
-                let division_ticks = visible_grid_step(snap, pixels_per_tick);
+                let division_ticks = visible_grid_step(snap, pixels_per_tick * 0.65);
                 let gap = division_ticks as f32 * pixels_per_tick;
                 if division_ticks < TICKS_PER_BAR {
                     let first = ((ui.clip_rect().left() - gx) / gap).ceil().max(0.0) as u32;
@@ -4963,7 +4979,7 @@ impl VinteriaApp {
                         }
                         let x = gx + division as f32 * gap;
                         p.line_segment([pos2(x, gy), pos2(x, gy + full_h)],
-                            Stroke::new(0.85, pick(0xFF455872, 0xFFAABBD0)));
+                            Stroke::new(0.65, pick(0xFF35455B, 0xFFB7C5D7)));
                     }
                 }
             }
@@ -4971,7 +4987,7 @@ impl VinteriaApp {
                 let x = gx + b as f32 * bar_w;
                 let strong = b % 4 == 0;
                 p.line_segment([pos2(x, gy), pos2(x, gy + full_h)],
-                    Stroke::new(if strong { 1.5 } else { 1.0 },
+                    Stroke::new(if strong { 1.6 } else { 1.15 },
                         if strong { pick(0xFF879DBA, 0xFF637C9C) } else { pick(0xFF627896, 0xFF839AB6) }));
             }
             for (i, c) in self.project.arrangement.clips.iter().enumerate() {
@@ -5260,7 +5276,8 @@ impl VinteriaApp {
         let offset_y = scroll.state.offset.y;
         let timeline = Rect::from_min_max(pos2(grid.left(), viewport.top()), pos2(grid.right(), grid.top()));
         let painter = ui.painter_at(timeline);
-        painter.rect_filled(timeline, 0.0, bar_fill());
+        painter.rect_filled(timeline, 0.0, glass_fill());
+        painter.line_segment([timeline.left_bottom(), timeline.right_bottom()], Stroke::new(1.0, glass_edge()));
         let ruler_response = ui.interact(timeline, egui::Id::new("m_playlist_seek_ruler"), Sense::click_and_drag())
             .on_hover_text("Tap to seek · Drag to loop");
         let tick_at = |x: f32| {

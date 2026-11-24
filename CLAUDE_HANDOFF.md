@@ -625,3 +625,9 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 
 - In Piano Roll Select mode, drag on empty grid to select notes with a marquee. Drag a selected note to move the group in time and pitch, with grid snap and a live preview. The selection has a contrasting outline in both themes. Ruler selection and Copy → remain available.
 - Native Android touch verification is pending.
+
+### Android 1.0.107
+
+- Playlist bar lines stand out from lighter subdivisions. Dense grids thin earlier with the chosen snap preserved, and the selected lane has a softer tint.
+- Portrait Playlist puts Select, Clone and history in the bottom panel above transport. The header, landscape dock and full-view tools use the same frosted surfaces.
+- Native Android visual and gesture verification is pending.
