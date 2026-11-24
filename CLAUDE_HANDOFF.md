@@ -608,3 +608,9 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 
 - Playlist and Piano Roll share grid fractions from Bar through 1/32, including 1/2. Piano Roll offers direct grid selection and draws the snap divisions used to place notes. At wide zoom both views thin their grid while keeping the chosen snap.
 - Native Android grid and Dev OTA installation testing are pending.
+
+### Android 1.0.104
+
+- Group mobile clip settings into source, playback and actions. Audio settings show a playable waveform, and MIDI settings open from the Playlist clip action bar alongside Piano Roll.
+- Browser effects, including signature plugins, can be dropped directly on Audio and MIDI track headers, as well as on their Playlist rows. Instruments can be dropped on MIDI headers and MIDI rows.
+- Native Android interaction testing is pending.

@@ -538,6 +538,9 @@ pub fn clip_options(ui: &mut Ui, project: &mut Project, st: &mut ArrState, lib: 
                 ui.separator();
 
                 // ---- the sound of the clip: which plugin / which sample plays it ----
+                if mobile {
+                    ui.heading(if c.audio { "Sample" } else { "Instrument" });
+                }
                 if c.audio {
                     ui.menu_button("Replace the sound", |ui| {
                         if let Some(path) = sample_picker(ui, lib) {
@@ -599,7 +602,7 @@ pub fn clip_options(ui: &mut Ui, project: &mut Project, st: &mut ArrState, lib: 
                             }
                         });
                     }
-                    if ui.button("Open in the Piano Roll   (double-click)").clicked() {
+                    if ui.button(if mobile { "Open Piano Roll" } else { "Open in the Piano Roll   (double-click)" }).clicked() {
                         project.current_pattern = c.pattern;
                         st.sel_lane = lane;
                         st.open_detail = true;
@@ -609,6 +612,9 @@ pub fn clip_options(ui: &mut Ui, project: &mut Project, st: &mut ArrState, lib: 
                 ui.separator();
 
                 // ---- the clip's settings ----
+                if mobile {
+                    ui.heading("Playback");
+                }
                 if c.audio {
                     let mut g = c.gain;
                     if ui.add(egui::Slider::new(&mut g, 0.0..=2.0).text("Volume")).changed() {
@@ -634,7 +640,7 @@ pub fn clip_options(ui: &mut Ui, project: &mut Project, st: &mut ArrState, lib: 
                     }
                 } else {
                     let mut mu = c.mute;
-                    if ui.checkbox(&mut mu, "Mute clip   Ctrl+M").changed() {
+                    if ui.checkbox(&mut mu, if mobile { "Mute clip" } else { "Mute clip   Ctrl+M" }).changed() {
                         project.arrangement.clips[i].mute = mu;
                     }
                 }
@@ -669,6 +675,9 @@ pub fn clip_options(ui: &mut Ui, project: &mut Project, st: &mut ArrState, lib: 
                 ui.separator();
 
                 // ---- cut, copy, convert ----
+                if mobile {
+                    ui.heading("Clip actions");
+                }
                 ui.horizontal_wrapped(|ui| {
                     if ui.button("Split here").on_hover_text("Cut the clip in two at this grid position").clicked() {
                         split_clip(project, i, at);

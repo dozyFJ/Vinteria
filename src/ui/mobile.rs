@@ -1882,6 +1882,7 @@ impl VinteriaApp {
         self.m_export_sheet(ui.ctx());
         self.m_clip_sheet(ui.ctx());
         self.m_track_sheet(ui.ctx());
+        self.m_instrument_editor(ui.ctx());
     }
 
     /// Pattern chips: tap to switch the pattern that the Steps and Piano screens edit.
@@ -3163,23 +3164,48 @@ impl VinteriaApp {
         let animation = egui::Id::new("m_piano_drawer_animation");
         let full = egui::Id::new("m_piano_drawer_full");
         let index = ctx.data(|d| d.get_temp::<usize>(id)).filter(|&i| self.arr.sel_clip == Some(i));
+        let settings = egui::Id::new("m_midi_clip_settings");
+        let midi_settings = index.is_some() && ctx.data(|d| d.get_temp::<usize>(settings)) == index;
         let clip = index.and_then(|i| self.project.arrangement.clips.get(i).copied());
         let (Some(index), Some(clip)) = (index, clip) else {
             ctx.animate_bool(animation, false);
             ctx.data_mut(|d| {
                 d.remove::<usize>(id);
                 d.remove::<bool>(full);
+                d.remove::<usize>(settings);
             });
             return;
         };
-        let done = if clip.audio {
+        let done = if clip.audio || midi_settings {
             ctx.animate_bool(animation, false);
-            mobile_editor_sheet(ctx, "m_clip_sheet_window", "Audio clip", |ui| {
-                mobile_scroll(egui::ScrollArea::vertical()).id_salt("m_audio_clip_controls").show(ui, |ui| {
-                    ui.spacing_mut().interact_size.y = 38.0;
-                    arrangement_ui::clip_options(ui, &mut self.project, &mut self.arr, &mut self.lib, index, clip.start, true);
-                });
-            })
+            let title = if clip.audio { "Audio clip settings" } else { "MIDI clip settings" };
+            let closed = mobile_editor_sheet(ctx, "m_clip_sheet_window", title, |ui| {
+                mobile_scroll(egui::ScrollArea::vertical()).id_salt(("m_clip_controls", index))
+                    .auto_shrink([false, false]).show(ui, |ui| {
+                        ui.spacing_mut().interact_size.y = 38.0;
+                        ui.spacing_mut().slider_width = (ui.available_width() * 0.45).min(220.0);
+                        arrangement_ui::clip_options(ui, &mut self.project, &mut self.arr, &mut self.lib, index, clip.start, true);
+                        if clip.audio {
+                            if let Some(sample) = self.project.arrangement.clips.get(index)
+                                .filter(|_| self.arr.sel_clip == Some(index))
+                                .and_then(|clip| self.project.audio_pool.get(clip.pattern))
+                            {
+                                ui.separator();
+                                track_ui::sample_waveform(ui, sample, self.project.bpm, &self.shared);
+                            }
+                        }
+                    });
+            });
+            if std::mem::take(&mut self.arr.open_detail) {
+                ctx.data_mut(|d| d.remove::<usize>(settings));
+                ctx.request_repaint();
+                false
+            } else if std::mem::take(&mut self.arr.open_editor) {
+                ctx.data_mut(|d| d.insert_temp(egui::Id::new(devices_ui::INSTRUMENT_EDITOR), clip.lane));
+                true
+            } else {
+                closed
+            }
         } else {
             self.m_piano_drawer(ctx, clip.pattern, animation, full)
         };
@@ -3187,6 +3213,7 @@ impl VinteriaApp {
             ctx.data_mut(|d| {
                 d.remove::<usize>(id);
                 d.remove::<bool>(full);
+                d.remove::<usize>(settings);
             });
             ctx.request_repaint();
         }
@@ -3356,7 +3383,6 @@ impl VinteriaApp {
             });
         } else {
             self.m_instrument_panel(ctx);
-            self.m_instrument_editor(ctx);
         }
     }
 
@@ -4441,6 +4467,7 @@ impl VinteriaApp {
         }
         ctx.data_mut(|d| {
             d.remove::<bool>(egui::Id::new("m_track_sheet_open"));
+            d.remove::<usize>(egui::Id::new("m_midi_clip_settings"));
             d.insert_temp(egui::Id::new("m_clip_sheet_selection"), index);
         });
     }
@@ -4952,7 +4979,11 @@ impl VinteriaApp {
                 if let Some(lane) = lane.filter(|&lane| lane == tracks || !self.project.arrangement.tracks[lane].playlist_locked) {
                     let tick = ((point.x - gx).max(0.0) / bar_w * TICKS_PER_BAR as f32) as u32;
                     let snap = self.arr.snap.max(1);
-                    let sample = egui::DragAndDrop::payload::<browser::DragItem>(ui.ctx());
+                    let sample = egui::DragAndDrop::payload::<browser::DragItem>(ui.ctx()).filter(|item| {
+                        !matches!(item.as_ref(), browser::DragItem::Instrument(_))
+                            || lane == tracks
+                            || self.project.arrangement.tracks[lane].kind == crate::arrangement::TrackKind::Midi
+                    });
                     let effect = (lane < tracks).then(|| egui::DragAndDrop::payload::<crate::fx::FxKind>(ui.ctx())).flatten();
                     if ui.rect_contains_pointer(rect) && (sample.is_some() || effect.is_some()) {
                         let row = Rect::from_min_size(pos2(rect.left(), gy + index as f32 * lane_h), vec2(rect.width(), lane_h));
@@ -5172,6 +5203,24 @@ impl VinteriaApp {
                     labels.rect_filled(card, 7.0, card_fill().gamma_multiply(0.62));
                 }
                 labels.line_segment([row.left_top(), row.right_top()], Stroke::new(0.6, grid_line()));
+                if !track.playlist_locked && ui.rect_contains_pointer(visible) {
+                    let effect = egui::DragAndDrop::payload::<crate::fx::FxKind>(ui.ctx());
+                    let instrument = egui::DragAndDrop::payload::<browser::DragItem>(ui.ctx())
+                        .filter(|item| matches!(item.as_ref(), browser::DragItem::Instrument(_)))
+                        .filter(|_| track.kind == crate::arrangement::TrackKind::Midi);
+                    if effect.is_some() || instrument.is_some() {
+                        labels.rect_stroke(card, 7.0, Stroke::new(2.0, p_accent()));
+                        if released {
+                            if effect.is_some() {
+                                dropped_effect = egui::DragAndDrop::take_payload::<crate::fx::FxKind>(ui.ctx())
+                                    .map(|kind| (*kind, lane));
+                            } else {
+                                dropped_item = egui::DragAndDrop::take_payload::<browser::DragItem>(ui.ctx())
+                                    .map(|item| (item, lane, 0));
+                            }
+                        }
+                    }
+                }
                 if let Some(progress) = active_lanes[lane] {
                     let beat = TICKS_PER_BAR / 4;
                     let phase = (pos % beat) as f32 / beat as f32;
@@ -5391,14 +5440,20 @@ impl VinteriaApp {
                         && self.project.arrangement.can_place(&shorter, Some(index))),
                     (Icon::CloneClips, "Clone clip", true),
                     (Icon::Trash, "Delete clip", true),
+                    (Icon::Settings, "MIDI clip settings", true),
                 ];
-                if let Some(action) = playlist_clip_bar(ui.ctx(), clip_menu_id, anchor, &actions) {
+                let actions = if c.audio { &actions[..5] } else { &actions[..] };
+                if let Some(action) = playlist_clip_bar(ui.ctx(), clip_menu_id, anchor, actions) {
                     ui.data_mut(|d| d.remove::<(usize, Pos2)>(clip_menu_id));
                     match action {
                         0 => selection = Some((c.lane, Some(index), Some(c.start), true)),
                         1 | 2 => move_clip = Some((index, if action == 1 { longer } else { shorter })),
                         3 => duplicate = Some(index),
                         4 => delete_clip = Some(index),
+                        5 => {
+                            self.m_open_playlist_clip(ui.ctx(), index);
+                            ui.data_mut(|d| d.insert_temp(egui::Id::new("m_midi_clip_settings"), index));
+                        }
                         _ => {}
                     }
                 }
@@ -5519,6 +5574,7 @@ impl VinteriaApp {
                     }
                     ui.data_mut(|d| {
                         d.remove::<bool>(egui::Id::new("m_track_sheet_open"));
+                        d.remove::<usize>(egui::Id::new("m_midi_clip_settings"));
                         d.insert_temp(egui::Id::new("m_clip_sheet_selection"), i);
                     });
                 }
@@ -6469,13 +6525,14 @@ impl VinteriaApp {
 }
 
 /// Clip actions as one row of icons right above the tapped point (below it when there is no room above).
-fn playlist_clip_bar(ctx: &egui::Context, id: egui::Id, anchor: Pos2, actions: &[(Icon, &str, bool); 5]) -> Option<usize> {
+fn playlist_clip_bar(ctx: &egui::Context, id: egui::Id, anchor: Pos2, actions: &[(Icon, &str, bool)]) -> Option<usize> {
     let screen = ctx.screen_rect();
-    let button = 44.0;
     let gap = 2.0;
     let pad = 4.0;
     let count = actions.len() as f32 + 1.0;
-    let size = vec2(count * button + (count - 1.0) * gap + pad * 2.0, button + pad * 2.0);
+    let button_width = ((screen.width() - 8.0 - (count - 1.0) * gap - pad * 2.0) / count).clamp(1.0, 44.0);
+    let button_height = 44.0;
+    let size = vec2(count * button_width + (count - 1.0) * gap + pad * 2.0, button_height + pad * 2.0);
     let above = anchor.y - size.y - 14.0;
     let top = if above >= screen.top() + 4.0 { above } else { anchor.y + 14.0 };
     let min = pos2(anchor.x - size.x * 0.5, top)
@@ -6496,7 +6553,8 @@ fn playlist_clip_bar(ctx: &egui::Context, id: egui::Id, anchor: Pos2, actions: &
             p.rect_filled(area, 14.0, glass_fill());
             p.rect_stroke(area, 14.0, Stroke::new(1.0, glass_edge()));
             let slot = |index: usize| Rect::from_min_size(
-                pos2(area.left() + pad + index as f32 * (button + gap), area.top() + pad), vec2(button, button));
+                pos2(area.left() + pad + index as f32 * (button_width + gap), area.top() + pad),
+                vec2(button_width, button_height));
             for (index, &(symbol, label, enabled)) in actions.iter().enumerate() {
                 let rect = slot(index);
                 let hit = ui.interact(rect, id.with(index), if enabled { Sense::click() } else { Sense::hover() })
