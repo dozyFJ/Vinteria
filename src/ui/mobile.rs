@@ -735,7 +735,6 @@ impl VinteriaApp {
                         }
                     });
             } else if portrait {
-                self.m_studio_portrait_header(ctx);
                 self.m_studio_transport_dock(ctx);
                 self.m_mixer_sheet(ctx);
                 self.m_nav_drawer(ctx);
@@ -1115,53 +1114,6 @@ impl VinteriaApp {
         did_undo || did_redo
     }
 
-    fn m_studio_portrait_header(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("m_studio_portrait_header").show_separator_line(false)
-            .frame(Frame::none().fill(glass_fill()).stroke(Stroke::new(1.0, glass_edge()))
-                .inner_margin(Margin::symmetric(6.0, 4.0)))
-            .show(ctx, |ui| {
-                mobile_visuals(ui);
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
-                    let width = if ui.available_width() < 338.0 { 40.0 } else { 44.0 };
-                    if studio_icon(ui, width, Icon::Menu, false, "Menu").clicked() {
-                        ctx.data_mut(|d| d.insert_temp(egui::Id::new(DRAWER_OPEN), true));
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if self.m_sec == SEC_PLAYLIST {
-                            self.m_studio_browser_button(ui, ctx, width);
-                        } else if studio_icon(ui, width, Icon::Folder, false, "Open Browser").clicked() {
-                            self.m_select_studio_section(ctx, SEC_PLAYLIST);
-                            ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_browser_open"), true));
-                        }
-                        let control_count = if cfg!(target_arch = "wasm32") { 5.0 } else { 6.0 };
-                        let controls_width = control_count * width + 16.0
-                            + (control_count - 1.0) * ui.spacing().item_spacing.x;
-                        let available = ui.available_width();
-                        let visible_width = available.min(controls_width).max(1.0);
-                        let gap = ((available - visible_width) * 0.5).max(0.0);
-                        if gap > 0.0 {
-                            ui.add_space(gap);
-                        }
-                        ui.allocate_ui_with_layout(
-                            vec2(visible_width, 44.0),
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| {
-                                mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_studio_header_scroll")
-                                    .max_width(visible_width).auto_shrink([false, true]).show(ui, |ui| {
-                                        ui.horizontal(|ui| {
-                                            self.m_studio_quick_controls(ui, ctx, width);
-                                            #[cfg(not(target_arch = "wasm32"))]
-                                            self.m_render_track_button(ui, ctx, width);
-                                        });
-                                    });
-                            },
-                        );
-                    });
-                });
-            });
-    }
-
     fn m_studio_quick_controls(&mut self, ui: &mut Ui, ctx: &egui::Context, width: f32) {
         self.m_studio_tempo(ui, width + 14.0, true, false);
         let (rect, metronome) = ui.allocate_exact_size(vec2(width, 44.0), Sense::click());
@@ -1414,6 +1366,21 @@ impl VinteriaApp {
                         });
                         ui.add_space(14.0);
                         egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
+                            mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_studio_drawer_quick")
+                                .auto_shrink([false, true]).show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 2.0;
+                                        self.m_studio_quick_controls(ui, ctx, 40.0);
+                                        #[cfg(not(target_arch = "wasm32"))]
+                                        self.m_render_track_button(ui, ctx, 40.0);
+                                    });
+                                });
+                            if drawer_row(ui, Icon::Folder, "Browser", false).clicked() {
+                                self.m_select_studio_section(ctx, SEC_PLAYLIST);
+                                ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_browser_open"), true));
+                                close = true;
+                            }
+                            ui.separator();
                             for (index, (label, symbol)) in STUDIO_SECTIONS.into_iter().enumerate() {
                                 if index == SEC_PIANO {
                                     continue; // the piano roll opens from a clip
@@ -4825,17 +4792,30 @@ impl VinteriaApp {
         }
         let add_lane = egui::DragAndDrop::has_payload_of_type::<browser::DragItem>(ui.ctx());
         let panel_id = egui::Id::new("m_playlist_track_names");
-        let panel_open = ui.data(|d| d.get_temp::<bool>(panel_id)).unwrap_or(true);
         let portrait = portrait_view(ui);
-        let show_names = portrait || panel_open;
+        let open_id = if portrait { panel_id.with("portrait_open") } else { panel_id };
+        let panel_open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(true);
+        let panel_width = if portrait {
+            let shown = ui.ctx().animate_bool_with_time(open_id.with("slide"), panel_open, 0.16);
+            30.0 + shown * 76.0
+        } else if panel_open {
+            116.0
+        } else {
+            28.0
+        };
+        let show_names = if portrait { panel_width >= 72.0 } else { panel_open };
         let show_master = show_names && !add_lane;
         let extra_h = if show_master { 92.0 } else { 0.0 };
-        let panel_width: f32 = if portrait { 94.0 } else if panel_open { 116.0 } else { 28.0 };
         let reveal_id = egui::Id::new("m_playlist_reveal_track");
         let reveal_lane = ui.data_mut(|d| d.remove_temp::<usize>(reveal_id));
         let (viewport, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
         let mut grid = viewport;
-        grid.max.x -= panel_width.min((viewport.width() - 1.0).max(0.0));
+        let side_width = panel_width.min((viewport.width() - 1.0).max(0.0));
+        if portrait {
+            grid.min.x += side_width;
+        } else {
+            grid.max.x -= side_width;
+        }
         grid.min.y += ruler.min((viewport.height() - 1.0).max(0.0));
         let (pinching, zoom) = grid_pinch(ui, egui::Id::new("m_playlist_pinch"), grid);
         let previous_height = ui.data(|d| d.get_temp::<f32>(height_id)).unwrap_or(52.0);
@@ -5414,7 +5394,11 @@ impl VinteriaApp {
                     p_accent(), Stroke::NONE));
             }
         }
-        let panel = Rect::from_min_max(pos2(grid.right(), viewport.top()), viewport.max);
+        let panel = if portrait {
+            Rect::from_min_max(viewport.min, pos2(grid.left(), viewport.bottom()))
+        } else {
+            Rect::from_min_max(pos2(grid.right(), viewport.top()), viewport.max)
+        };
         let painter = ui.painter_at(panel);
         painter.rect_filled(panel, 0.0, bar_fill());
         let names = Rect::from_min_max(pos2(panel.left(), grid.top()), panel.max);
@@ -5700,7 +5684,24 @@ impl VinteriaApp {
                 self.m_select_studio_section(&ctx, 4);
             }
         }
-        if !portrait {
+        if portrait {
+            let toggle = Rect::from_min_size(panel.min, vec2(panel.width(), ruler));
+            let response = ui.interact(toggle.intersect(ui.clip_rect()), open_id, Sense::click_and_drag())
+                .on_hover_text(if panel_open { "Hide tracks" } else { "Show tracks" });
+            let label = if show_names { "‹ Tracks" } else { "›" };
+            painter.text(toggle.center(), Align2::CENTER_CENTER, label,
+                FontId::proportional(if show_names { 13.0 } else { 22.0 }), ink());
+            let swipe = response.dragged() && ui.input(|input| {
+                input.pointer.press_origin().zip(input.pointer.interact_pos()).is_some_and(|(start, end)| {
+                    let delta = end - start;
+                    delta.x.abs() > delta.y.abs() && if panel_open { delta.x < -20.0 } else { delta.x > 20.0 }
+                })
+            });
+            if response.clicked() || swipe {
+                ui.data_mut(|d| d.insert_temp(open_id, !panel_open));
+                ui.ctx().request_repaint();
+            }
+        } else {
             let width = if panel_open { (panel.width() - TOUCH - 3.0).max(1.0) } else { panel.width() };
             let toggle = Rect::from_min_size(panel.min, vec2(width, ruler));
             let toggle_response = ui.interact(toggle, panel_id, Sense::click())
@@ -5712,7 +5713,7 @@ impl VinteriaApp {
             }
         }
         if !add_lane && (!portrait || !docked) {
-            let x = if show_names { panel.right() - 3.0 } else { timeline.right() - 3.0 };
+            let x = if show_names && !portrait { panel.right() - 3.0 } else { timeline.right() - 3.0 };
             let options = Rect::from_min_size(pos2(x - TOUCH, viewport.top()), vec2(TOUCH, ruler));
             self.m_playlist_options(ui, options);
         }

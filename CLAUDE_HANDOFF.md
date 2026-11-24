@@ -647,3 +647,9 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 - Portrait Playlist selects on a tap, opens MIDI Piano Roll or audio settings on a double tap, and opens a labelled action grid on hold. Landscape retains its existing clip menu and gestures.
 - Refresh portrait Track Settings with a frosted header, rounded tabs, a compact MIDI instrument action grid and an Audio sample card.
 - Native Android touch and layout verification is pending.
+
+### Android 1.0.111
+
+- The portrait Studio dock replaces the top header. Browser, BPM, metronome, automation, Mic, MIDI and render remain available via the dock's Studio menu.
+- Portrait Playlist moves track cards and Master to a collapsible left rail. Tap or swipe its Tracks handle to expand or collapse, retaining timeline alignment, track actions and drop targets. Landscape keeps its right rail.
+- Native Android touch and layout verification is pending.
