@@ -1842,91 +1842,289 @@ impl VinteriaApp {
     }
 
     /// Drum step sequencer: one card per drum, two rows of 8 big steps per 16-step page.
+    /// Step sequencer laid out like FL Studio Mobile: one row per drum (name on the left, selected one highlighted,
+    /// hold it for the sound menu), the steps in a line on the right; the Mixer and Sample tabs swap the steps for
+    /// that row's knobs; the graph editor under the rows edits velocity, pan, pitch or chance per step.
     fn m_steps(&mut self, ui: &mut Ui) {
-        self.m_pattern_chips(ui);
         let pi = self.project.current_pattern;
         if pi >= self.project.patterns.len() {
+            self.m_pattern_chips(ui);
             ui.label(RichText::new("No pattern yet. Start from a template in Projects.").color(muted()));
             return;
         }
-        let len = self.project.patterns[pi].length_steps.max(16) as usize;
-        let pages = (len + 15) / 16;
-        let page_id = egui::Id::new("m_steps_page");
-        let mut page: usize = ui.data(|d| d.get_temp(page_id)).unwrap_or(0).min(pages - 1);
-        if pages > 1 {
-            let names: Vec<String> = (0..pages).map(|p| format!("{}-{}", p * 16 + 1, p * 16 + 16)).collect();
-            ui.horizontal(|ui| {
-                for (i, n) in names.iter().enumerate() {
-                    if p_button(ui, n, page == i, vec2(70.0, 32.0)).clicked() {
-                        page = i;
-                    }
+        let tab_id = egui::Id::new("m_steps_tab");
+        let sel_id = egui::Id::new("m_steps_selected");
+        let graph_id = egui::Id::new("m_steps_graph");
+        let graph_open_id = egui::Id::new("m_steps_graph_open");
+        let mut tab = ui.data(|d| d.get_temp::<u8>(tab_id)).unwrap_or(0);
+        let mut selected = ui.data(|d| d.get_temp::<usize>(sel_id)).unwrap_or(0).min(NUM_DRUMS - 1);
+        let mut graph = ui.data(|d| d.get_temp::<u8>(graph_id)).unwrap_or(0);
+        let mut graph_open = ui.data(|d| d.get_temp::<bool>(graph_open_id)).unwrap_or(true);
+        // top bar: pattern, swing, tabs
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            self.m_pattern_chips(ui);
+        });
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let (rect, resp) = ui.allocate_exact_size(vec2(92.0, 36.0), Sense::click_and_drag());
+            panel(ui.painter(), rect, 8.0);
+            let knob = Rect::from_center_size(rect.right_center() - vec2(18.0, 0.0), vec2(28.0, 28.0));
+            fl_knob(ui.painter(), knob, self.project.swing, false);
+            ui.painter().text(rect.left_center() + vec2(10.0, 0.0), Align2::LEFT_CENTER, "SWING", FontId::proportional(12.0), p_accent());
+            if resp.dragged() {
+                self.project.swing = (self.project.swing - resp.drag_delta().y * 0.005 + resp.drag_delta().x * 0.005).clamp(0.0, 1.0);
+            }
+            if resp.double_clicked() {
+                self.project.swing = 0.0;
+            }
+            let w = ((ui.available_width() - 8.0) / 3.0).max(40.0);
+            for (index, label) in ["Steps", "Mixer", "Sample"].into_iter().enumerate() {
+                if p_button(ui, label, tab == index as u8, vec2(w, 36.0)).clicked() {
+                    tab = index as u8;
                 }
-            });
-            ui.data_mut(|d| d.insert_temp(page_id, page));
-            ui.add_space(6.0);
-        }
+            }
+        });
+        ui.add_space(4.0);
+        let len = self.project.patterns[pi].length_steps.max(16) as usize;
         let playing = self.playing() && !self.project.song_mode;
         let play_step = (self.shared.position.load(Ordering::Relaxed) / TICKS_PER_STEP) as usize % len;
-        mobile_scroll(egui::ScrollArea::vertical()).auto_shrink([false, false]).show(ui, |ui| {
-            for lane in 0..NUM_DRUMS {
-                let w = ui.available_width();
-                let cell = ((w - 24.0 - 7.0 * 6.0 - 6.0) / 8.0).clamp(28.0, 64.0);
-                let h = 34.0 + 2.0 * cell + 8.0 + 14.0;
-                let (rect, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
-                panel(ui.painter(), rect, 16.0);
-                let col = lane_col(lane);
-                ui.painter().circle_filled(rect.left_top() + vec2(20.0, 18.0), 5.0, col);
-                let label = Rect::from_min_size(rect.min, vec2(rect.width(), 34.0));
-                let hit = ui.interact(label, ui.id().with(("drum_sound", lane)), Sense::click());
-                ui.painter().text(rect.left_top() + vec2(32.0, 18.0), Align2::LEFT_CENTER, DRUM_NAMES[lane], FontId::proportional(15.0), ink());
-                icon(ui.painter(), Icon::Wave, label.right_center() - vec2(22.0, 0.0), muted());
-                if hit.on_hover_text("Drum sound settings").clicked() {
-                    ui.data_mut(|d| d.insert_temp(egui::Id::new("m_drum_sound_sheet"), lane));
+        let name_w = 104.0;
+        let row_h = 54.0;
+        let step_w = 34.0;
+        let graph_h = if graph_open { 150.0 } else { 0.0 };
+        let mut sound_menu = None;
+        let mut step_edit = None;
+        let mut hit_lane = None;
+        {
+            // own layout instead of a ScrollArea: a sideways swipe on the steps scrolls them, a tap hits exactly the
+            // cell under the finger (the ScrollArea's own drag shifted taps by a step)
+            let total_h = NUM_DRUMS as f32 * row_h + 36.0 + graph_h + 12.0;
+            let (view, _) = ui.allocate_exact_size(vec2(ui.available_width(), total_h), Sense::hover());
+            let origin = view.min;
+            let offset_id = egui::Id::new(("m_steps_offset", pi));
+            let visible_w = (view.width() - name_w).max(step_w);
+            let max_offset = (len as f32 * step_w - visible_w).max(0.0);
+            let mut offset = ui.data(|d| d.get_temp::<f32>(offset_id)).unwrap_or(0.0).clamp(0.0, max_offset);
+            let steps_area = Rect::from_min_max(pos2(view.left() + name_w, view.top()),
+                pos2(view.right(), view.top() + NUM_DRUMS as f32 * row_h));
+            let graph_area = Rect::from_min_max(pos2(view.left() + name_w, view.top() + NUM_DRUMS as f32 * row_h + 42.0), view.max);
+            if tab == 0 {
+                // a sideways swipe anywhere over the steps or the graph scrolls them together
+                let swipe = ui.interact(steps_area, ui.id().with("fl_steps_swipe"), Sense::drag());
+                if swipe.dragged() && swipe.drag_delta().x.abs() > swipe.drag_delta().y.abs() {
+                    offset = (offset - swipe.drag_delta().x).clamp(0.0, max_offset);
                 }
-                for k in 0..16 {
-                    let s = page * 16 + k;
-                    if s >= len {
-                        break;
-                    }
-                    let (row, colm) = (k / 8, k % 8);
-                    let x = rect.left() + 12.0 + colm as f32 * (cell + 6.0) + if colm >= 4 { 6.0 } else { 0.0 };
-                    let y = rect.top() + 34.0 + row as f32 * (cell + 8.0);
-                    let r = Rect::from_min_size(pos2(x, y), vec2(cell, cell));
-                    let resp = ui.interact(r, ui.id().with(("step", lane, s)), Sense::click());
-                    if resp.long_touched() || resp.secondary_clicked() {
-                        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("m_step_edit"), (pi, lane, s)));
-                    }
-                    let on = self.project.patterns[pi].drums[lane][s].on;
-                    let p = ui.painter();
-                    let st = self.project.patterns[pi].drums[lane][s];
-                    if on {
-                        p.rect_filled(r, 10.0, col.linear_multiply(0.45 + 0.55 * st.vel as f32 / 127.0));
-                        if st.is_smart() {
-                            p.circle_filled(r.right_top() + vec2(-7.0, 7.0), 3.0, Color32::WHITE);
-                        }
-                    } else {
-                        panel(p, r, 10.0);
-                    }
-                    if playing && play_step == s {
-                        if on {
-                            let [left, right] = self.shared.peak(lane);
-                            let opacity = (left.max(right).clamp(0.0, 1.0) * 120.0) as u8 + 30;
-                            p.rect_filled(r, 10.0, Color32::from_white_alpha(opacity));
-                            p.rect_stroke(r.expand(2.0), 12.0, Stroke::new(2.0, col));
-                        } else {
-                            p.rect_stroke(r.expand(1.0), 11.0, Stroke::new(1.0, p_accent().gamma_multiply(0.5)));
-                        }
-                    }
-                    if resp.clicked() && !resp.long_touched() {
-                        let st = &mut self.project.patterns[pi].drums[lane][s];
-                        st.on = !st.on;
-                        if st.on && st.vel == 0 {
-                            st.vel = 100;
-                        }
-                    }
-                }
-                ui.add_space(10.0);
+                let _ = graph_area;
             }
+            ui.data_mut(|d| d.insert_temp(offset_id, offset));
+            let p = ui.painter_at(view);
+            let steps_left = view.left() + name_w - offset;
+            for lane in 0..NUM_DRUMS {
+                let y = origin.y + lane as f32 * row_h;
+                let row = Rect::from_min_size(pos2(view.left(), y), vec2(view.width(), row_h));
+                p.line_segment([row.left_bottom(), row.right_bottom()], Stroke::new(1.0, p_bg()));
+                let col = lane_col(lane);
+                match tab {
+                    0 => {
+                        for s in 0..len {
+                            let x = steps_left + s as f32 * step_w;
+                            let cell = Rect::from_min_size(pos2(x, y), vec2(step_w, row_h)).shrink2(vec2(1.5, 3.0));
+                            if cell.right() < view.left() + name_w || cell.left() > view.right() {
+                                continue;
+                            }
+                            // groups of four steps alternate their shade, like FL
+                            let shade = if (s / 4) % 2 == 0 { card_fill() } else { card_fill().gamma_multiply(0.7) };
+                            let st = self.project.patterns[pi].drums[lane][s];
+                            if st.on {
+                                p.rect_filled(cell, 3.0, col.linear_multiply(0.45 + 0.55 * st.vel as f32 / 127.0));
+                                p.line_segment([cell.left_top() + vec2(5.0, 6.0), cell.right_top() + vec2(-5.0, 6.0)], Stroke::new(2.0, Color32::from_black_alpha(140)));
+                                if st.is_smart() {
+                                    p.circle_filled(cell.right_bottom() - vec2(6.0, 6.0), 2.5, Color32::WHITE);
+                                }
+                            } else {
+                                p.rect_filled(cell, 3.0, shade);
+                            }
+                            if playing && play_step == s {
+                                p.rect_stroke(cell.expand(1.0), 3.0, Stroke::new(2.0, if st.on { Color32::WHITE } else { p_accent().gamma_multiply(0.6) }));
+                            }
+                            let resp = ui.interact(cell.intersect(steps_area), ui.id().with(("fl_step", lane, s)), Sense::click());
+                            if resp.long_touched() || resp.secondary_clicked() {
+                                step_edit = Some((pi, lane, s));
+                            } else if resp.clicked() {
+                                let st = &mut self.project.patterns[pi].drums[lane][s];
+                                st.on = !st.on;
+                                if st.on && st.vel == 0 {
+                                    st.vel = 100;
+                                }
+                                hit_lane = Some(lane);
+                            }
+                        }
+                    }
+                    1 => {
+                        // Mixer: level, pan, mute
+                        let ch = &mut self.project.channels[lane];
+                        let mut x = view.left() + name_w + 10.0;
+                        for (label, value, range, bipolar) in [("Level", &mut ch.volume, (0.0f32, 1.0f32), false), ("Pan", &mut ch.pan, (-1.0, 1.0), true)] {
+                            p.text(pos2(x, y + row_h * 0.5), Align2::LEFT_CENTER, label, FontId::proportional(12.0), p_accent());
+                            let knob = Rect::from_center_size(pos2(x + 58.0, y + row_h * 0.5), vec2(36.0, 36.0));
+                            let hit = ui.interact(knob.expand(4.0), ui.id().with(("fl_knob", label, lane)), Sense::click_and_drag());
+                            if hit.dragged() {
+                                *value = (*value + (hit.drag_delta().x - hit.drag_delta().y) * 0.005 * (range.1 - range.0)).clamp(range.0, range.1);
+                            }
+                            if hit.double_clicked() {
+                                *value = if bipolar { 0.0 } else { 0.8 };
+                            }
+                            fl_knob(&p, knob, (*value - range.0) / (range.1 - range.0), bipolar);
+                            x += 96.0;
+                        }
+                        let mute = Rect::from_center_size(pos2(x + 16.0, y + row_h * 0.5), vec2(34.0, 30.0));
+                        p.rect_filled(mute, 6.0, if ch.mute { RED.gamma_multiply(0.7) } else { card_fill() });
+                        p.text(mute.center(), Align2::CENTER_CENTER, "M", FontId::proportional(13.0), ink());
+                        if ui.interact(mute, ui.id().with(("fl_mute", lane)), Sense::click()).clicked() {
+                            ch.mute = !ch.mute;
+                        }
+                    }
+                    _ => {
+                        // Sample: reverse, start, fade out (the processed copy is rebuilt from the original)
+                        let before = self.project.drum_fx[lane];
+                        let mut fx = before;
+                        let mut x = view.left() + name_w + 8.0;
+                        let rev = Rect::from_min_size(pos2(x, y + row_h * 0.5 - 15.0), vec2(42.0, 30.0));
+                        p.rect_filled(rev, 6.0, if fx.reverse { p_accent().gamma_multiply(0.6) } else { card_fill() });
+                        p.text(rev.center(), Align2::CENTER_CENTER, "REV", FontId::proportional(12.0), ink());
+                        if ui.interact(rev, ui.id().with(("fl_rev", lane)), Sense::click()).clicked() {
+                            fx.reverse = !fx.reverse;
+                        }
+                        x = rev.right() + 10.0;
+                        for (label, value, max) in [("Start", &mut fx.start, 0.9f32), ("Fade", &mut fx.fade_out, 1.0)] {
+                            p.text(pos2(x, y + row_h * 0.5), Align2::LEFT_CENTER, label, FontId::proportional(12.0), p_accent());
+                            let knob = Rect::from_center_size(pos2(x + 56.0, y + row_h * 0.5), vec2(36.0, 36.0));
+                            let hit = ui.interact(knob.expand(4.0), ui.id().with(("fl_fx", label, lane)), Sense::click_and_drag());
+                            if hit.dragged() {
+                                *value = (*value + (hit.drag_delta().x - hit.drag_delta().y) * 0.004).clamp(0.0, max);
+                            }
+                            if hit.double_clicked() {
+                                *value = 0.0;
+                            }
+                            fl_knob(&p, knob, *value / max, false);
+                            x += 90.0;
+                        }
+                        if fx.start >= fx.end - 0.01 {
+                            fx.start = (fx.end - 0.02).max(0.0);
+                        }
+                        if fx != before {
+                            self.project.drum_fx[lane] = fx;
+                            let original = self.project.drum_samples[lane].as_ref()
+                                .and_then(|sample| self.lib.get(std::path::Path::new(&sample.path)).ok());
+                            if let (Some(original), Some(sample)) = (original, self.project.drum_samples[lane].as_mut()) {
+                                sample.data = Some(std::sync::Arc::new(fx.apply(&original)));
+                            }
+                        }
+                    }
+                }
+                // the name column stays at the left edge while the steps scroll
+                let name = Rect::from_min_size(pos2(view.left(), y), vec2(name_w, row_h)).shrink2(vec2(0.0, 1.5));
+                let active = lane == selected;
+                p.rect_filled(name, 4.0, if active { col.gamma_multiply(0.85) } else { bar_fill() });
+                p.rect_filled(Rect::from_min_size(name.min, vec2(4.0, name.height())), 2.0, col);
+                let sample = self.project.drum_samples.get(lane).and_then(Option::as_ref).map_or("Built-in".to_owned(), |s| s.name.clone());
+                let text = name.shrink2(vec2(10.0, 0.0));
+                fit_label(&p, text, name.top() + 20.0, DRUM_NAMES[lane], if active { Color32::BLACK } else { ink() }, 15.0);
+                fit_label(&p, text, name.top() + 38.0, &sample, if active { Color32::from_black_alpha(170) } else { muted() }, 10.0);
+                let hit = ui.interact(name, ui.id().with(("fl_name", lane)), Sense::click());
+                if hit.long_touched() || hit.secondary_clicked() {
+                    sound_menu = Some(lane);
+                } else if hit.clicked() {
+                    selected = lane;
+                    self.shared.send(Cmd::DrumHit { lane, vel: 112 });
+                }
+            }
+            // graph editor: one bar per step of the selected row
+            let top = origin.y + NUM_DRUMS as f32 * row_h + 6.0;
+            let tabs = Rect::from_min_size(pos2(view.left(), top), vec2(view.width(), 30.0));
+            let chevron = Rect::from_min_size(tabs.min, vec2(44.0, 30.0));
+            p.rect_filled(chevron, 6.0, card_fill());
+            p.text(chevron.center(), Align2::CENTER_CENTER, if graph_open { "v" } else { "^" }, FontId::proportional(15.0), ink());
+            if ui.interact(chevron, ui.id().with("fl_graph_toggle"), Sense::click()).on_hover_text("Graph editor").clicked() {
+                graph_open = !graph_open;
+            }
+            let labels = ["Velocity", "Pan", "Pitch", "Chance"];
+            let tab_w = ((tabs.width() - 50.0) / 4.0).max(40.0);
+            for (index, label) in labels.iter().enumerate() {
+                let r = Rect::from_min_size(pos2(chevron.right() + 6.0 + index as f32 * tab_w, top), vec2(tab_w - 4.0, 30.0));
+                p.rect_filled(r, 6.0, if graph == index as u8 && graph_open { p_accent().gamma_multiply(0.55) } else { card_fill() });
+                p.text(r.center(), Align2::CENTER_CENTER, *label, FontId::proportional(12.0), ink());
+                if ui.interact(r, ui.id().with(("fl_graph_tab", index)), Sense::click()).clicked() {
+                    graph = index as u8;
+                    graph_open = true;
+                }
+            }
+            if graph_open && tab == 0 {
+                let plot_top = top + 36.0;
+                let plot_h = graph_h - 40.0;
+                let label = Rect::from_min_size(pos2(view.left(), plot_top), vec2(name_w, plot_h));
+                p.rect_filled(label, 4.0, bar_fill());
+                p.text(label.center(), Align2::CENTER_CENTER, format!("{}\n{}", DRUM_NAMES[selected], labels[graph as usize]),
+                    FontId::proportional(12.0), muted());
+                let col = lane_col(selected);
+                for s in 0..len {
+                    let x = steps_left + s as f32 * step_w;
+                    let cell = Rect::from_min_size(pos2(x, plot_top), vec2(step_w, plot_h)).shrink2(vec2(2.0, 0.0));
+                    if cell.right() < view.left() + name_w || cell.left() > view.right() {
+                        continue;
+                    }
+                    p.rect_filled(cell, 2.0, if (s / 4) % 2 == 0 { card_fill().gamma_multiply(0.6) } else { card_fill().gamma_multiply(0.4) });
+                    let st = &mut self.project.patterns[pi].drums[selected][s];
+                    // value as 0..1 and whether it is drawn from the middle line
+                    let (t, mid) = match graph {
+                        0 => (st.vel as f32 / 127.0, false),
+                        1 => ((st.pan as f32 + 100.0) / 200.0, true),
+                        2 => ((st.pitch as f32 + 24.0) / 48.0, true),
+                        _ => (st.prob as f32 / 100.0, false),
+                    };
+                    let fill = if st.on { col } else { muted().gamma_multiply(0.35) };
+                    let y_at = |t: f32| cell.bottom() - t.clamp(0.0, 1.0) * cell.height();
+                    let bar = if mid {
+                        let (a, b) = (y_at(0.5), y_at(t));
+                        Rect::from_min_max(pos2(cell.left() + 3.0, a.min(b)), pos2(cell.right() - 3.0, a.max(b) + 1.0))
+                    } else {
+                        Rect::from_min_max(pos2(cell.left() + 3.0, y_at(t)), pos2(cell.right() - 3.0, cell.bottom()))
+                    };
+                    p.rect_filled(bar, 2.0, fill);
+                    let hit = ui.interact(cell, ui.id().with(("fl_graph", s)), Sense::click_and_drag());
+                    if (hit.dragged() || hit.clicked()) && st.on {
+                        if let Some(point) = hit.interact_pointer_pos() {
+                            let t = ((cell.bottom() - point.y) / cell.height()).clamp(0.0, 1.0);
+                            match graph {
+                                0 => st.vel = (t * 127.0).round().max(1.0) as u8,
+                                1 => st.pan = (t * 200.0 - 100.0).round() as i8,
+                                2 => st.pitch = (t * 48.0 - 24.0).round() as i8,
+                                _ => st.prob = (t * 100.0).round().max(1.0) as u8,
+                            }
+                        }
+                    }
+                    if hit.double_clicked() && st.on {
+                        match graph { 0 => st.vel = 100, 1 => st.pan = 0, 2 => st.pitch = 0, _ => st.prob = 100 }
+                    }
+                }
+            }
+        }
+        if let Some(lane) = hit_lane {
+            selected = lane;
+        }
+        if let Some(lane) = sound_menu {
+            selected = lane;
+            ui.data_mut(|d| d.insert_temp(egui::Id::new("m_drum_sound_sheet"), lane));
+        }
+        if let Some(edit) = step_edit {
+            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("m_step_edit"), edit));
+        }
+        ui.data_mut(|d| {
+            d.insert_temp(tab_id, tab);
+            d.insert_temp(sel_id, selected);
+            d.insert_temp(graph_id, graph);
+            d.insert_temp(graph_open_id, graph_open);
         });
     }
 
