@@ -555,3 +555,8 @@ Browser открывается слева рядом с Playlist в обеих �
 
 - Phone instrument editor (`instruments_ui::show_mobile`): two tabs, Sounds (the preset library with category chips and 44 px rows showing category · engine) and Edit (the engine). In Edit the engine panels use a phone layout: knob rows wrap (`row`), fixed panel widths shrink to the screen (`fit_w`), and Wavetable's side-by-side boxes stack (`row_top`). The PC editor is unchanged (the helpers only switch while `inst_mobile_layout` is set).
 - Checked on the desktop build in mobile mode at 400×860: Poly Synth, Wavetable, Analog, 808 Bass and 808 Sampler editors fit the width; the Sounds list applies presets.
+
+### Android 1.0.95
+
+- Piano Roll Oct − / Oct +: they always moved the view by an octave, but on an empty grid only the small key labels changed, so they looked dead. Now the octave in view is shown between the buttons (C3, C4…, same naming as the keys) and the octave that comes into view glows for a moment. Limits 0–9 are respected.
+- Checked on the desktop build in mobile mode (portrait and landscape): Oct + moves B3→B4 with the glow, Oct − moves back.

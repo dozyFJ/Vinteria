@@ -2056,11 +2056,21 @@ impl VinteriaApp {
                             {
                                 slide_mode = !slide_mode;
                             }
-                            if p_button(ui, "Oct −", false, vec2(62.0, 44.0)).clicked() {
-                                oct = oct.saturating_sub(1);
+                            // the octave in view: − / + jump the grid a whole octave down / up and flash it
+                            // (read the time first: ui.input inside ui.data_mut would lock the context twice)
+                            let jump = |ui: &mut Ui| {
+                                let now = ui.input(|i| i.time);
+                                ui.data_mut(|d| d.insert_temp(egui::Id::new("m_piano_oct_flash"), now));
+                            };
+                            if p_button(ui, "Oct −", false, vec2(62.0, 44.0)).on_hover_text("Show one octave lower").clicked() && oct > 0 {
+                                oct -= 1;
+                                jump(ui);
                             }
-                            if p_button(ui, "Oct +", false, vec2(62.0, 44.0)).clicked() {
-                                oct = (oct + 1).min(9);
+                            ui.add_sized([46.0, 44.0], egui::Label::new(RichText::new(format!("C{}", i16::from(oct) - 1))
+                                .size(15.0).strong().color(p_accent())));
+                            if p_button(ui, "Oct +", false, vec2(62.0, 44.0)).on_hover_text("Show one octave higher").clicked() && oct < 9 {
+                                oct += 1;
+                                jump(ui);
                             }
                             // grid: what a tap places and what a drag snaps to
                             let grid_label = match snap {
@@ -2258,10 +2268,19 @@ impl VinteriaApp {
             let (rect, resp) = ui.allocate_exact_size(vec2(duration as f32 / TICKS_PER_STEP as f32 * step_w, rows as f32 * row_h), Sense::click());
             let p = ui.painter_at(rect);
             panel(&p, rect, 4.0);
+            // after Oct − / +: the octave that came into view glows for a moment
+            let flash = ui.data(|d| d.get_temp::<f64>(egui::Id::new("m_piano_oct_flash")))
+                .map(|at| (1.0 - (ui.input(|i| i.time) - at) / 0.9).clamp(0.0, 1.0) as f32).filter(|t| *t > 0.0);
+            if flash.is_some() {
+                ui.ctx().request_repaint();
+            }
             for row in 0..rows {
                 let pitch = high_pitch - row as u8;
                 let y = rect.top() + row as f32 * row_h;
                 let lane = Rect::from_min_size(pos2(rect.left(), y), vec2(rect.width(), row_h));
+                if let Some(t) = flash.filter(|_| (base..base.saturating_add(12)).contains(&pitch)) {
+                    p.rect_filled(lane, 0.0, p_accent().gamma_multiply(0.28 * t));
+                }
                 if held.is_some_and(|(_, key)| key == pitch) {
                     p.rect_filled(lane, 0.0, p_accent().linear_multiply(0.30));
                 } else if crate::theory::is_root(key_root, pitch) {
