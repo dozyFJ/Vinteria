@@ -631,3 +631,8 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 - Playlist bar lines stand out from lighter subdivisions. Dense grids thin earlier with the chosen snap preserved, and the selected lane has a softer tint.
 - Portrait Playlist puts Select, Clone and history in the bottom panel above transport. The header, landscape dock and full-view tools use the same frosted surfaces.
 - Native Android visual and gesture verification is pending.
+
+### Android 1.0.108
+
+- New project saves identify as WINTERIA and use the Winteria Projects folder. The loader still accepts SYNTHESIA project files, and the hub lists projects from the old folder without moving them.
+- The project round-trip test covers both identifiers. Native Android save verification is pending.

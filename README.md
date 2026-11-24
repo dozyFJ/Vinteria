@@ -3,7 +3,7 @@
 DAW written from scratch in Rust: own audio engine, synths, step sequencer, piano roll, arrangement, mixer, project files, WAV export.
 
 The Rust crate is `vinteria_daw`; the desktop executable is `VinteriaDaw.exe`.
-Existing `.synthesia` projects remain compatible.
+New projects use `.wd`. Existing `.synthesia` and `.vpd` projects can still be opened.
 
 ## Project layout
 - `src/audio_engine/`: realtime playback, audio devices and WAV export.

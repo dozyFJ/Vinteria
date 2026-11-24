@@ -137,7 +137,7 @@ fn hub_dir() -> PathBuf {
         }
     }
     let base = std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
-    let d = base.join("Documents").join("SYNTHESIA Projects");
+    let d = base.join("Documents").join("Winteria Projects");
     let _ = std::fs::create_dir_all(&d);
     d
 }
@@ -157,10 +157,20 @@ fn set_sync_folder(p: Option<&std::path::Path>) {
 /// Every project the hub knows: the hub folder, the Documents folder and the recent list, newest first.
 fn hub_projects(recent: &[PathBuf]) -> Vec<(PathBuf, std::time::SystemTime, u64)> {
     let hub = hub_dir();
+    // Discover legacy projects in place, including those not in the recent list.
+    let legacy = hub.parent().filter(|_| hub.ends_with("Winteria Projects"))
+        .map(|parent| parent.join("SYNTHESIA Projects"));
     #[cfg(target_arch = "wasm32")]
-    return crate::web::projects(&hub);
+    {
+        let mut projects = crate::web::projects(&hub);
+        if let Some(dir) = &legacy {
+            projects.extend(crate::web::projects(dir));
+            projects.sort_by_key(|(_, saved, _)| std::cmp::Reverse(*saved));
+        }
+        return projects;
+    }
     let mut files: Vec<PathBuf> = Vec::new();
-    for dir in [Some(hub.clone()), hub.parent().map(|p| p.to_path_buf())].into_iter().flatten() {
+    for dir in [Some(hub.clone()), legacy, hub.parent().map(|p| p.to_path_buf())].into_iter().flatten() {
         if let Ok(rd) = std::fs::read_dir(dir) {
             for e in rd.flatten() {
                 let p = e.path();

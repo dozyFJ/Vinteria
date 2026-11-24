@@ -1,4 +1,4 @@
-//! Project Manager: the project data model, default project, save/load (.synthesia JSON), WAV sample loading.
+//! Project Manager: the project data model, default project, save/load (Winteria .wd JSON), WAV sample loading.
 use crate::arrangement::{Arrangement, Clip};
 use crate::instruments::{AnalogParams, Bass808Params, SynthParams, WavetableParams};
 use crate::mixer::{default_channels, Channel, NUM_INSERTS, NUM_STRIPS};
@@ -913,7 +913,10 @@ impl Project {
     }
 
     pub fn save(&self, path: &Path) -> Result<(), String> {
-        let w = FileWrapper { app: "SYNTHESIA".into(), version: FILE_VERSION, project: self.clone() };
+        let legacy_extension = path.extension().is_some_and(|ext|
+            ext.eq_ignore_ascii_case("synthesia") || ext.eq_ignore_ascii_case("vpd"));
+        let app = if legacy_extension { "SYNTHESIA" } else { "WINTERIA" };
+        let w = FileWrapper { app: app.into(), version: FILE_VERSION, project: self.clone() };
         let json = serde_json::to_string_pretty(&w).map_err(|e| e.to_string())?;
         #[cfg(target_arch = "wasm32")]
         return crate::web::save_project(path, &json);
@@ -938,8 +941,8 @@ impl Project {
         #[cfg(not(target_arch = "wasm32"))]
         let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let w: FileWrapper = serde_json::from_str(&text).map_err(|e| format!("invalid project file: {e}"))?;
-        if w.app != "SYNTHESIA" {
-            return Err("not a SYNTHESIA project".into());
+        if !matches!(w.app.as_str(), "WINTERIA" | "SYNTHESIA") {
+            return Err("not a Winteria project".into());
         }
         if w.version > FILE_VERSION {
             return Err(format!("project version {} is newer than supported {}", w.version, FILE_VERSION));
@@ -1059,10 +1062,15 @@ mod tests {
         p.swing = 0.3;
         p.synth.lp_cutoff = 1234.0;
         p.bass.glide_ms = 77.0;
-        let path = std::env::temp_dir().join("synthesia_roundtrip_test.synthesia");
+        let path = std::env::temp_dir().join("winteria_roundtrip_test.wd");
         p.save(&path).unwrap();
         let (q, warns) = Project::load(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains(r#""app": "WINTERIA""#));
+        std::fs::write(&path, text.replacen(r#""app": "WINTERIA""#, r#""app": "SYNTHESIA""#, 1)).unwrap();
+        let (legacy, _) = Project::load(&path).unwrap();
         let _ = std::fs::remove_file(&path);
+        assert!(p == legacy);
         assert!(warns.is_empty());
         assert!(p == q, "loaded project differs from saved project");
     }
