@@ -44,6 +44,13 @@ jobs:
       - name: Install cargo-apk
         run: cargo install cargo-apk --locked
 
+      # one throw-away Dev key kept in the Actions cache (never in git), so every Dev APK installs over the previous one
+      - name: Dev signing key cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.winteria-dev-key
+          key: winteria-dev-keystore-v1
+
       - name: Build dev APK
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
@@ -62,9 +69,16 @@ jobs:
             export CARGO_APK_RELEASE_KEYSTORE_PASSWORD="$KEYSTORE_PASSWORD"
             echo "signing with the release key from the secrets"
           else
-            echo "::warning::ANDROID_KEYSTORE_B64 / ANDROID_KEYSTORE_PASSWORD are missing, using a throw-away key"
-            keytool -genkeypair -keystore "$RUNNER_TEMP/dev.keystore" -storetype PKCS12 -storepass android -keypass android \
-              -alias dev -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Winteria Dev"
+            dev_key="$HOME/.winteria-dev-key/dev.keystore"
+            if [ ! -f "$dev_key" ]; then
+              echo "::warning::no cached Dev key yet, creating one (install this build once over a clean Winteria Dev)"
+              mkdir -p "$(dirname "$dev_key")"
+              keytool -genkeypair -keystore "$dev_key" -storetype PKCS12 -storepass android -keypass android \
+                -alias dev -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Winteria Dev"
+            else
+              echo "signing with the cached Dev key"
+            fi
+            cp "$dev_key" "$RUNNER_TEMP/dev.keystore"
             export CARGO_APK_RELEASE_KEYSTORE_PASSWORD=android
           fi
           export CARGO_APK_RELEASE_KEYSTORE="$RUNNER_TEMP/dev.keystore"
