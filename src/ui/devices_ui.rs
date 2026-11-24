@@ -482,16 +482,41 @@ pub(super) fn mobile_track_settings(
     let mut page = ui.data(|d| d.get_temp::<usize>(page_id)).unwrap_or(0).min(2);
     let source_label = if kind == TrackKind::Audio { "Sample" } else { "Instrument" };
     ui.add_space(8.0);
-    ui.horizontal(|ui| {
-        let width = (ui.available_width() - 2.0 * ui.spacing().item_spacing.x) / 3.0;
+    let screen = ui.ctx().screen_rect();
+    let landscape = screen.width() >= screen.height();
+    let mut tabs = |ui: &mut Ui, width: f32| {
         for (index, label) in [source_label, "Controls", "Effects"].iter().enumerate() {
-            if ui.add_sized([width, 42.0], egui::Button::new(*label).selected(page == index)).clicked() {
+            if ui.add_sized([width, 44.0], egui::Button::new(*label).selected(page == index)).clicked() {
                 page = index;
             }
         }
-    });
+    };
+    let mut content;
+    let ui = if landscape {
+        let area = ui.available_rect_before_wrap();
+        let sidebar_width = 116.0_f32.min(area.width() * 0.32);
+        let left = area.right() - sidebar_width;
+        let sidebar = egui::Rect::from_min_max(egui::pos2(left, area.top()), area.max);
+        let mut nav = ui.new_child(egui::UiBuilder::new().id_salt("track_settings_sidebar").max_rect(sidebar));
+        nav.set_clip_rect(sidebar.intersect(ui.clip_rect()));
+        nav.set_width(sidebar_width);
+        egui::ScrollArea::vertical().max_height(sidebar.height())
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+            .show(&mut nav, |ui| tabs(ui, sidebar_width));
+
+        let body = egui::Rect::from_min_max(area.min, egui::pos2(left - 8.0, area.bottom()));
+        content = ui.new_child(egui::UiBuilder::new().id_salt("track_settings_content").max_rect(body));
+        content.set_clip_rect(body.intersect(ui.clip_rect()));
+        &mut content
+    } else {
+        ui.horizontal(|ui| {
+            let width = (ui.available_width() - 2.0 * ui.spacing().item_spacing.x) / 3.0;
+            tabs(ui, width);
+        });
+        ui.add_space(8.0);
+        ui
+    };
     ui.data_mut(|d| d.insert_temp(page_id, page));
-    ui.add_space(8.0);
 
     let playhead = shared.position.load(std::sync::atomic::Ordering::Relaxed);
     egui::ScrollArea::vertical().id_salt(("mobile_track_page", lane, page))

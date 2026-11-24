@@ -477,3 +477,4 @@ Browser открывается слева рядом с Playlist в обеих �
 ### Android 1.0.80
 
 - Move the landscape Piano Roll toolbar to the right in both sheet and full view. Keys, time ruler and note grid occupy the left. Native Android touch testing is pending.
+- Move the landscape track settings tabs to a vertical column on the right of the bottom sheet.
