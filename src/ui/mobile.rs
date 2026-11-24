@@ -1233,51 +1233,82 @@ impl VinteriaApp {
         let playlist = self.m_sec == SEC_PLAYLIST;
         egui::TopBottomPanel::bottom("m_studio_transport_dock").show_separator_line(false)
             .frame(Frame::none().fill(glass_fill()).stroke(Stroke::new(1.0, glass_edge()))
-                .inner_margin(Margin { left: 6.0, right: 6.0, top: 4.0, bottom: 10.0 }))
+                .inner_margin(Margin { left: 8.0, right: 8.0, top: 4.0, bottom: 10.0 }))
             .show(ctx, |ui| {
                 mobile_visuals(ui);
-                if playlist {
-                    ui.horizontal(|ui| self.m_playlist_tool_buttons(ui));
-                    ui.separator();
-                }
+                let tick = self.shared.position.load(Ordering::Relaxed);
+                let bar = tick / TICKS_PER_BAR;
+                let bars = if playlist {
+                    self.project.arrangement.song_end_bar().max(1)
+                } else {
+                    self.project.patterns.get(self.project.current_pattern)
+                        .map_or(1, |p| u32::from(p.length_steps).div_ceil(16).max(1))
+                };
+                let end = bars * TICKS_PER_BAR;
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
-                    let width = 44.0;
-                    self.m_studio_play_stop(ui, ctx, width);
-                    let tick = self.shared.position.load(Ordering::Relaxed);
-                    let bar = tick / TICKS_PER_BAR;
-                    let bars = if self.m_sec == SEC_PLAYLIST {
-                        self.project.arrangement.song_end_bar().max(1)
-                    } else {
-                        self.project.patterns.get(self.project.current_pattern)
-                            .map_or(1, |p| u32::from(p.length_steps).div_ceil(16).max(1))
-                    };
-                    if studio_icon(ui, width, Icon::Rewind, false, "Previous bar").clicked() {
-                        let previous = if tick % TICKS_PER_BAR == 0 { bar.saturating_sub(1) } else { bar };
-                        self.m_seek(ctx, previous * TICKS_PER_BAR);
+                    if playlist {
+                        self.m_playlist_tool_buttons(ui);
                     }
-                    if studio_icon(ui, width, Icon::Forward, false, "Next bar").clicked() {
-                        self.m_seek(ctx, (bar + 1).min(bars - 1) * TICKS_PER_BAR);
-                    }
-                    let end = bars * TICKS_PER_BAR;
-                    let space = (ui.available_width() - 2.0 * (width + 2.0)).max(12.0);
+                    let reserve = if playlist { 46.0 } else { 0.0 };
+                    let space = (ui.available_width() - reserve).max(12.0);
                     let (rect, scrub) = ui.allocate_exact_size(vec2(space, 44.0), Sense::click_and_drag());
-                    let track = Rect::from_center_size(rect.center(), vec2(rect.width(), 4.0));
-                    ui.painter().rect_filled(track, 2.0, outline());
-                    let progress = (tick as f32 / end as f32).clamp(0.0, 1.0);
-                    let head = track.left() + track.width() * progress;
-                    ui.painter().line_segment([track.left_center(), pos2(head, track.center().y)], Stroke::new(4.0, p_accent()));
+                    let track = Rect::from_center_size(rect.center(), vec2((rect.width() - 14.0).max(1.0), 5.0));
+                    let head = track.left() + track.width() * (tick as f32 / end as f32).clamp(0.0, 1.0);
+                    let p = ui.painter();
+                    p.rect_filled(track, 2.5, outline());
+                    let head_pos = pos2(head, track.center().y);
+                    p.line_segment([track.left_center(), head_pos], Stroke::new(5.0, p_accent()));
+                    p.circle_filled(head_pos, 6.0, p_accent());
                     if let Some(point) = scrub.interact_pointer_pos().filter(|_| scrub.clicked() || scrub.dragged()) {
                         let fraction = ((point.x - track.left()) / track.width()).clamp(0.0, 1.0);
                         self.m_seek(ctx, ((fraction * end as f32) as u32).min(end - 1));
                     }
                     scrub.on_hover_text(format!("Bar {} of {bars}", bar.saturating_add(1).min(bars)));
-                    if studio_icon(ui, width, Icon::Settings, false, "Options and settings").clicked() {
+                    if playlist {
+                        dock_menu(ui, Icon::Settings, "Playlist options", false,
+                            |ui| self.m_playlist_options_content(ui));
+                    }
+                });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    let space = ((ui.available_width() - 6.0 * TOUCH) / 7.0).max(0.0);
+                    ui.spacing_mut().item_spacing.x = space;
+                    ui.add_space(space);
+                    let playing = self.m_transport_playing(ctx);
+                    if dock_icon(ui, if playing { Icon::Pause } else { Icon::Play }, true,
+                        if playing { "Pause" } else { "Play" }).clicked()
+                    {
+                        self.m_toggle_play(ctx);
+                    }
+                    if dock_icon(ui, Icon::Stop, false, "Stop").clicked() {
+                        self.m_stop(ctx);
+                    }
+                    if dock_icon(ui, Icon::Rewind, false, "Previous bar").clicked() {
+                        let previous = if tick % TICKS_PER_BAR == 0 { bar.saturating_sub(1) } else { bar };
+                        self.m_seek(ctx, previous * TICKS_PER_BAR);
+                    }
+                    if dock_icon(ui, Icon::Forward, false, "Next bar").clicked() {
+                        self.m_seek(ctx, (bar + 1).min(bars - 1) * TICKS_PER_BAR);
+                    }
+                    if dock_icon(ui, Icon::Menu, false, "Studio menu").clicked() {
                         ctx.data_mut(|d| d.insert_temp(egui::Id::new(DRAWER_OPEN), true));
                     }
-                    if studio_icon(ui, width, Icon::Timeline, self.m_sec == SEC_PLAYLIST, "Playlist").clicked() {
-                        self.m_select_studio_section(ctx, SEC_PLAYLIST);
-                    }
+                    let (name, symbol) = STUDIO_SECTIONS.get(self.m_sec).copied().unwrap_or(STUDIO_SECTIONS[0]);
+                    dock_menu(ui, symbol, name, true, |ui| {
+                        ui.set_min_width(174.0);
+                        for (index, (label, symbol)) in STUDIO_SECTIONS.into_iter().enumerate() {
+                            let label = match label {
+                                "Steps" => "Drum Rack",
+                                "Piano" => "Piano Roll",
+                                _ => label,
+                            };
+                            if drawer_row(ui, symbol, label, index == self.m_sec).clicked() {
+                                self.m_select_studio_section(ctx, index);
+                                ui.close_menu();
+                            }
+                        }
+                    });
                 });
             });
         if playlist {
@@ -4562,120 +4593,11 @@ impl VinteriaApp {
     }
 
     fn m_playlist_options(&mut self, ui: &mut Ui, rect: Rect) {
-        let follow_id = egui::Id::new("m_playlist_follow");
-        let selected = self.arr.sel_clip.filter(|&index| index < self.project.arrangement.clips.len());
         let mut trigger = ui.new_child(egui::UiBuilder::new().id_salt("playlist_options").max_rect(rect));
         trigger.set_clip_rect(rect.intersect(ui.clip_rect()));
         let button = egui::Button::new("").frame(false).min_size(rect.size());
         let menu = egui::menu::menu_custom_button(&mut trigger, button, |ui| {
-            ui.set_min_width(176.0);
-            mobile_scroll(egui::ScrollArea::vertical()).max_height((ui.ctx().screen_rect().height() * 0.50).min(330.0))
-                .show(ui, |ui| {
-                    if ui.add_enabled(!self.undo.is_empty(), egui::Button::new("Undo")).clicked() {
-                        self.undo();
-                        self.arr.sel_clip = None;
-                        self.arr.sel.clear();
-                        ui.close_menu();
-                        return;
-                    }
-                    egui::CollapsingHeader::new("Playlist").default_open(true).show(ui, |ui| {
-                        let snap = grid_label(self.arr.snap);
-                        egui::ComboBox::from_id_salt("playlist_grid").selected_text(format!("Grid · {snap}"))
-                            .show_ui(ui, |ui| {
-                                for (step, name) in GRID_VALUES.into_iter().chain([(1, "Off")]) {
-                                    ui.selectable_value(&mut self.arr.snap, step, name);
-                                }
-                            });
-                        if self.project.loop_on && ui.button("Export loop · WAV").clicked() {
-                            let start = self.project.loop_start.saturating_mul(TICKS_PER_BAR);
-                            let end = start.saturating_add(self.project.loop_bars.max(1).saturating_mul(TICKS_PER_BAR));
-                            self.m_export.open = true;
-                            self.m_start_export_range(false, Some((start, end)));
-                            ui.close_menu();
-                        }
-                        if self.project.loop_on && ui.button("Clear loop").clicked() {
-                            self.project.loop_on = false;
-                            self.publish_edits();
-                            ui.close_menu();
-                        }
-                        for (mute, label) in [(false, "Enable all tracks"), (true, "Disable all tracks")] {
-                            if ui.button(label).clicked() {
-                                self.m_playlist_undo_step();
-                                for track in &mut self.project.arrangement.tracks {
-                                    track.mute = mute;
-                                    track.solo = false;
-                                }
-                                self.publish_edits();
-                                ui.close_menu();
-                            }
-                        }
-                        let mut follow = ui.data(|d| d.get_temp::<bool>(follow_id)).unwrap_or(true);
-                        if ui.checkbox(&mut follow, "Follow playhead").changed() {
-                            ui.data_mut(|d| d.insert_temp(follow_id, follow));
-                        }
-                    });
-                    egui::CollapsingHeader::new("Clips").show(ui, |ui| {
-                        #[cfg(not(target_arch = "wasm32"))]
-                        {
-                            let selection = self.arr.selection();
-                            if ui.add_enabled(!selection.is_empty(), egui::Button::new("Render selection")).clicked() {
-                                ui.data_mut(|d| d.insert_temp(egui::Id::new("render_selection_job"), selection));
-                                ui.close_menu();
-                            }
-                        }
-                        let Some(index) = selected else {
-                            ui.label("Select a clip on the playlist.");
-                            return;
-                        };
-                        if ui.button("Open clip").clicked() {
-                            self.m_open_playlist_clip(ui.ctx(), index);
-                            ui.close_menu();
-                        }
-                        if ui.button("Duplicate").clicked() {
-                            if let Some(copy) = arrangement_ui::duplicate_clip(&mut self.project, index) {
-                                self.arr.sel_clip = Some(copy);
-                                self.arr.sel.clear();
-                            } else {
-                                self.arr.msg = "No room to duplicate this clip.".into();
-                            }
-                            ui.close_menu();
-                        }
-                        let clip = self.project.arrangement.clips[index];
-                        let step = self.arr.snap.max(1);
-                        for (label, len) in [
-                            ("Extend by grid step", clip.len.saturating_add(step)),
-                            ("Shorten by grid step", clip.len.saturating_sub(step).max(1)),
-                        ] {
-                            let resized = crate::arrangement::Clip { len, ..clip };
-                            let valid = len != clip.len && self.project.arrangement.can_place(&resized, Some(index));
-                            if ui.add_enabled(valid, egui::Button::new(label)).clicked() {
-                                self.project.arrangement.clips[index] = resized;
-                                ui.close_menu();
-                            }
-                        }
-                    });
-                    egui::CollapsingHeader::new("Audio").show(ui, |ui| {
-                        if ui.button("Sounds & import").clicked() {
-                            ui.data_mut(|d| {
-                                d.remove::<(usize, u32)>(egui::Id::new("m_audio_clip_target"));
-                                d.insert_temp(egui::Id::new("m_browser_plugins"), false);
-                                d.insert_temp(egui::Id::new("m_browser_open"), true);
-                            });
-                            ui.close_menu();
-                        }
-                        if let Some(index) = selected.filter(|&index| self.project.arrangement.clips[index].audio) {
-                            if ui.button("Audio clip settings").clicked() {
-                                self.m_open_playlist_clip(ui.ctx(), index);
-                                ui.close_menu();
-                            }
-                        }
-                        if ui.button("Export WAV").clicked() {
-                            self.m_export.open = true;
-                            self.m_export.song = true;
-                            ui.close_menu();
-                        }
-                    });
-                });
+            self.m_playlist_options_content(ui);
         });
         let center = rect.center();
         let painter = trigger.painter();
@@ -4685,6 +4607,119 @@ impl VinteriaApp {
             painter.circle_filled(center + vec2(x, 0.0), 1.4, ink());
         }
         menu.response.on_hover_text("Playlist options");
+    }
+
+    fn m_playlist_options_content(&mut self, ui: &mut Ui) {
+        let follow_id = egui::Id::new("m_playlist_follow");
+        let selected = self.arr.sel_clip.filter(|&index| index < self.project.arrangement.clips.len());
+        ui.set_min_width(176.0);
+        mobile_scroll(egui::ScrollArea::vertical()).max_height((ui.ctx().screen_rect().height() * 0.50).min(330.0))
+            .show(ui, |ui| {
+                if ui.add_enabled(!self.undo.is_empty(), egui::Button::new("Undo")).clicked() {
+                    self.undo();
+                    self.arr.sel_clip = None;
+                    self.arr.sel.clear();
+                    ui.close_menu();
+                    return;
+                }
+                egui::CollapsingHeader::new("Playlist").default_open(true).show(ui, |ui| {
+                    let snap = grid_label(self.arr.snap);
+                    egui::ComboBox::from_id_salt("playlist_grid").selected_text(format!("Grid · {snap}"))
+                        .show_ui(ui, |ui| {
+                            for (step, name) in GRID_VALUES.into_iter().chain([(1, "Off")]) {
+                                ui.selectable_value(&mut self.arr.snap, step, name);
+                            }
+                        });
+                    if self.project.loop_on && ui.button("Export loop · WAV").clicked() {
+                        let start = self.project.loop_start.saturating_mul(TICKS_PER_BAR);
+                        let end = start.saturating_add(self.project.loop_bars.max(1).saturating_mul(TICKS_PER_BAR));
+                        self.m_export.open = true;
+                        self.m_start_export_range(false, Some((start, end)));
+                        ui.close_menu();
+                    }
+                    if self.project.loop_on && ui.button("Clear loop").clicked() {
+                        self.project.loop_on = false;
+                        self.publish_edits();
+                        ui.close_menu();
+                    }
+                    for (mute, label) in [(false, "Enable all tracks"), (true, "Disable all tracks")] {
+                        if ui.button(label).clicked() {
+                            self.m_playlist_undo_step();
+                            for track in &mut self.project.arrangement.tracks {
+                                track.mute = mute;
+                                track.solo = false;
+                            }
+                            self.publish_edits();
+                            ui.close_menu();
+                        }
+                    }
+                    let mut follow = ui.data(|d| d.get_temp::<bool>(follow_id)).unwrap_or(true);
+                    if ui.checkbox(&mut follow, "Follow playhead").changed() {
+                        ui.data_mut(|d| d.insert_temp(follow_id, follow));
+                    }
+                });
+                egui::CollapsingHeader::new("Clips").show(ui, |ui| {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let selection = self.arr.selection();
+                        if ui.add_enabled(!selection.is_empty(), egui::Button::new("Render selection")).clicked() {
+                            ui.data_mut(|d| d.insert_temp(egui::Id::new("render_selection_job"), selection));
+                            ui.close_menu();
+                        }
+                    }
+                    let Some(index) = selected else {
+                        ui.label("Select a clip on the playlist.");
+                        return;
+                    };
+                    if ui.button("Open clip").clicked() {
+                        self.m_open_playlist_clip(ui.ctx(), index);
+                        ui.close_menu();
+                    }
+                    if ui.button("Duplicate").clicked() {
+                        if let Some(copy) = arrangement_ui::duplicate_clip(&mut self.project, index) {
+                            self.arr.sel_clip = Some(copy);
+                            self.arr.sel.clear();
+                        } else {
+                            self.arr.msg = "No room to duplicate this clip.".into();
+                        }
+                        ui.close_menu();
+                    }
+                    let clip = self.project.arrangement.clips[index];
+                    let step = self.arr.snap.max(1);
+                    for (label, len) in [
+                        ("Extend by grid step", clip.len.saturating_add(step)),
+                        ("Shorten by grid step", clip.len.saturating_sub(step).max(1)),
+                    ] {
+                        let resized = crate::arrangement::Clip { len, ..clip };
+                        let valid = len != clip.len && self.project.arrangement.can_place(&resized, Some(index));
+                        if ui.add_enabled(valid, egui::Button::new(label)).clicked() {
+                            self.project.arrangement.clips[index] = resized;
+                            ui.close_menu();
+                        }
+                    }
+                });
+                egui::CollapsingHeader::new("Audio").show(ui, |ui| {
+                    if ui.button("Sounds & import").clicked() {
+                        ui.data_mut(|d| {
+                            d.remove::<(usize, u32)>(egui::Id::new("m_audio_clip_target"));
+                            d.insert_temp(egui::Id::new("m_browser_plugins"), false);
+                            d.insert_temp(egui::Id::new("m_browser_open"), true);
+                        });
+                        ui.close_menu();
+                    }
+                    if let Some(index) = selected.filter(|&index| self.project.arrangement.clips[index].audio) {
+                        if ui.button("Audio clip settings").clicked() {
+                            self.m_open_playlist_clip(ui.ctx(), index);
+                            ui.close_menu();
+                        }
+                    }
+                    if ui.button("Export WAV").clicked() {
+                        self.m_export.open = true;
+                        self.m_export.song = true;
+                        ui.close_menu();
+                    }
+                });
+            });
     }
 
     fn m_open_playlist_clip(&mut self, ctx: &egui::Context, index: usize) {
@@ -5654,7 +5689,7 @@ impl VinteriaApp {
                 ui.data_mut(|d| d.insert_temp(panel_id, !panel_open));
             }
         }
-        if !add_lane {
+        if !add_lane && (!portrait || !docked) {
             let x = if show_names { panel.right() - 3.0 } else { timeline.right() - 3.0 };
             let options = Rect::from_min_size(pos2(x - TOUCH, viewport.top()), vec2(TOUCH, ruler));
             self.m_playlist_options(ui, options);
@@ -6930,6 +6965,29 @@ fn drawer_chevron(ui: &mut Ui, width: f32, open: bool) -> Response {
         Stroke::new(2.0, ink()),
     ));
     response.on_hover_text(if open { "Hide studio controls" } else { "Show studio controls" })
+}
+
+fn paint_dock_icon(ui: &Ui, response: &Response, symbol: Icon, active: bool) {
+    let rect = response.rect.shrink(2.0);
+    let p = ui.painter();
+    let color = if active { on_accent() } else { ink() };
+    let radius = rect.height() * 0.5;
+    p.rect_filled(rect, radius, if active { p_accent() } else { card_fill() });
+    control_state(p, rect, radius, response, color);
+    icon(p, symbol, rect.center(), color);
+}
+
+fn dock_icon(ui: &mut Ui, symbol: Icon, active: bool, label: &str) -> Response {
+    let (_, response) = ui.allocate_exact_size(vec2(TOUCH, TOUCH), Sense::click());
+    paint_dock_icon(ui, &response, symbol, active);
+    response.on_hover_text(label)
+}
+
+fn dock_menu(ui: &mut Ui, symbol: Icon, label: &str, active: bool, body: impl FnOnce(&mut Ui)) {
+    let button = egui::Button::new("").frame(false).min_size(vec2(TOUCH, TOUCH));
+    let menu = egui::menu::menu_custom_button(ui, button, body);
+    paint_dock_icon(ui, &menu.response, symbol, active);
+    menu.response.on_hover_text(label);
 }
 
 fn studio_icon(ui: &mut Ui, width: f32, symbol: Icon, active: bool, label: &str) -> Response {

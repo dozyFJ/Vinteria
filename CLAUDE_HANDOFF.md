@@ -636,3 +636,8 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 
 - New project saves identify as WINTERIA and use the Winteria Projects folder. The loader still accepts SYNTHESIA project files, and the hub lists projects from the old folder without moving them.
 - The project round-trip test covers both identifiers. Native Android save verification is pending.
+
+### Android 1.0.109
+
+- Redesign the portrait Studio dock with round icon buttons, a position slider and Playlist options in the dock. The current section icon opens a menu for Playlist, Drum Rack, Piano Roll, Session, Mixer and Tracks. The landscape dock keeps its layout.
+- Native Android visual and touch verification is pending.
