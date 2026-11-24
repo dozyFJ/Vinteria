@@ -90,6 +90,10 @@ pub fn step_in_scale(root: u8, scale: usize, pitch: u8, dir: i32) -> u8 {
 pub fn stack_chord(root: u8, scale: usize, tone: u8, count: usize) -> Vec<u8> {
     let steps = SCALES[scale.min(CHROMATIC)].1;
     let n = steps.len();
+    if n >= 12 {
+        // no key chosen (chromatic): every other semitone would give a cluster (F#-G#-A#), so build a major chord
+        return [0u8, 4, 7, 11].iter().take(count.max(1)).map(|i| tone.saturating_add(*i).min(127)).collect();
+    }
     let rel = (tone % 12 + 12 - root % 12) % 12;
     let Some(d) = steps.iter().position(|s| *s == rel) else { return vec![tone] };
     let base = tone as i32 - steps[d] as i32;
@@ -257,5 +261,16 @@ mod progression_tests {
                 assert!(c.iter().all(|p| in_scale(9, 1, *p)));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod chord_tests {
+    use super::*;
+
+    #[test]
+    fn chromatic_chords_are_major_triads_not_clusters() {
+        assert_eq!(stack_chord(0, CHROMATIC, 42, 3), vec![42, 46, 49]);
+        assert_eq!(stack_chord(0, CHROMATIC, 60, 4), vec![60, 64, 67, 71]);
     }
 }
