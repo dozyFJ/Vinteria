@@ -603,3 +603,8 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 - Improve Playlist grid contrast at bar, snap and track boundaries in both themes.
 - Dev builds check their own repository's update manifest and reuse the Android in-app installer. CI publishes the manifest after the signed APK and checks signer continuity against the previous manifest. Official builds keep their existing feed.
 - Native Android installation and touch testing are pending.
+
+### Android 1.0.103
+
+- Playlist and Piano Roll share grid fractions from Bar through 1/32, including 1/2. Piano Roll offers direct grid selection and draws the snap divisions used to place notes. At wide zoom both views thin their grid while keeping the chosen snap.
+- Native Android grid and Dev OTA installation testing are pending.

@@ -6,6 +6,28 @@ use crate::sequencer::{DRUM_NAMES, NUM_DRUMS, TICKS_PER_STEP};
 use egui::{Align2, FontId, Frame, Margin, Painter, Pos2, Rect, Response, RichText, Sense, Shape, Ui};
 
 const TOUCH: f32 = 44.0;
+const GRID_VALUES: [(u32, &str); 6] = [
+    (TICKS_PER_BAR, "Bar"),
+    (TICKS_PER_BAR / 2, "1/2"),
+    (TICKS_PER_BAR / 4, "1/4"),
+    (TICKS_PER_BAR / 8, "1/8"),
+    (TICKS_PER_STEP, "1/16"),
+    (TICKS_PER_STEP / 2, "1/32"),
+];
+
+fn grid_label(ticks: u32) -> &'static str {
+    GRID_VALUES.iter().find(|&&(step, _)| step == ticks)
+        .map_or(if ticks == 1 { "Off" } else { "Fine" }, |&(_, label)| label)
+}
+
+/// At low zoom, draw a subset of the snap lines while retaining the editing resolution.
+fn visible_grid_step(snap: u32, pixels_per_tick: f32) -> u32 {
+    let mut step = snap.max(1);
+    while step < TICKS_PER_BAR && step as f32 * pixels_per_tick < 7.0 {
+        step *= 2;
+    }
+    step
+}
 /// written by the Android panic hook, shown on the next start
 pub const CRASH_FILE: &str = "crash.txt";
 
@@ -2313,21 +2335,13 @@ impl VinteriaApp {
                                 oct += 1;
                                 jump(ui);
                             }
-                            // grid: what a tap places and what a drag snaps to
-                            let grid_label = match snap {
-                                12 => "Grid 1/32",
-                                48 => "Grid 1/8",
-                                96 => "Grid 1/4",
-                                _ => "Grid 1/16",
-                            };
-                            if p_button(ui, grid_label, false, vec2(92.0, 44.0)).clicked() {
-                                snap = match snap {
-                                    24 => 48,
-                                    48 => 96,
-                                    96 => 12,
-                                    _ => 24,
-                                };
-                            }
+                            egui::ComboBox::from_id_salt("m_piano_grid_choice").width(78.0)
+                                .selected_text(format!("Grid {}", grid_label(snap)))
+                                .show_ui(ui, |ui| {
+                                    for (ticks, label) in GRID_VALUES {
+                                        ui.selectable_value(&mut snap, ticks, label);
+                                    }
+                                });
                             if p_button(ui, "Zoom −", false, vec2(70.0, 44.0)).clicked() {
                                 step_w = (step_w / 1.25).max(14.0);
                                 zoom_changed = true;
@@ -2589,9 +2603,22 @@ impl VinteriaApp {
                 let edge = if pitch % 12 == 0 { outline() } else { grid_line().linear_multiply(0.34) };
                 p.line_segment([lane.left_bottom(), lane.right_bottom()], Stroke::new(0.7, edge));
             }
-            for step in 0..steps {
-                let x = rect.left() + step as f32 * step_w;
-                let stroke = if step % 16 == 0 { Stroke::new(1.0, outline()) } else if step % 4 == 0 { Stroke::new(0.7, grid_line()) } else { Stroke::new(0.4, grid_line().linear_multiply(0.5)) };
+            let pixels_per_tick = step_w / TICKS_PER_STEP as f32;
+            let division = visible_grid_step(snap, pixels_per_tick);
+            let first_tick = ((p.clip_rect().left() - rect.left()).max(0.0) / pixels_per_tick) as u32;
+            let last_tick = (((p.clip_rect().right() - rect.left()).max(0.0) / pixels_per_tick).ceil() as u32)
+                .min(duration);
+            let beat = TICKS_PER_BAR / 4;
+            let spacing = division.min(beat);
+            for tick in (first_tick.div_ceil(spacing) * spacing..=last_tick).step_by(spacing as usize) {
+                let x = rect.left() + tick as f32 * pixels_per_tick;
+                let stroke = if tick % TICKS_PER_BAR == 0 {
+                    Stroke::new(1.4, outline())
+                } else if tick % division == 0 {
+                    Stroke::new(1.0, pick(0xFF627896, 0xFF839AB6))
+                } else {
+                    Stroke::new(0.7, grid_line())
+                };
                 p.line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], stroke);
             }
             if let Some(step) = cursor {
@@ -4280,7 +4307,6 @@ impl VinteriaApp {
     }
 
     fn m_playlist_options(&mut self, ui: &mut Ui, rect: Rect) {
-        let choices = [(TICKS_PER_BAR, "Bar"), (96, "1/4"), (48, "1/8"), (24, "1/16"), (12, "1/32"), (1, "Off")];
         let follow_id = egui::Id::new("m_playlist_follow");
         let selected = self.arr.sel_clip.filter(|&index| index < self.project.arrangement.clips.len());
         let mut trigger = ui.new_child(egui::UiBuilder::new().id_salt("playlist_options").max_rect(rect));
@@ -4298,10 +4324,10 @@ impl VinteriaApp {
                         return;
                     }
                     egui::CollapsingHeader::new("Playlist").default_open(true).show(ui, |ui| {
-                        let snap = choices.iter().find(|(ticks, _)| *ticks == self.arr.snap).map_or("Fine", |(_, name)| *name);
+                        let snap = grid_label(self.arr.snap);
                         egui::ComboBox::from_id_salt("playlist_grid").selected_text(format!("Grid · {snap}"))
                             .show_ui(ui, |ui| {
-                                for (step, name) in choices {
+                                for (step, name) in GRID_VALUES.into_iter().chain([(1, "Off")]) {
                                     ui.selectable_value(&mut self.arr.snap, step, name);
                                 }
                             });
@@ -4682,11 +4708,16 @@ impl VinteriaApp {
             }
             let snap = self.arr.snap.max(1);
             if snap > 1 && snap < TICKS_PER_BAR {
-                let gap = snap as f32 / TICKS_PER_BAR as f32 * bar_w;
-                if gap >= 8.0 {
+                let pixels_per_tick = bar_w / TICKS_PER_BAR as f32;
+                let division_ticks = visible_grid_step(snap, pixels_per_tick);
+                let gap = division_ticks as f32 * pixels_per_tick;
+                if division_ticks < TICKS_PER_BAR {
                     let first = ((ui.clip_rect().left() - gx) / gap).ceil().max(0.0) as u32;
                     let last = ((ui.clip_rect().right().min(rect.right()) - gx) / gap).floor().max(0.0) as u32;
                     for division in first..=last {
+                        if (division * division_ticks) % TICKS_PER_BAR == 0 {
+                            continue;
+                        }
                         let x = gx + division as f32 * gap;
                         p.line_segment([pos2(x, gy), pos2(x, gy + full_h)],
                             Stroke::new(0.85, pick(0xFF455872, 0xFFAABBD0)));
