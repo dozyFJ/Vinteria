@@ -41,32 +41,32 @@ fn pick(dark: u32, light: u32) -> Color32 {
 }
 /// main text
 fn ink() -> Color32 {
-    pick(0xFFF1F4FA, 0xFF202B39)
+    pick(0xFFF1F3F5, 0xFF202B39)
 }
 /// secondary text
 fn muted() -> Color32 {
-    pick(0xFFADB9CD, 0xFF46556A)
+    pick(0xFFBFC5CC, 0xFF46556A)
 }
-/// A muted blue accent using Morning Dawn tones.
+/// Silver accent from Chat Pulse in dark mode.
 fn p_accent() -> Color32 {
-    pick(0xFFBCD4FB, 0xFF345983)
+    pick(0xFFDCE5EE, 0xFF345983)
 }
 fn on_accent() -> Color32 {
-    pick(0xFF1D2638, 0xFFF0F2F8)
+    pick(0xFF1A1B1D, 0xFFF0F2F8)
 }
 fn p_bg() -> Color32 {
-    pick(0xFF181E29, 0xFFEAF0F6)
+    pick(0xFF191A1C, 0xFFEAF0F6)
 }
 fn bar_fill() -> Color32 {
-    pick(0xFF252E3D, 0xFFF5F8FC)
+    pick(0xFF24272B, 0xFFF5F8FC)
 }
 // A lightly translucent tint gives controls a frosted surface without blurring the grid.
 fn glass_fill() -> Color32 {
-    pick(0xEB344157, 0xF2FAFCFF)
+    pick(0xEB353B42, 0xF2FAFCFF)
 }
 
 fn glass_edge() -> Color32 {
-    pick(0xFF697B97, 0xFFA2B3CA)
+    pick(0xFF74808C, 0xFFA2B3CA)
 }
 
 fn piano_note_fill() -> Color32 {
@@ -74,16 +74,16 @@ fn piano_note_fill() -> Color32 {
 }
 
 fn outline() -> Color32 {
-    pick(0xFF52627B, 0xFF8496AE)
+    pick(0xFF555F69, 0xFF8496AE)
 }
 fn card_fill() -> Color32 {
-    pick(0xFF2B3648, 0xFFDAE4EF)
+    pick(0xFF2B2F34, 0xFFDAE4EF)
 }
 fn selected_fill() -> Color32 {
-    pick(0xFF374E6A, 0xFFC6D9F0)
+    pick(0xFF424A53, 0xFFC6D9F0)
 }
 fn grid_line() -> Color32 {
-    pick(0xFF404D63, 0xFFA5B5CA)
+    pick(0xFF454C54, 0xFFA5B5CA)
 }
 
 fn panel(p: &Painter, rect: Rect, radius: f32) {
@@ -514,12 +514,12 @@ fn mobile_visuals(ui: &mut Ui) {
     v.override_text_color = Some(ink());
     v.window_fill = card_fill();
     v.panel_fill = p_bg();
-    v.extreme_bg_color = pick(0xFF222734, 0xFFADB9C6);
+    v.extreme_bg_color = pick(0xFF212327, 0xFFADB9C6);
     v.selection.bg_fill = selected_fill();
     v.selection.stroke = Stroke::new(1.0, p_accent());
     for (widget, fill) in [
         (&mut v.widgets.inactive, card_fill()),
-        (&mut v.widgets.hovered, pick(0xFF3B4458, 0xFFD4DCE7)),
+        (&mut v.widgets.hovered, pick(0xFF393F46, 0xFFD4DCE7)),
         (&mut v.widgets.active, selected_fill()),
         (&mut v.widgets.open, bar_fill()),
     ] {
@@ -2896,7 +2896,7 @@ impl VinteriaApp {
                 let stroke = if tick % TICKS_PER_BAR == 0 {
                     Stroke::new(1.4, outline())
                 } else if tick % division == 0 {
-                    Stroke::new(1.0, pick(0xFF627896, 0xFF839AB6))
+                    Stroke::new(1.0, pick(0xFF677681, 0xFF839AB6))
                 } else {
                     Stroke::new(0.7, grid_line())
                 };
@@ -5186,9 +5186,9 @@ impl VinteriaApp {
                 let track = &self.project.arrangement.tracks[lane];
                 let audio = track.kind == crate::arrangement::TrackKind::Audio;
                 let base_fill = if audio {
-                    pick(0xFF202D34, 0xFFDDEBED)
+                    pick(0xFF232A2B, 0xFFDDEBED)
                 } else {
-                    pick(0xFF222B3A, 0xFFE1E9F3)
+                    pick(0xFF25282D, 0xFFE1E9F3)
                 };
                 let row_fill = if lane == self.arr.sel_lane {
                     tint(base_fill, selected_fill(), 0.24)
@@ -5199,7 +5199,7 @@ impl VinteriaApp {
                 if lane == self.arr.sel_lane {
                     p.rect_filled(Rect::from_min_size(r.min, vec2(3.0, r.height())), 0.0, lane_col(lane));
                 }
-                p.line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, pick(0xFF566A84, 0xFF92A7BF)));
+                p.line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, pick(0xFF535E68, 0xFF92A7BF)));
             }
             for (index, item) in rows.iter().enumerate() {
                 if let PlaylistRow::FxAutomation(lane, clip) = *item {
@@ -5230,7 +5230,7 @@ impl VinteriaApp {
                         }
                         let x = gx + division as f32 * gap;
                         p.line_segment([pos2(x, gy), pos2(x, gy + full_h)],
-                            Stroke::new(0.65, pick(0xFF35455B, 0xFFB7C5D7)));
+                            Stroke::new(0.65, pick(0xFF383F47, 0xFFB7C5D7)));
                     }
                 }
             }
@@ -5239,7 +5239,7 @@ impl VinteriaApp {
                 let strong = b % 4 == 0;
                 p.line_segment([pos2(x, gy), pos2(x, gy + full_h)],
                     Stroke::new(if strong { 1.6 } else { 1.15 },
-                        if strong { pick(0xFF879DBA, 0xFF637C9C) } else { pick(0xFF627896, 0xFF839AB6) }));
+                        if strong { pick(0xFF98A6B3, 0xFF637C9C) } else { pick(0xFF677681, 0xFF839AB6) }));
             }
             for (i, c) in self.project.arrangement.clips.iter().enumerate() {
                 let Some(row) = track_rows.get(c.lane).copied().flatten() else { continue; };
@@ -6954,7 +6954,7 @@ impl VinteriaApp {
             heading(ui, "Theme");
             ui.horizontal(|ui| {
                 let w = (ui.available_width() - 8.0) / 2.0;
-                if p_button(ui, "Night", is_dark(), vec2(w, 42.0)).clicked() {
+                if p_button(ui, "Graphite Silver", is_dark(), vec2(w, 42.0)).clicked() {
                     set_dark(true);
                     save_prefs();
                     apply_visuals(ctx);

@@ -676,3 +676,8 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 - Polish the portrait track strip with edge padding, automatic reveal when the active track changes and a slim draggable position indicator.
 - Present portrait track actions in a frosted bottom sheet with a drag handle and the existing actions and confirmation.
 - Native Android touch and layout verification is pending.
+
+### Android 1.0.116
+
+- Give the existing mobile dark theme a Chat Pulse-inspired graphite-and-silver palette. Graphite Silver uses the Chat Pulse night accent on transport and selection controls, with charcoal cards and neutral grid lines. Light colors and the clip and note palettes are preserved.
+- Native Android visual verification is pending.
