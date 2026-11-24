@@ -2806,7 +2806,7 @@ impl VinteriaApp {
         };
         let mut close = false;
         if landscape_sheet {
-            egui::Area::new(animation.with("scrim")).order(egui::Order::Foreground)
+            egui::Area::new(animation.with("scrim")).order(egui::Order::Middle)
                 .fixed_pos(screen.min).movable(false).show(ctx, |ui| {
                     let (rect, hit) = ui.allocate_exact_size(screen.size(), Sense::click());
                     ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha((105.0 * shown) as u8));
@@ -2907,7 +2907,7 @@ impl VinteriaApp {
         let sheet_h = (screen.height() * 0.78).min(screen.height() - 40.0);
         let origin = pos2(screen.left(), screen.bottom() - sheet_h * shown);
         let mut done = false;
-        egui::Area::new(id.with("scrim")).order(egui::Order::Foreground).fixed_pos(screen.min)
+        egui::Area::new(id.with("scrim")).order(egui::Order::Middle).fixed_pos(screen.min)
                 .show(ctx, |ui| {
                     let (rect, resp) = ui.allocate_exact_size(screen.size(), Sense::click());
                     ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha((120.0 * shown) as u8));
@@ -5040,7 +5040,7 @@ impl VinteriaApp {
         let landscape = screen.width() >= screen.height();
         let width = (screen.width() - 48.0).clamp(1.0, if landscape { 208.0 } else { 320.0 });
         let mut close = ctx.input(|input| input.key_pressed(egui::Key::Escape));
-        egui::Area::new(id.with("scrim")).order(egui::Order::Foreground).fixed_pos(screen.min).movable(false)
+        egui::Area::new(id.with("scrim")).order(egui::Order::Middle).fixed_pos(screen.min).movable(false)
             .show(ctx, |ui| {
                 let (rect, hit) = ui.allocate_exact_size(screen.size(), Sense::click());
                 ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha(145));
@@ -5669,13 +5669,11 @@ fn playlist_clip_bar(ctx: &egui::Context, id: egui::Id, anchor: Pos2, actions: &
     let bounds = Rect::from_min_size(min, size);
     let cancel = usize::MAX;
     let mut action = ctx.input(|input| input.key_pressed(egui::Key::Escape).then_some(cancel));
-    egui::Area::new(id.with("scrim")).order(egui::Order::Foreground).fixed_pos(screen.min)
-        .movable(false).show(ctx, |ui| {
-            let (_, hit) = ui.allocate_exact_size(screen.size(), Sense::click());
-            if hit.clicked() {
-                action = Some(cancel);
-            }
-        });
+    // no full-screen catcher: a press outside the bar closes it and still reaches whatever is under the finger
+    // (an invisible catcher in the same layer order could end up above the bar and swallow every tap)
+    if ctx.input(|input| input.pointer.any_pressed() && input.pointer.press_origin().is_some_and(|at| !bounds.contains(at))) {
+        action = Some(cancel);
+    }
     egui::Area::new(id.with("bar")).order(egui::Order::Foreground).fixed_pos(bounds.min)
         .movable(false).show(ctx, |ui| {
             let (area, _) = ui.allocate_exact_size(bounds.size(), Sense::click());

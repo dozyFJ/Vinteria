@@ -504,3 +504,10 @@ Browser открывается слева рядом с Playlist в обеих �
 
 - Landscape Playlist: the right-hand studio controls drawer and its chevron are gone. Its controls (Return to start, Play/Pause, Stop, Record, Tempo, Automation pencil, Render, Export and the section buttons) now sit in the bottom dock after Select, Clone, Undo and Redo. The dock scrolls horizontally on narrow screens. Other landscape sections keep the drawer.
 - Native Android touch testing is pending.
+
+### Android 1.0.86
+
+- Fix: Playlist clip actions, the track options panel ("…"), the track settings sheet and the landscape Piano Roll sheet could stop responding. Their full-screen dimming catcher shared the Foreground order with the panel; after one tap on the catcher egui moved it above the panel, so every later tap landed on the invisible catcher and only closed the panel. The catchers are now `Order::Middle` (below their panels, like the Browser and Mixer sheets).
+- The clip action row has no catcher at all: a press outside the row closes it and still reaches whatever is under the finger.
+- Reproduced and verified headlessly by driving the real app (landscape 800×360, touch events): open menu → close by tapping outside → reopen → Delete now works; same open/close cycles for the track sheet and the track options panel; every dock button responds.
+- Native Android touch testing is pending.
