@@ -1575,6 +1575,11 @@ impl VinteriaApp {
     }
 
     fn m_start_playback(&mut self, ctx: &egui::Context, song: bool, pattern: usize, looping: bool) {
+        let range = (!song).then(|| ctx.data(|d| d.get_temp::<(u32, u32)>(egui::Id::new(("m_piano_loop_range", (false, pattern)))))).flatten();
+        self.m_start_playback_in_range(ctx, song, pattern, looping, range);
+    }
+
+    fn m_start_playback_in_range(&mut self, ctx: &egui::Context, song: bool, pattern: usize, looping: bool, range: Option<(u32, u32)>) {
         let key = (song, if song { usize::MAX } else { pattern });
         let paused = ctx.data_mut(|d| d.remove_temp::<(bool, usize)>(egui::Id::new(Self::M_PAUSED_AT)));
         if self.playing() || paused != Some(key) {
@@ -1591,7 +1596,6 @@ impl VinteriaApp {
         }
         self.publish_edits();
         self.shared.send(Cmd::PatternLoop(looping));
-        let range = (!song).then(|| ctx.data(|d| d.get_temp::<(u32, u32)>(egui::Id::new(("m_piano_loop_range", pattern))))).flatten();
         self.shared.send(Cmd::PatternRange(range.map(|(start, end)| (pattern, start, end))));
         self.shared.send(Cmd::Play);
         self.m_expect(ctx, true);
@@ -1881,6 +1885,8 @@ impl VinteriaApp {
             self.project.arrangement.clips.get(index).is_some_and(|clip| !clip.audio && clip.pattern == pi)
         });
         let clip_index = drawer.and(selected_clip);
+        let clip = clip_index.map(|index| self.project.arrangement.clips[index]);
+        let clip_start = clip.map_or(0, |clip| clip.offset);
         let editor = (clip_index.is_some(), clip_index.unwrap_or(pi));
         let oct_id = egui::Id::new(("m_piano_oct", editor));
         let chord_id = egui::Id::new("m_piano_chords");
@@ -1897,14 +1903,18 @@ impl VinteriaApp {
         let screen = ui.ctx().screen_rect();
         let portrait = screen.width() < screen.height();
         let ruler_width = if portrait { 50.0 } else { 58.0 };
+        let toolbar_width = 96.0;
         let pattern = self.project.patterns.get(pi);
         let valid_pattern = pattern.is_some();
-        let steps = pattern.map_or(1, |pattern| pattern.length_steps.max(1) as usize);
+        let steps = clip.map_or_else(
+            || pattern.map_or(1, |pattern| pattern.length_steps.max(1) as usize),
+            |clip| clip.len.max(1).div_ceil(TICKS_PER_STEP) as usize,
+        );
         let zoom_id = egui::Id::new(("m_piano_step_w", portrait, drawer.is_some()));
         let default_step_w = if portrait {
             32.0
         } else {
-            ((ui.available_width() - ruler_width) / steps.min(16) as f32).clamp(32.0, 72.0)
+            ((ui.available_width() - ruler_width - toolbar_width - 8.0) / steps.min(16) as f32).clamp(32.0, 72.0)
         };
         let mut step_w = ui.data(|d| d.get_temp::<f32>(zoom_id)).unwrap_or(default_step_w);
         let snap_id = egui::Id::new("m_piano_snap");
@@ -1917,108 +1927,172 @@ impl VinteriaApp {
         let mut close = false;
         let tools_id = egui::Id::new(("m_piano_tools", drawer.is_some(), portrait));
         let mut tools_open = ui.data(|d| d.get_temp::<bool>(tools_id)).unwrap_or(false);
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            if drawer.is_some() {
-                close = p_button(ui, "Done", true, vec2(60.0, 44.0)).clicked();
-            }
-            if !valid_pattern {
-                return;
-            }
-            let pattern_playing = self.m_transport_playing(ui.ctx()) && !self.project.song_mode && self.project.current_pattern == pi;
-            let transport = if pattern_playing { Icon::Pause } else { Icon::Play };
-            if studio_icon(ui, 44.0, transport, true, if pattern_playing { "Pause pattern" } else { "Play pattern" }).clicked() {
-                if pattern_playing {
-                    self.m_pause(ui.ctx());
+        let range_id = egui::Id::new(("m_piano_loop_range", editor));
+        let length_error_id = egui::Id::new(("m_piano_length_error", editor));
+        let mut loop_range = ui.data(|d| d.get_temp::<(u32, u32)>(range_id));
+        let mut extend = false;
+        let mut history_changed = false;
+        let toolbar_layout = if portrait {
+            egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true)
+        } else {
+            egui::Layout::top_down(egui::Align::Center)
+        };
+        let mut toolbar = |ui: &mut Ui| {
+            ui.with_layout(toolbar_layout, |ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                if drawer.is_some() {
+                    close = p_button(ui, "Done", true, vec2(60.0, 44.0)).clicked();
+                }
+                if !valid_pattern {
+                    return;
+                }
+                let pattern_playing = self.m_transport_playing(ui.ctx()) && !self.project.song_mode && self.project.current_pattern == pi;
+                let transport = if pattern_playing { Icon::Pause } else { Icon::Play };
+                if studio_icon(ui, 44.0, transport, true, if pattern_playing { "Pause pattern" } else { "Play pattern" }).clicked() {
+                    if pattern_playing {
+                        self.m_pause(ui.ctx());
+                    } else {
+                        let range = if let Some(clip) = clip {
+                        let end = clip.offset.saturating_add(clip.len.max(1));
+                        loop_range.map(|(a, b)| (a.max(clip.offset), b.min(end)))
+                            .filter(|(a, b)| a < b).or(Some((clip.offset, end)))
+                    } else {
+                        loop_range
+                    };
+                        self.m_start_playback_in_range(ui.ctx(), false, pi, looping, range);
+                    }
+                }
+                if studio_icon(ui, 44.0, Icon::Stop, false, "Stop").clicked() {
+                    self.m_stop(ui.ctx());
+                }
+                if !portrait {
+                    if let Some((full_id, full)) = drawer {
+                        if studio_icon(ui, 44.0, Icon::FullView, full, if full { "Restore view" } else { "Full view" }).clicked() {
+                            ui.data_mut(|d| d.insert_temp(full_id, !full));
+                        }
+                    }
+                }
+                if p_button(ui, "Tools", tools_open, vec2(62.0, 44.0)).clicked() {
+                    tools_open = !tools_open;
+                    ui.data_mut(|d| d.insert_temp(tools_id, tools_open));
+                }
+            });
+            if valid_pattern && tools_open {
+                let mut tools = |ui: &mut Ui| {
+                        let layout = if portrait { egui::Layout::left_to_right(egui::Align::Center) }
+                            else { egui::Layout::top_down(egui::Align::Center) };
+                        ui.with_layout(layout, |ui| {
+                            ui.spacing_mut().interact_size.y = 44.0;
+                            if p_button(ui, "Rec", record_step.is_some(), vec2(44.0, 44.0)).clicked() {
+                                record_step = if record_step.is_some() { None } else { Some(0) };
+                            }
+                            if let Some((full_id, full)) = drawer.filter(|_| portrait) {
+                                if studio_icon(ui, 44.0, Icon::FullView, full, if full { "Restore view" } else { "Full view" }).clicked() {
+                                    ui.data_mut(|d| d.insert_temp(full_id, !full));
+                                }
+                            }
+                            if p_button(ui, "Slide", slide_mode, vec2(64.0, 44.0))
+                                .on_hover_text("Draw slide notes or tap a note to toggle its slide").clicked()
+                            {
+                                slide_mode = !slide_mode;
+                            }
+                            if p_button(ui, "Oct −", false, vec2(62.0, 44.0)).clicked() {
+                                oct = oct.saturating_sub(1);
+                            }
+                            if p_button(ui, "Oct +", false, vec2(62.0, 44.0)).clicked() {
+                                oct = (oct + 1).min(9);
+                            }
+                            // grid: what a tap places and what a drag snaps to
+                            let grid_label = match snap {
+                                12 => "Grid 1/32",
+                                48 => "Grid 1/8",
+                                96 => "Grid 1/4",
+                                _ => "Grid 1/16",
+                            };
+                            if p_button(ui, grid_label, false, vec2(92.0, 44.0)).clicked() {
+                                snap = match snap {
+                                    24 => 48,
+                                    48 => 96,
+                                    96 => 12,
+                                    _ => 24,
+                                };
+                            }
+                            if p_button(ui, "Zoom −", false, vec2(70.0, 44.0)).clicked() {
+                                step_w = (step_w / 1.25).max(14.0);
+                                zoom_changed = true;
+                            }
+                            if p_button(ui, "Zoom +", false, vec2(70.0, 44.0)).clicked() {
+                                step_w = (step_w * 1.25).min(72.0);
+                                zoom_changed = true;
+                            }
+                            if p_button(ui, "Velocity", show_velocity, vec2(76.0, 44.0)).clicked() {
+                                show_velocity = !show_velocity;
+                            }
+                            ui.menu_button(format!("Key {}", names[(self.project.key_root % 12) as usize]), |ui| {
+                                for (index, name) in names.iter().enumerate() {
+                                    if ui.selectable_value(&mut self.project.key_root, index as u8, *name).clicked() {
+                                        ui.close_menu();
+                                    }
+                                }
+                            });
+                            let scale = self.project.key_scale.min(crate::theory::CHROMATIC);
+                            ui.menu_button(crate::theory::SCALES[scale].0, |ui| {
+                                for (index, (name, _)) in crate::theory::SCALES.iter().enumerate() {
+                                    if ui.selectable_value(&mut self.project.key_scale, index, *name).clicked() {
+                                        ui.close_menu();
+                                    }
+                                }
+                            });
+                            if p_button(ui, "Chords", chords, vec2(76.0, 44.0)).clicked() {
+                                chords = !chords;
+                            }
+                            if p_button(ui, if looping { "Loop on" } else { "Loop off" }, looping, vec2(87.0, 44.0)).clicked() {
+                                looping = !looping;
+                                self.shared.send(Cmd::PatternLoop(looping));
+                            }
+                        });
+                };
+                if portrait {
+                    mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_piano_tools_scroll")
+                        .auto_shrink([false, true]).show(ui, tools);
                 } else {
-                    self.m_start_playback(ui.ctx(), false, pi, looping);
+                    tools(ui);
                 }
             }
-            if studio_icon(ui, 44.0, Icon::Stop, false, "Stop").clicked() {
-                self.m_stop(ui.ctx());
-            }
-            if p_button(ui, "Tools", tools_open, vec2(62.0, 44.0)).clicked() {
-                tools_open = !tools_open;
-                ui.data_mut(|d| d.insert_temp(tools_id, tools_open));
-            }
-        });
-        if valid_pattern && tools_open {
-            mobile_scroll(egui::ScrollArea::horizontal())
-                .id_salt(("m_piano_tools_scroll", drawer.is_some(), portrait))
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
+            if valid_pattern {
+                ui.with_layout(toolbar_layout, |ui| {
+                    extend = p_button(ui, "+1 beat", false, vec2(72.0, 40.0))
+                        .on_hover_text("Extend the clip by one beat").clicked();
+                    if loop_range.is_some() && p_button(ui, "Clear loop", false, vec2(92.0, 40.0)).clicked() {
+                        loop_range = None;
+                        self.shared.send(Cmd::PatternRange(clip.map(|clip| (pi, clip.offset, clip.offset.saturating_add(clip.len.max(1))))));
+                    }
                     ui.horizontal(|ui| {
-                        ui.spacing_mut().interact_size.y = 44.0;
-                        if p_button(ui, "Rec", record_step.is_some(), vec2(44.0, 44.0)).clicked() {
-                            record_step = if record_step.is_some() { None } else { Some(0) };
-                        }
-                        if let Some((full_id, full)) = drawer {
-                            if studio_icon(ui, 44.0, Icon::FullView, full, if full { "Restore view" } else { "Full view" }).clicked() {
-                                ui.data_mut(|d| d.insert_temp(full_id, !full));
-                            }
-                        }
-                        if p_button(ui, "Slide", slide_mode, vec2(64.0, 44.0))
-                            .on_hover_text("Draw slide notes or tap a note to toggle its slide").clicked()
-                        {
-                            slide_mode = !slide_mode;
-                        }
-                        if p_button(ui, "Oct −", false, vec2(62.0, 44.0)).clicked() {
-                            oct = oct.saturating_sub(1);
-                        }
-                        if p_button(ui, "Oct +", false, vec2(62.0, 44.0)).clicked() {
-                            oct = (oct + 1).min(9);
-                        }
-                        // grid: what a tap places and what a drag snaps to
-                        let grid_label = match snap {
-                            12 => "Grid 1/32",
-                            48 => "Grid 1/8",
-                            96 => "Grid 1/4",
-                            _ => "Grid 1/16",
-                        };
-                        if p_button(ui, grid_label, false, vec2(92.0, 44.0)).clicked() {
-                            snap = match snap {
-                                24 => 48,
-                                48 => 96,
-                                96 => 12,
-                                _ => 24,
-                            };
-                        }
-                        if p_button(ui, "Zoom −", false, vec2(70.0, 44.0)).clicked() {
-                            step_w = (step_w / 1.25).max(14.0);
-                            zoom_changed = true;
-                        }
-                        if p_button(ui, "Zoom +", false, vec2(70.0, 44.0)).clicked() {
-                            step_w = (step_w * 1.25).min(72.0);
-                            zoom_changed = true;
-                        }
-                        if p_button(ui, "Velocity", show_velocity, vec2(76.0, 44.0)).clicked() {
-                            show_velocity = !show_velocity;
-                        }
-                        ui.menu_button(format!("Key {}", names[(self.project.key_root % 12) as usize]), |ui| {
-                            for (index, name) in names.iter().enumerate() {
-                                if ui.selectable_value(&mut self.project.key_root, index as u8, *name).clicked() {
-                                    ui.close_menu();
-                                }
-                            }
-                        });
-                        let scale = self.project.key_scale.min(crate::theory::CHROMATIC);
-                        ui.menu_button(crate::theory::SCALES[scale].0, |ui| {
-                            for (index, (name, _)) in crate::theory::SCALES.iter().enumerate() {
-                                if ui.selectable_value(&mut self.project.key_scale, index, *name).clicked() {
-                                    ui.close_menu();
-                                }
-                            }
-                        });
-                        if p_button(ui, "Chords", chords, vec2(76.0, 44.0)).clicked() {
-                            chords = !chords;
-                        }
-                        if p_button(ui, if looping { "Loop on" } else { "Loop off" }, looping, vec2(87.0, 44.0)).clicked() {
-                            looping = !looping;
-                            self.shared.send(Cmd::PatternLoop(looping));
-                        }
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        history_changed = self.m_studio_undo_redo(ui, 43.0);
                     });
                 });
-        }
+            }
+        };
+        let mut grid_ui;
+        let ui = if portrait {
+            toolbar(ui);
+            ui
+        } else {
+            let area = ui.available_rect_before_wrap();
+            let sidebar = Rect::from_min_size(area.min, vec2(toolbar_width, area.height()));
+            ui.painter().rect_filled(sidebar, 10.0, bar_fill());
+            let mut side = ui.new_child(egui::UiBuilder::new().id_salt("piano_toolbar").max_rect(sidebar.shrink(2.0)));
+            side.set_clip_rect(sidebar.intersect(ui.clip_rect()));
+            side.set_width(sidebar.width() - 4.0);
+            let side_height = side.available_height();
+            mobile_scroll(egui::ScrollArea::vertical()).max_height(side_height)
+                .auto_shrink([false, false]).show(&mut side, toolbar);
+            let content = Rect::from_min_max(pos2(sidebar.right() + 8.0, area.top()), area.max);
+            grid_ui = ui.new_child(egui::UiBuilder::new().id_salt("piano_content").max_rect(content));
+            grid_ui.set_clip_rect(content.intersect(ui.clip_rect()));
+            &mut grid_ui
+        };
         if !valid_pattern {
             ui.label(RichText::new("No pattern selected.").color(muted()));
             return close;
@@ -2034,21 +2108,7 @@ impl VinteriaApp {
             d.insert_temp(velocity_id, show_velocity);
             d.insert_temp(slide_id, slide_mode);
         });
-        let range_id = egui::Id::new(("m_piano_loop_range", pi));
-        let length_error_id = egui::Id::new(("m_piano_length_error", editor));
-        let mut loop_range = ui.data(|d| d.get_temp::<(u32, u32)>(range_id));
         let mut pi = pi;
-        let mut extend = false;
-        let mut history_changed = false;
-        ui.add_space(3.0);
-        ui.horizontal_wrapped(|ui| {
-            extend = p_button(ui, "+1 beat", false, vec2(72.0, 40.0)).on_hover_text("Extend the grid by one beat").clicked();
-            if loop_range.is_some() && p_button(ui, "Clear loop", false, vec2(92.0, 40.0)).clicked() {
-                loop_range = None;
-                self.shared.send(Cmd::PatternRange(None));
-            }
-            history_changed = self.m_studio_undo_redo(ui, 44.0);
-        });
         if history_changed {
             ui.data_mut(|d| d.remove::<String>(length_error_id));
             ui.ctx().request_repaint();
@@ -2057,7 +2117,7 @@ impl VinteriaApp {
         ui.label(RichText::new(if slide_mode { "Tap a note to toggle slide" } else { "Drag the ruler to loop · Double-tap a note to delete" })
             .size(11.0).color(muted()));
         if extend {
-            match self.m_extend_piano(pi, selected_clip) {
+            match self.m_extend_piano(pi, clip_index) {
                 Ok(()) => {
                     ui.data_mut(|d| d.remove::<String>(length_error_id));
                     let edited_pattern = self.project.current_pattern;
@@ -2075,7 +2135,12 @@ impl VinteriaApp {
         if let Some(error) = ui.data(|d| d.get_temp::<String>(length_error_id)) {
             ui.colored_label(RED, error);
         }
-        let steps = self.project.patterns[pi].length_steps.max(1) as usize;
+        let clip = clip_index.map(|index| self.project.arrangement.clips[index]);
+        let duration = clip.map_or_else(|| self.project.patterns[pi].len_ticks(), |clip| clip.len).max(1);
+        let pattern_end = clip_start.saturating_add(duration);
+        let steps = duration.div_ceil(TICKS_PER_STEP) as usize;
+        loop_range = loop_range.map(|(start, end)| (start.max(clip_start), end.min(pattern_end)))
+            .filter(|(start, end)| start < end);
         let (key_root, key_scale) = (self.project.key_root, self.project.key_scale);
         let base = oct * 12;
         let high_pitch = 127_u8;
@@ -2089,7 +2154,7 @@ impl VinteriaApp {
         let mut held = ui.data(|d| d.get_temp::<(Track, u8)>(held_id));
         let playing = self.playing() && !self.project.song_mode && self.project.current_pattern == pi;
         let pos = self.shared.position.load(Ordering::Relaxed);
-        let play_step = (pos / TICKS_PER_STEP) as usize % steps;
+        let play_step = (pos.saturating_sub(clip_start).min(duration - 1) / TICKS_PER_STEP) as usize;
         let cursor = if playing { Some(play_step) } else { record_step.map(|step| step % steps) };
         let timeline_height = 23.0;
         let view_h = (ui.available_height() - velocity_h - if show_velocity { 12.0 } else { 4.0 }).max(timeline_height + 1.0);
@@ -2129,7 +2194,7 @@ impl VinteriaApp {
             scroll = if axis == 0 { scroll.horizontal_scroll_offset(offset) } else { scroll.vertical_scroll_offset(offset) };
         }
         let out = scroll.show(&mut grid_ui, |ui| {
-            let (rect, resp) = ui.allocate_exact_size(vec2(steps as f32 * step_w, rows as f32 * row_h), Sense::click());
+            let (rect, resp) = ui.allocate_exact_size(vec2(duration as f32 / TICKS_PER_STEP as f32 * step_w, rows as f32 * row_h), Sense::click());
             let p = ui.painter_at(rect);
             panel(&p, rect, 4.0);
             for row in 0..rows {
@@ -2155,7 +2220,7 @@ impl VinteriaApp {
                 // while playing the line glides with the exact tick (it used to jump from cell to cell);
                 // the record cursor stays on its step
                 let x = if playing {
-                    let local = pos % (steps as u32 * TICKS_PER_STEP).max(1);
+                    let local = pos.saturating_sub(clip_start).min(duration);
                     rect.left() + local as f32 / TICKS_PER_STEP as f32 * step_w
                 } else {
                     rect.left() + step as f32 * step_w
@@ -2163,20 +2228,21 @@ impl VinteriaApp {
                 let color = if record_step.is_some() { RED } else { p_accent() };
                 p.line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], Stroke::new(2.0, color));
             }
-            let pattern_end = steps as u32 * TICKS_PER_STEP;
             let tap_id = resp.id.with("last_piano_note_tap");
             let mut remove = None;
             let mut toggle_slide = None;
             let mut audition = None;
             let mut edit = None;
             for (index, note) in self.project.patterns[pi].notes.iter().enumerate() {
-                if note.pitch > high_pitch || note.start >= pattern_end {
+                if note.pitch > high_pitch || note.start >= pattern_end || note.start.saturating_add(note.len) <= clip_start {
                     continue;
                 }
                 let body = |len: u32, pitch: u8, start: u32| {
-                    let x = rect.left() + start as f32 / TICKS_PER_STEP as f32 * step_w;
+                    let visible_start = start.max(clip_start);
+                    let visible_len = start.saturating_add(len).min(pattern_end).saturating_sub(visible_start);
+                    let x = rect.left() + visible_start.saturating_sub(clip_start) as f32 / TICKS_PER_STEP as f32 * step_w;
                     let y = rect.top() + (high_pitch - pitch) as f32 * row_h;
-                    let width = (len as f32 / TICKS_PER_STEP as f32 * step_w).max(6.0);
+                    let width = (visible_len as f32 / TICKS_PER_STEP as f32 * step_w).max(6.0);
                     Rect::from_min_size(pos2(x + 1.0, y + 1.0), vec2(width - 2.0, row_h - 2.0))
                 };
                 let original = body(note.len, note.pitch, note.start);
@@ -2221,8 +2287,10 @@ impl VinteriaApp {
                             // the body moves both ways: up/down = pitch, left/right = time (snapped to the grid)
                             let semitones = ((origin.y - pointer.y) / row_h).round() as i32;
                             pitch = (i32::from(note.pitch) + semitones).clamp(0, i32::from(high_pitch)) as u8;
-                            let latest = i64::from(pattern_end.saturating_sub(note.len.min(pattern_end)));
-                            start = (i64::from(note.start) + snapped).clamp(0, latest) as u32;
+                            let latest = i64::from(pattern_end.saturating_sub(note.len).max(clip_start));
+                            if snapped != 0 {
+                                start = (i64::from(note.start) + snapped).clamp(i64::from(clip_start), latest) as u32;
+                            }
                         }
                     }
                     if stopped {
@@ -2294,12 +2362,10 @@ impl VinteriaApp {
                 ui.data_mut(|d| d.remove::<(usize, u32, u8, f64)>(tap_id));
                 if let Some(pt) = resp.interact_pointer_pos() {
                     let row = (((pt.y - rect.top()) / row_h) as usize).min(rows - 1);
-                    let step = (((pt.x - rect.left()) / step_w) as usize).min(steps - 1);
                     let pitch = high_pitch - row as u8;
-                    let _ = step;
                     // place on the chosen grid: the tap position rounded down to it
                     let raw = ((pt.x - rect.left()) / step_w * TICKS_PER_STEP as f32).max(0.0) as u32;
-                    let tick = (raw / snap * snap).min(pattern_end.saturating_sub(1) / snap * snap);
+                    let tick = clip_start + (raw / snap * snap).min((duration - 1) / snap * snap);
                     let mut pitches = if chords {
                         let tone = crate::theory::snap_to_scale(key_root, key_scale, pitch);
                         crate::theory::stack_chord(key_root, key_scale, tone, 3)
@@ -2372,18 +2438,17 @@ impl VinteriaApp {
         let painter = ui.painter_at(timeline);
         painter.rect_filled(timeline, 3.0, bar_fill());
         let beat = TICKS_PER_BAR / 4;
-        let pattern_end = steps as u32 * TICKS_PER_STEP;
         let ruler_hit = ui.interact(timeline, range_id.with("ruler"), Sense::click_and_drag())
             .on_hover_text("Tap to seek · Drag to loop");
         let tick_at = |x: f32| {
             let x = x.clamp(timeline.left(), timeline.right());
             let ticks = ((x - out.inner.x).max(0.0) / step_w * TICKS_PER_STEP as f32) as u32;
-            ticks.min(pattern_end.saturating_sub(1))
+            clip_start + ticks.min(duration - 1)
         };
         if !pinching && ruler_hit.dragged() {
             if let Some((origin, point)) = ui.input(|input| input.pointer.press_origin()).zip(ruler_hit.interact_pointer_pos()) {
-                let a = tick_at(origin.x) / beat * beat;
-                let b = tick_at(point.x) / beat * beat;
+                let a = clip_start + (tick_at(origin.x) - clip_start) / beat * beat;
+                let b = clip_start + (tick_at(point.x) - clip_start) / beat * beat;
                 let range = (a.min(b), (a.max(b) + beat).min(pattern_end));
                 if loop_range != Some(range) {
                     loop_range = Some(range);
@@ -2394,7 +2459,7 @@ impl VinteriaApp {
             }
         } else if !pinching && (ruler_hit.secondary_clicked() || ruler_hit.long_touched()) {
             loop_range = None;
-            self.shared.send(Cmd::PatternRange(None));
+            self.shared.send(Cmd::PatternRange(clip.map(|_| (pi, clip_start, pattern_end))));
         } else if !pinching && (ruler_hit.clicked() || ruler_hit.drag_stopped()) {
             let target = if ruler_hit.drag_stopped() {
                 loop_range.map(|(start, _)| start)
@@ -2412,7 +2477,7 @@ impl VinteriaApp {
             }
         }
         if let Some((start, end)) = loop_range {
-            let x = |tick| out.inner.x + tick as f32 / TICKS_PER_STEP as f32 * step_w;
+            let x = |tick: u32| out.inner.x + tick.saturating_sub(clip_start) as f32 / TICKS_PER_STEP as f32 * step_w;
             let mark = Rect::from_min_max(pos2(x(start), timeline.top()), pos2(x(end), timeline.bottom())).intersect(timeline);
             if mark.is_positive() {
                 painter.rect_filled(mark, 3.0, p_accent().gamma_multiply(0.32));
@@ -2420,7 +2485,7 @@ impl VinteriaApp {
             }
         }
         ui.data_mut(|d| {
-            let id = egui::Id::new(("m_piano_loop_range", pi));
+            let id = range_id;
             if let Some(range) = loop_range {
                 d.insert_temp(id, range);
             } else {
@@ -2438,7 +2503,7 @@ impl VinteriaApp {
         }
         if show_velocity {
             ui.add_space(4.0);
-            self.m_piano_velocity(ui, pi, out.inner.x, grid.left(), step_w, velocity_h);
+            self.m_piano_velocity(ui, pi, out.inner.x, grid.left(), step_w, velocity_h, clip_start..pattern_end);
         }
         let pressed = side_pressed.map(|pitch| (track, pitch));
         if pressed != held {
@@ -2451,12 +2516,13 @@ impl VinteriaApp {
                 self.shared.send(Cmd::NoteOn { track, pitch, vel: 100 });
                 if let Some(step) = record_step {
                     let step = if playing { play_step } else { step % steps };
-                    let start = step as u32 * TICKS_PER_STEP;
+                    let start = clip_start + step as u32 * TICKS_PER_STEP;
+                    let len = TICKS_PER_STEP.min(pattern_end - start);
                     let notes = &mut self.project.patterns[pi].notes;
-                    if !notes.iter().any(|note| note.pitch == pitch && note.start < start + TICKS_PER_STEP
+                    if !notes.iter().any(|note| note.pitch == pitch && note.start < start + len
                         && start < note.start.saturating_add(note.len))
                     {
-                        notes.push(crate::piano_roll::Note { start, len: TICKS_PER_STEP, pitch, vel: 100, track, slide: false, chance: 100, pan: 0, mute: false });
+                        notes.push(crate::piano_roll::Note { start, len, pitch, vel: 100, track, slide: false, chance: 100, pan: 0, mute: false });
                     }
                     record_step = Some(if playing { step } else { (step + 1) % steps });
                 }
@@ -2478,7 +2544,7 @@ impl VinteriaApp {
         close
     }
 
-    fn m_piano_velocity(&mut self, ui: &mut Ui, pattern: usize, origin_x: f32, grid_left: f32, step_w: f32, height: f32) {
+    fn m_piano_velocity(&mut self, ui: &mut Ui, pattern: usize, origin_x: f32, grid_left: f32, step_w: f32, height: f32, ticks: std::ops::Range<u32>) {
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
         let ruler = Rect::from_min_max(rect.min, pos2(grid_left, rect.bottom()));
         let painter = ui.painter_at(ruler);
@@ -2498,7 +2564,9 @@ impl VinteriaApp {
         let mut edited = false;
         let mut columns = std::collections::BTreeMap::<u32, Vec<usize>>::new();
         for (index, note) in notes.iter().enumerate() {
-            columns.entry(note.start / TICKS_PER_STEP).or_default().push(index);
+            if ticks.contains(&note.start) {
+                columns.entry((note.start - ticks.start) / TICKS_PER_STEP).or_default().push(index);
+            }
         }
         for (step, indices) in columns {
             let left = origin_x + step as f32 * step_w;
@@ -2756,49 +2824,33 @@ impl VinteriaApp {
         };
         let title = track.name.clone();
         let screen = ctx.screen_rect();
-        let width = if screen.width() < screen.height() {
-            screen.width()
-        } else {
-            (screen.width() * 0.76).max(screen.width().min(364.0))
-        };
-        // portrait: a bottom sheet (swipe the dock up / tap a track name twice), landscape: a drawer from the left
-        let portrait = screen.width() < screen.height();
+        let width = screen.width();
         let sheet_h = (screen.height() * 0.78).min(screen.height() - 40.0);
-        let origin = if portrait {
-            pos2(screen.left(), screen.bottom() - sheet_h * shown)
-        } else {
-            pos2(screen.left() - (1.0 - shown) * width, screen.top())
-        };
+        let origin = pos2(screen.left(), screen.bottom() - sheet_h * shown);
         let mut done = false;
-        if portrait {
-            egui::Area::new(id.with("scrim")).order(egui::Order::Middle).fixed_pos(screen.min)
+        egui::Area::new(id.with("scrim")).order(egui::Order::Foreground).fixed_pos(screen.min)
                 .show(ctx, |ui| {
                     let (rect, resp) = ui.allocate_exact_size(screen.size(), Sense::click());
                     ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha((120.0 * shown) as u8));
                     done |= resp.clicked();
                 });
-        }
         egui::Area::new(id.with("drawer"))
             .fixed_pos(origin).constrain(false).movable(false).order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                let size = if portrait { vec2(width, sheet_h) } else { vec2(width, screen.height()) };
+                let size = vec2(width, sheet_h);
                 let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
                 let mut inner = rect.shrink(9.0);
-                if portrait {
-                    ui.painter().rect_filled(rect, egui::Rounding { nw: 18.0, ne: 18.0, ..Default::default() }, p_bg());
-                    // grip: swipe it down (or tap it) to close
-                    let head = Rect::from_min_size(rect.min, vec2(rect.width(), 22.0));
-                    let grip = ui.interact(head, id.with("grip"), Sense::click_and_drag());
-                    ui.painter().rect_filled(Rect::from_center_size(pos2(head.center().x, head.top() + 10.0), vec2(40.0, 5.0)), 2.5, outline());
-                    if grip.clicked() || grip.drag_stopped() && grip.drag_delta().y >= 0.0 || grip.dragged() && ui.input(|i| {
-                        i.pointer.press_origin().zip(i.pointer.interact_pos()).is_some_and(|(a, b)| b.y - a.y > 40.0)
-                    }) {
-                        done = true;
-                    }
-                    inner.min.y = head.bottom();
-                } else {
-                    ui.painter().rect_filled(rect, 0.0, p_bg());
+                ui.painter().rect_filled(rect, egui::Rounding { nw: 18.0, ne: 18.0, ..Default::default() }, p_bg());
+                // grip: swipe it down (or tap it) to close
+                let head = Rect::from_min_size(rect.min, vec2(rect.width(), 22.0));
+                let grip = ui.interact(head, id.with("grip"), Sense::click_and_drag());
+                ui.painter().rect_filled(Rect::from_center_size(pos2(head.center().x, head.top() + 10.0), vec2(40.0, 5.0)), 2.5, outline());
+                if grip.clicked() || grip.drag_stopped() && grip.drag_delta().y >= 0.0 || grip.dragged() && ui.input(|i| {
+                    i.pointer.press_origin().zip(i.pointer.interact_pos()).is_some_and(|(a, b)| b.y - a.y > 40.0)
+                }) {
+                    done = true;
                 }
+                inner.min.y = head.bottom();
                 let mut content = ui.new_child(egui::UiBuilder::new().max_rect(inner));
                 content.set_clip_rect(rect.intersect(screen));
                 mobile_visuals(&mut content);

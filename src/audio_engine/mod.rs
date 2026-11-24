@@ -707,9 +707,9 @@ impl Engine {
         } else if let Some(pat) = proj.patterns.get(proj.current_pattern) {
             let period = pat.len_ticks().max(1);
             let range = self.pattern_range.filter(|&(pattern, start, end)| {
-                self.pattern_loop && pattern == proj.current_pattern && start < end && end <= period
+                pattern == proj.current_pattern && start < end
             });
-            let mut local = self.song_tick % period;
+            let mut local = range.map_or(self.song_tick % period, |_| self.song_tick);
             if let Some((_, start, end)) = range {
                 if !(start..end).contains(&local) {
                     self.song_tick = start;
@@ -723,8 +723,12 @@ impl Engine {
             self.song_tick = self.song_tick.wrapping_add(1);
             if let Some((_, start, end)) = range {
                 if local + 1 >= end {
-                    self.song_tick = start;
-                    self.release_everything();
+                    if self.pattern_loop {
+                        self.song_tick = start;
+                        self.release_everything();
+                    } else {
+                        self.stop();
+                    }
                 }
             } else if !self.pattern_loop && local + 1 >= period {
                 self.stop();

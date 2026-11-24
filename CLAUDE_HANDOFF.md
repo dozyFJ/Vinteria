@@ -472,3 +472,4 @@ Browser открывается слева рядом с Playlist в обеих �
 
 - Landscape studio moves transport and section controls from the left sidebar into a collapsible drawer on the right. The chevron stays at the bottom-right corner and opens the drawer upward. Portrait keeps its existing layout.
 - Native Android touch testing is pending.
+- Landscape Piano Roll places its toolbar on the left in sheet and full view. The note grid, editor playback range and +1 beat honor the MIDI clip length. Track settings open from the bottom in landscape.
