@@ -1250,11 +1250,10 @@ impl VinteriaApp {
                     dock_menu(ui, symbol, name, true, |ui| {
                         ui.set_min_width(174.0);
                         for (index, (label, symbol)) in STUDIO_SECTIONS.into_iter().enumerate() {
-                            let label = match label {
-                                "Steps" => "Drum Rack",
-                                "Piano" => "Piano Roll",
-                                _ => label,
-                            };
+                            if index == SEC_PIANO || matches!(symbol, Icon::Tracks) {
+                                continue;
+                            }
+                            let label = if label == "Steps" { "Drum Rack" } else { label };
                             if drawer_row(ui, symbol, label, index == self.m_sec).clicked() {
                                 self.m_select_studio_section(ctx, index);
                                 ui.close_menu();

@@ -659,3 +659,8 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 - Replace Drum Rack pattern chips with a grid selector and bind edits to a Playlist MIDI clip. First step entry creates a clip on the selected unlocked MIDI track when there is room, otherwise on a dedicated Drum Rack track. To Audio uses the existing selection bounce.
 - Drum step grid supports Bar, 1/2, 1/4, 1/8 and 1/16. Coarser views keep the hidden intermediate steps intact.
 - Native Android verification is pending.
+
+### Android 1.0.113
+
+- Simplify the portrait dock section menu to Playlist, Drum Rack, Session and Mixer. Piano Roll remains available from a MIDI clip.
+- Native Android touch verification is pending.
