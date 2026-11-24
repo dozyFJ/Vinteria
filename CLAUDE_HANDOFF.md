@@ -462,3 +462,8 @@ Browser открывается слева рядом с Playlist в обеих �
 ### Android 1.0.77
 
 - Keep the Master card in the Playlist sidebar. Only draw the timeline lane when the pencil is active and Master is selected.
+
+### Android 1.0.78
+
+- Master gain and its pencil automation are edited inside the Playlist sidebar card. The central grid stays free of Master UI in both orientations.
+- Double-tap a Playlist clip to show its radial action menu. Hold a MIDI clip to open Piano Roll directly.

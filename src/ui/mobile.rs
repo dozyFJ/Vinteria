@@ -110,11 +110,22 @@ enum Icon {
     Pencil,
     SelectBox,
     CloneClips,
+    Minus,
+    Trash,
 }
 
 fn icon(p: &Painter, kind: Icon, c: Pos2, col: Color32) {
     let s = Stroke::new(1.8, col);
     match kind {
+        Icon::Minus => {
+            p.line_segment([c - vec2(8.0, 0.0), c + vec2(8.0, 0.0)], s);
+        }
+        Icon::Trash => {
+            let bin = Rect::from_center_size(c + vec2(0.0, 2.0), vec2(11.0, 13.0));
+            p.rect_stroke(bin, 2.0, s);
+            p.line_segment([c + vec2(-8.0, -5.0), c + vec2(8.0, -5.0)], s);
+            p.line_segment([c + vec2(-3.0, -8.0), c + vec2(3.0, -8.0)], s);
+        }
         Icon::SelectBox => {
             for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
                 let corner = c + vec2(x * 9.0, y * 9.0);
@@ -3773,6 +3784,7 @@ impl VinteriaApp {
         let mut move_clip = None;
         let mut fade_clip = None;
         let mut remove_fx_automation = None;
+        let clip_menu_id = egui::Id::new("m_playlist_clip_actions");
         let mut select_master = false;
         let mut dropped_item = None;
         let mut dropped_effect = None;
@@ -4069,39 +4081,17 @@ impl VinteriaApp {
                     continue;
                 }
 
-                if clip.clicked() && !clip.long_touched() {
-                    let edit = clip.double_clicked();
-                    selection = Some((c.lane, Some(i), Some(c.start), edit));
+                if clip.long_touched() && !c.audio {
+                    ui.data_mut(|d| d.remove::<(usize, Pos2)>(clip_menu_id));
+                    selection = Some((c.lane, Some(i), Some(c.start), true));
+                } else if clip.double_clicked() || clip.secondary_clicked() {
+                    if let Some(pointer) = clip.interact_pointer_pos() {
+                        ui.data_mut(|d| d.insert_temp(clip_menu_id, (i, pointer)));
+                    }
+                    selection = Some((c.lane, Some(i), Some(c.start), false));
+                } else if clip.clicked() {
+                    selection = Some((c.lane, Some(i), Some(c.start), false));
                 }
-                clip.context_menu(|ui| {
-                    if ui.button("Open clip").clicked() {
-                        selection = Some((c.lane, Some(i), Some(c.start), true));
-                        ui.close_menu();
-                    }
-                    for (label, len) in [
-                        ("Extend by grid step", c.len.saturating_add(snap)),
-                        ("Shorten by grid step", c.len.saturating_sub(snap).max(1)),
-                    ] {
-                        let candidate = crate::arrangement::Clip { len, ..*c };
-                        let valid = len != c.len && self.project.arrangement.can_place(&candidate, Some(i));
-                        if ui.add_enabled(valid, egui::Button::new(label)).clicked() {
-                            move_clip = Some((i, candidate));
-                            ui.close_menu();
-                        }
-                    }
-                    ui.separator();
-                    if ui.add_sized([130.0, 40.0], egui::Button::new("Duplicate")).clicked() {
-                        duplicate = Some(i);
-                        ui.close_menu();
-                    }
-                    if ui.add_sized([130.0, 40.0], egui::Button::new(RichText::new("Delete clip").color(RED))).clicked() {
-                        delete_clip = Some(i);
-                        ui.close_menu();
-                    }
-                    if ui.add_sized([130.0, 40.0], egui::Button::new("Cancel")).clicked() {
-                        ui.close_menu();
-                    }
-                });
 
                 if clip.drag_started() {
                     if let Some(origin) = ui.input(|input| input.pointer.press_origin()) {
@@ -4141,12 +4131,6 @@ impl VinteriaApp {
                     }
                 }
 
-            }
-            if show_master && automation && self.arr.auto_master {
-                let area = Rect::from_min_size(pos2(gx, gy + row_count as f32 * lane_h), vec2(rect.width(), lane_h));
-                p.rect_filled(area, 0.0, selected_fill());
-                p.hline(area.x_range(), area.top(), Stroke::new(1.0, outline()));
-                self.m_playlist_automation(ui, area, bar_w, bars, pinching, true);
             }
             if let Some(row) = track_rows[self.arr.sel_lane].filter(|_| automation && !self.arr.auto_master
                 && !self.project.arrangement.tracks[self.arr.sel_lane].playlist_locked)
@@ -4503,27 +4487,62 @@ impl VinteriaApp {
             }
             let master = Rect::from_min_size(pos2(panel.left() + 4.0, master_top + 3.0), vec2(panel.width() - 8.0, lane_h - 6.0));
             if master.intersects(clip) {
-                let resp = ui.interact(master.intersect(clip), panel_id.with("master"), Sense::click()).on_hover_text("Master channel");
+                let editing = automation && self.arr.auto_master;
+                let header = if editing { Rect::from_min_size(master.min, vec2(master.width(), 24.0)) } else { master };
+                let resp = ui.interact(header.intersect(clip), panel_id.with("master"), Sense::click())
+                    .on_hover_text(if automation { "Edit Master volume automation" } else { "Open Master mixer" });
                 let p = ui.painter().with_clip_rect(clip);
                 p.rect_filled(master, 10.0, if self.arr.auto_master { selected_fill() } else { card_fill() });
                 p.rect_stroke(master, 10.0, Stroke::new(1.0, outline()));
-                p.text(master.left_top() + vec2(7.0, 17.0), Align2::LEFT_CENTER, "Master", FontId::proportional(12.0), ink());
-                p.text(master.right_top() + vec2(-7.0, 17.0), Align2::RIGHT_CENTER,
+                let title_y = if editing { 12.0 } else { 17.0 };
+                p.text(master.left_top() + vec2(7.0, title_y), Align2::LEFT_CENTER, "Master", FontId::proportional(12.0), ink());
+                p.text(master.right_top() + vec2(-7.0, title_y), Align2::RIGHT_CENTER,
                     format!("{:+.1}", widgets::db(self.project.master_volume)), FontId::proportional(10.0), muted());
-                let meter = Rect::from_min_size(master.left_bottom() + vec2(7.0, -21.0),
-                    vec2(master.width() - 14.0, 9.0));
-                p.rect_filled(meter, 4.5, p_bg());
-                let [left, right] = self.shared.peak(crate::mixer::NUM_STRIPS);
-                let level = left.max(right).clamp(0.0, 1.0).sqrt();
-                if level > 0.0 {
-                    let fill = Rect::from_min_size(meter.min, vec2(meter.width() * level, meter.height()));
-                    p.rect_filled(fill, 4.5, p_accent());
-                }
-                if level > 0.0 || self.playing() {
-                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(16));
+                if editing {
+                    let graph = Rect::from_min_max(master.min + vec2(5.0, 25.0), master.max - vec2(5.0, 5.0));
+                    let visible = graph.intersect(clip);
+                    if visible.is_positive() {
+                        let scale = graph.width() / grid.width().max(1.0);
+                        let bar_width = bar_w * scale;
+                        let origin = graph.left() - scroll.state.offset.x * scale;
+                        let area = Rect::from_min_size(pos2(origin, graph.top()),
+                            vec2(grid.width().max(bars as f32 * bar_w) * scale, graph.height()));
+                        let mut plot = ui.new_child(egui::UiBuilder::new().max_rect(graph));
+                        plot.set_clip_rect(visible);
+                        self.m_playlist_automation(&mut plot, area, bar_width, bars, pinching, true);
+                    }
+                } else {
+                    let meter = Rect::from_min_size(master.left_bottom() + vec2(7.0, -21.0),
+                        vec2(master.width() - 14.0, 9.0));
+                    p.rect_filled(meter, 4.5, p_bg());
+                    let [left, right] = self.shared.peak(crate::mixer::NUM_STRIPS);
+                    let level = left.max(right).clamp(0.0, 1.0).sqrt();
+                    if level > 0.0 {
+                        let fill = Rect::from_min_size(meter.min, vec2(meter.width() * level, meter.height()));
+                        p.rect_filled(fill, 4.5, p_accent());
+                    }
+                    if level > 0.0 || self.playing() {
+                        ui.ctx().request_repaint_after(std::time::Duration::from_millis(16));
+                    }
+                    let slider = master.intersect(clip).intersect(Rect::from_min_max(
+                        pos2(master.left(), meter.top() - 5.0), master.right_bottom()));
+                    if !automation && slider.is_positive() {
+                        let gain = ui.interact(slider, panel_id.with("master_gain"), Sense::drag())
+                            .on_hover_text("Drag to adjust Master volume");
+                        if gain.drag_started() {
+                            self.m_playlist_undo_step();
+                        }
+                        if (gain.dragged() || gain.drag_stopped()) && !pinching {
+                            if let Some(pointer) = gain.interact_pointer_pos() {
+                                let fraction = ((pointer.x - meter.left()) / meter.width()).clamp(0.0, 1.0);
+                                self.project.master_volume = fraction * 1.2;
+                            }
+                        }
+                    }
                 }
                 if resp.clicked() && automation {
-                    select_master = true;
+                    self.arr.auto_master = !editing;
+                    select_master = !editing;
                 } else if resp.clicked() {
                     ui.data_mut(|d| {
                         d.insert_temp(egui::Id::new(MIXER_CHANNEL), MobileMixerChannel::Master);
@@ -4552,6 +4571,35 @@ impl VinteriaApp {
             let x = if show_names { panel.right() - 3.0 } else { timeline.right() - 3.0 };
             let options = Rect::from_min_size(pos2(x - TOUCH, viewport.top()), vec2(TOUCH, ruler));
             self.m_playlist_options(ui, options);
+        }
+        if let Some((index, anchor)) = ui.data(|d| d.get_temp::<(usize, Pos2)>(clip_menu_id)) {
+            if let Some(c) = self.project.arrangement.clips.get(index).copied().filter(|c| {
+                !pinching && !select_mode && !automation && !self.project.arrangement.tracks[c.lane].playlist_locked
+            }) {
+                let step = self.arr.snap.max(1);
+                let longer = crate::arrangement::Clip { len: c.len.saturating_add(step), ..c };
+                let shorter = crate::arrangement::Clip { len: c.len.saturating_sub(step).max(1), ..c };
+                let actions = [
+                    (if c.audio { Icon::Wave } else { Icon::Keys }, "Open clip", true),
+                    (Icon::Plus, "Extend by grid step", self.project.arrangement.can_place(&longer, Some(index))),
+                    (Icon::Minus, "Shorten by grid step", shorter.len != c.len
+                        && self.project.arrangement.can_place(&shorter, Some(index))),
+                    (Icon::CloneClips, "Clone clip", true),
+                    (Icon::Trash, "Delete clip", true),
+                ];
+                if let Some(action) = playlist_clip_wheel(ui.ctx(), clip_menu_id, anchor, &actions) {
+                    ui.data_mut(|d| d.remove::<(usize, Pos2)>(clip_menu_id));
+                    match action {
+                        0 => selection = Some((c.lane, Some(index), Some(c.start), true)),
+                        1 | 2 => move_clip = Some((index, if action == 1 { longer } else { shorter })),
+                        3 => duplicate = Some(index),
+                        4 => delete_clip = Some(index),
+                        _ => {}
+                    }
+                }
+            } else {
+                ui.data_mut(|d| d.remove::<(usize, Pos2)>(clip_menu_id));
+            }
         }
         if let Some(id) = group_toggle {
             self.m_playlist_undo_step();
@@ -4996,8 +5044,10 @@ impl VinteriaApp {
         for point in points.iter().filter(|point| point.tick >= first && point.tick <= last) {
             painter.circle_filled(pos2(to_x(point.tick), to_y(point.v)), 3.5, accent);
         }
-        painter.text(visible.left_bottom() + vec2(7.0, -4.0), Align2::LEFT_BOTTOM,
-            if master { "Master volume automation" } else { "Volume automation" }, FontId::proportional(11.0), ink());
+        if !master {
+            painter.text(visible.left_bottom() + vec2(7.0, -4.0), Align2::LEFT_BOTTOM,
+                "Volume automation", FontId::proportional(11.0), ink());
+        }
     }
 
     fn m_fit_audio_clip_to_grid(&mut self, index: usize) {
@@ -5446,6 +5496,53 @@ impl VinteriaApp {
             list_row(ui, lane_col(4), "R", "Recent", &format!("{} opened", self.recent.len()), "", false);
         });
     }
+}
+
+fn playlist_clip_wheel(ctx: &egui::Context, id: egui::Id, anchor: Pos2, actions: &[(Icon, &str, bool); 5]) -> Option<usize> {
+    let screen = ctx.screen_rect();
+    let size = 170.0_f32.min(screen.width()).min(screen.height());
+    let radius = size / 2.0;
+    let center = anchor.clamp(screen.min + vec2(radius, radius), screen.max - vec2(radius, radius));
+    let bounds = Rect::from_center_size(center, vec2(size, size));
+    let cancel = usize::MAX;
+    let mut action = ctx.input(|input| input.key_pressed(egui::Key::Escape).then_some(cancel));
+    egui::Area::new(id.with("scrim")).order(egui::Order::Foreground).fixed_pos(screen.min)
+        .movable(false).show(ctx, |ui| {
+            let (area, hit) = ui.allocate_exact_size(screen.size(), Sense::click());
+            ui.painter().rect_filled(area, 0.0, Color32::from_black_alpha(45));
+            if hit.clicked() {
+                action = Some(cancel);
+            }
+        });
+    egui::Area::new(id.with("wheel")).order(egui::Order::Foreground).fixed_pos(bounds.min)
+        .movable(false).show(ctx, |ui| {
+            let (area, _) = ui.allocate_exact_size(bounds.size(), Sense::click());
+            let center = area.center();
+            let p = ui.painter();
+            p.circle_filled(center, radius - 1.0, bar_fill());
+            p.circle_stroke(center, radius - 1.0, Stroke::new(1.0, outline()));
+            let circle = (size * 0.24).min(44.0);
+            for (index, &(symbol, label, enabled)) in actions.iter().enumerate() {
+                let angle = -std::f32::consts::FRAC_PI_2 + index as f32 * std::f32::consts::TAU / actions.len() as f32;
+                let point = center + vec2(angle.cos(), angle.sin()) * (radius - circle * 0.66);
+                let button = Rect::from_center_size(point, vec2(circle, circle));
+                let hit = ui.interact(button, id.with(index), if enabled { Sense::click() } else { Sense::hover() })
+                    .on_hover_text(label);
+                p.circle_filled(point, circle * 0.5, if hit.hovered() && enabled { selected_fill() } else { card_fill() });
+                let color = if !enabled { muted().gamma_multiply(0.55) } else if index == 4 { RED } else { ink() };
+                icon(p, symbol, point, color);
+                if hit.clicked() && enabled {
+                    action = Some(index);
+                }
+            }
+            let close = Rect::from_center_size(center, vec2(circle, circle));
+            if ui.interact(close, id.with("close"), Sense::click()).on_hover_text("Close clip actions").clicked() {
+                action = Some(cancel);
+            }
+            p.circle_stroke(center, circle * 0.5, Stroke::new(1.0, outline()));
+            p.text(center, Align2::CENTER_CENTER, "×", FontId::proportional(21.0), ink());
+        });
+    action
 }
 
 fn playlist_label(painter: &egui::Painter, rect: Rect, y: f32, text: &str, color: Color32) {
