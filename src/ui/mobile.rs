@@ -1988,13 +1988,8 @@ impl VinteriaApp {
         let mut loop_range = ui.data(|d| d.get_temp::<(u32, u32)>(range_id));
         let mut extend = false;
         let mut history_changed = false;
-        let toolbar_layout = if portrait {
-            egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true)
-        } else {
-            egui::Layout::top_down(egui::Align::Center)
-        };
         let mut toolbar = |ui: &mut Ui| {
-            ui.with_layout(toolbar_layout, |ui| {
+            piano_toolbar_row(ui, portrait, |ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 if drawer.is_some() {
                     close = p_button(ui, "Done", true, vec2(60.0, 44.0)).clicked();
@@ -2041,9 +2036,13 @@ impl VinteriaApp {
             });
             if valid_pattern && tools_open {
                 let mut tools = |ui: &mut Ui| {
-                        let layout = if portrait { egui::Layout::left_to_right(egui::Align::Center) }
-                            else { egui::Layout::top_down(egui::Align::Center) };
-                        ui.with_layout(layout, |ui| {
+                        let row = |ui: &mut Ui, add: &mut dyn FnMut(&mut Ui)| if portrait {
+                            // one scrolling row in portrait (inside the horizontal ScrollArea below)
+                            ui.horizontal(|ui| add(ui));
+                        } else {
+                            piano_toolbar_row(ui, false, |ui| add(ui));
+                        };
+                        row(ui, &mut |ui: &mut Ui| {
                             ui.spacing_mut().interact_size.y = 44.0;
                             if p_button(ui, "Rec", record_step.is_some(), vec2(44.0, 44.0)).clicked() {
                                 record_step = if record_step.is_some() { None } else { Some(0) };
@@ -2122,7 +2121,7 @@ impl VinteriaApp {
                 }
             }
             if valid_pattern {
-                ui.with_layout(toolbar_layout, |ui| {
+                piano_toolbar_row(ui, portrait, |ui| {
                     extend = p_button(ui, "+1 beat", false, vec2(72.0, 40.0))
                         .on_hover_text("Extend the clip by one beat").clicked();
                     if loop_range.is_some() && p_button(ui, "Clear loop", false, vec2(92.0, 40.0)).clicked() {
@@ -5765,6 +5764,17 @@ fn piano_slide_mark(painter: &egui::Painter, note: Rect) {
             vec![anchor, anchor + vec2(size, 0.0), anchor + vec2(size, -size)],
             Color32::from_gray(24), Stroke::NONE,
         ));
+    }
+}
+
+/// One Piano Roll toolbar group: a wrapping row in portrait, a column in the landscape sidebar.
+/// (A `left_to_right(Center)` layout in portrait would take the whole remaining height, push the note grid off the
+/// screen and leave the buttons floating in the middle.)
+fn piano_toolbar_row(ui: &mut Ui, portrait: bool, add: impl FnOnce(&mut Ui)) {
+    if portrait {
+        ui.horizontal_wrapped(add);
+    } else {
+        ui.with_layout(egui::Layout::top_down(egui::Align::Center), add);
     }
 }
 

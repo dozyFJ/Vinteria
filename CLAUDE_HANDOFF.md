@@ -517,3 +517,8 @@ Browser открывается слева рядом с Playlist в обеих �
 - Fix: the tap that closes the clip action row no longer also acts on an empty Playlist cell (before, it made a new MIDI clip or, on an Audio lane, opened the Browser to pick a sample). Taps on clips, track names and buttons still go straight through.
 - Headless landscape Playlist run of the real app with touch events (not committed): clip tap → menu; Extend, Shorten, Clone, Delete, Open (piano); Undo after Delete; close menu by tapping outside and reopen; tap empty cell → new clip; drag clip; long-press → Piano Roll, no stale touches; track name select and second tap → settings sheet, Done closes; "…" → track options; ruler tap → seek; dock Select / box selection / Clone; sidebar Browser. All pass.
 - Native Android touch testing is pending.
+
+### Android 1.0.88
+
+- Fix (portrait Piano Roll): the toolbar sat in the middle of the screen and the note grid was gone. Since the landscape Piano Roll work the portrait toolbar used a `left_to_right(Center)` layout, which in egui takes the whole remaining height. Portrait now uses wrapping rows at the top again (`piano_toolbar_row`), and Tools is one horizontally scrolling row as before. Landscape keeps the right-hand column.
+- Checked visually on a 400×860 virtual screen with the desktop build in mobile mode: Piano Roll (closed and open Tools), Steps, Session, Mixer, Tracks, nav drawer and the track settings sheet in portrait.
