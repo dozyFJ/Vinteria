@@ -511,3 +511,9 @@ Browser открывается слева рядом с Playlist в обеих �
 - The clip action row has no catcher at all: a press outside the row closes it and still reaches whatever is under the finger.
 - Reproduced and verified headlessly by driving the real app (landscape 800×360, touch events): open menu → close by tapping outside → reopen → Delete now works; same open/close cycles for the track sheet and the track options panel; every dock button responds.
 - Native Android touch testing is pending.
+
+### Android 1.0.87
+
+- Fix: the tap that closes the clip action row no longer also acts on an empty Playlist cell (before, it made a new MIDI clip or, on an Audio lane, opened the Browser to pick a sample). Taps on clips, track names and buttons still go straight through.
+- Headless landscape Playlist run of the real app with touch events (not committed): clip tap → menu; Extend, Shorten, Clone, Delete, Open (piano); Undo after Delete; close menu by tapping outside and reopen; tap empty cell → new clip; drag clip; long-press → Piano Roll, no stale touches; track name select and second tap → settings sheet, Done closes; "…" → track options; ruler tap → seek; dock Select / box selection / Clone; sidebar Browser. All pass.
+- Native Android touch testing is pending.

@@ -514,6 +514,8 @@ const STUDIO_SECTIONS: [(&str, Icon); 6] = [
 const SEC_PLAYLIST: usize = 0;
 const DRAWER_OPEN: &str = "m_nav_drawer_open";
 const CONTROLS_DRAWER: &str = "m_landscape_controls_drawer";
+/// set by the press that closed the clip action row, so the same tap does not also act on an empty Playlist cell
+const CLIP_MENU_DISMISSED: &str = "m_playlist_clip_menu_dismissed";
 /// pass number of the frame in which the landscape Playlist dock was drawn
 const PLAYLIST_DOCK_PASS: &str = "m_playlist_dock_pass";
 const MIXER_SHEET: &str = "m_mixer_sheet_open";
@@ -3819,6 +3821,9 @@ impl VinteriaApp {
                         });
                 });
         }
+        if ui.input(|input| !input.pointer.any_down() && !input.pointer.any_released()) {
+            ui.data_mut(|d| d.remove::<bool>(egui::Id::new(CLIP_MENU_DISMISSED)));
+        }
         let select_id = egui::Id::new("m_playlist_select");
         let mut select_mode = ui.data(|d| d.get_temp::<bool>(select_id)).unwrap_or(false);
         if self.arr.auto_edit {
@@ -4334,7 +4339,9 @@ impl VinteriaApp {
             if pinching || resp.drag_stopped() {
                 ui.data_mut(|d| d.remove::<Pos2>(box_id));
             }
-            if !select_mode && !pinching && !automation && resp.clicked() {
+            // the tap that closed the clip action row only closes it: it must not also make a clip or open the browser
+            let dismissed = resp.clicked() && ui.data_mut(|d| d.remove_temp::<bool>(egui::Id::new(CLIP_MENU_DISMISSED))).is_some();
+            if !select_mode && !pinching && !automation && resp.clicked() && !dismissed {
                 if let Some(pt) = resp.interact_pointer_pos().filter(|pt| pt.y >= gy) {
                     let row = ((pt.y - gy) / lane_h) as usize;
                     if let Some(PlaylistRow::Track(lane)) = rows.get(row).copied()
@@ -5673,6 +5680,7 @@ fn playlist_clip_bar(ctx: &egui::Context, id: egui::Id, anchor: Pos2, actions: &
     // (an invisible catcher in the same layer order could end up above the bar and swallow every tap)
     if ctx.input(|input| input.pointer.any_pressed() && input.pointer.press_origin().is_some_and(|at| !bounds.contains(at))) {
         action = Some(cancel);
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new(CLIP_MENU_DISMISSED), true));
     }
     egui::Area::new(id.with("bar")).order(egui::Order::Foreground).fixed_pos(bounds.min)
         .movable(false).show(ctx, |ui| {
