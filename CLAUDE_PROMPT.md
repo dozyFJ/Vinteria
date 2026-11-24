@@ -4,7 +4,7 @@
 
 ## С чего начать
 
-1. Открой актуальную `winteria` и прочитай `AGENTS.md` и конец `CLAUDE_HANDOFF.md`. Сверь последнюю опубликованную версию с OTA. На момент передачи это **1.0.72**, исходники сборки — `b351e59`. Упоминание о выпуске 1.0.63 в начале `AGENTS.md` историческое. [Манифест OTA](https://raw.githubusercontent.com/dozyFJ/pulse-updates/winteria/latest.json)
+1. Открой актуальную `winteria` и прочитай `AGENTS.md` и конец `CLAUDE_HANDOFF.md`. Сверь последнюю опубликованную версию с OTA. Номер версии и точный SHA бери из полей `versionName` и `sourceCommit` манифеста. [Манифест OTA](https://raw.githubusercontent.com/dozyFJ/pulse-updates/winteria/latest.json)
 2. Если продолжаешь работу над мобильной версией, проверь затронутые сценарии. В Playlist горизонтальный свайп по имени открывает действия, вертикальный жест группирует дорожки, а Select и Clone работают с Audio и MIDI. Undo и Redo должны восстанавливать результат. Эти сценарии прогнаны в мобильном Chromium. Отмечай отдельно то, что проверил на Android.
 3. Запиши изменения и результаты проверки в `CLAUDE_HANDOFF.md`. Пушь исходники в общую ветку `winteria` обычным push. Публичное зеркало `ffight763-glitch/Vinteria-git3` предназначено для сборки через GitHub Actions. Перед сборкой в нём сверь коммит с приватной веткой.
 
@@ -20,17 +20,20 @@ f8dd8eaed875b0aa5896e1d23cbec407fd7b4e38da634e866ca139a408d18523
 
 При согласованном выпуске сначала запушь исходники, затем опубликуй проверенный APK и `latest.json` в `dozyFJ/pulse-updates:winteria`. Проверь скачивание APK, сертификат, SHA-256 и соответствие `sourceCommit` коммиту сборки. Ключ и пароль используй только через секреты CI или защищённую среду сборки.
 
-## Команды для следующей сборки
+## Памятка Codex перед сборкой APK
 
-Запускай в корне рабочей ветки. `CARGO_APK_RELEASE_KEYSTORE` содержит путь к keystore, а `CARGO_APK_RELEASE_KEYSTORE_PASSWORD` передаётся через окружение CI или хранилище секретов. Значения секретов в Markdown не хранятся.
+1. Для выдачи уже выпущенной версии, повторной установки или проверки скачивания сначала открой манифест OTA. Возьми готовый подписанный APK по полю `url` или из `/workspace/shared/downloads/Winteria-<версия>.apk`. Сверь SHA-256 с полем `sha256`. Если файл совпадает, используй его повторно. [Манифест OTA](https://github.com/dozyFJ/pulse-updates/blob/winteria/latest.json)
+2. Для ещё не опубликованной версии сначала ищи готовый APK от нужного коммита. Переиспользуй его, если известен SHA исходников и совпадают версия, пакет `com.winteria.daw` и сертификат выше. APK из общего `target/release/apk` может быть перезаписан следующей сборкой, поэтому архивируй проверенный результат под номером версии.
+3. Собирай, если нужного подписанного APK нет или поменялись исходники, ресурсы, зависимости либо конфигурация, которые входят в APK. Правки Markdown и повторная отправка ссылки пересборки не требуют.
+
+Для новой официальной сборки открой корень `dozyFJ/Vinteria:winteria` и проверь, что дерево соответствует нужному коммиту. В сохранённой среде Codex настройки SDK и подписи загружаются из `/workspace/android-tools/winteria-build.env`. Выполняй команды без трассировки оболочки и без вывода содержимого файла.
 
 ```bash
-git fetch origin winteria
-git switch winteria
-git pull --ff-only origin winteria
-./tools/build-android.sh --release
-apksigner verify --print-certs /path/to/Winteria.apk
-sha256sum /path/to/Winteria.apk
+set +x
+source /workspace/android-tools/winteria-build.env
+CARGO_TARGET_DIR=/workspace/Vinteria/target \
+  WINTERIA_ECJ_JAR=/workspace/android-tools/ecj.jar \
+  CARGO_BUILD_JOBS=2 ./tools/build-android.sh --release
 ```
 
-Путь к APK выводит скрипт сборки. Для OTA сверяй сертификат с отпечатком в этом файле и APK со значением `sha256` в опубликованном манифесте.
+Скрипт выведет путь к APK. Для проверки в этой среде используй `/workspace/android-tools/sdk/build-tools/34.0.0/apksigner verify --print-certs <APK>`, `aapt dump badging <APK>` из той же папки и `sha256sum <APK>`. Сохрани проверенный APK в `/workspace/shared/downloads` с номером версии и запиши SHA коммита и SHA-256 файла. Если среда подписи недоступна, работай с готовым официальным APK либо восстанови доступ через существующие секреты сборки. Для официального OTA требуется тот же сертификат.
