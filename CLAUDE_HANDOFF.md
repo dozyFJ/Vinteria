@@ -454,3 +454,7 @@ Browser открывается слева рядом с Playlist в обеих �
 - The landscape left toolbar pins Browser for Playlist and uses the floating toolbar for its history buttons.
 - Landscape Piano Roll opens as a bottom sheet with a drag handle and a Full view option.
 - Master is a dedicated Playlist lane in both orientations. With the pencil enabled, choose its card or timeline row to edit the master volume curve.
+
+### Android 1.0.76
+
+- Refresh the flat mobile theme in light and dark modes. Improve control press states and the Playlist's visual contrast between clips, track cards and the grid.
