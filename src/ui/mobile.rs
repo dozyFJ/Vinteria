@@ -2138,6 +2138,7 @@ impl VinteriaApp {
         let clip = clip_index.map(|index| self.project.arrangement.clips[index]);
         let duration = clip.map_or_else(|| self.project.patterns[pi].len_ticks(), |clip| clip.len).max(1);
         let pattern_end = clip_start.saturating_add(duration);
+        let editable_end = pattern_end.min(crate::sequencer::MAX_STEPS as u32 * TICKS_PER_STEP);
         let steps = duration.div_ceil(TICKS_PER_STEP) as usize;
         loop_range = loop_range.map(|(start, end)| (start.max(clip_start), end.min(pattern_end)))
             .filter(|(start, end)| start < end);
@@ -2234,7 +2235,7 @@ impl VinteriaApp {
             let mut audition = None;
             let mut edit = None;
             for (index, note) in self.project.patterns[pi].notes.iter().enumerate() {
-                if note.pitch > high_pitch || note.start >= pattern_end || note.start.saturating_add(note.len) <= clip_start {
+                if note.pitch > high_pitch || note.start >= editable_end || note.start.saturating_add(note.len) <= clip_start {
                     continue;
                 }
                 let body = |len: u32, pitch: u8, start: u32| {
@@ -2254,7 +2255,7 @@ impl VinteriaApp {
                     original.right_bottom());
                 let handle = ui.interact(edge, id.with("length"), if pinching { Sense::hover() } else { Sense::click_and_drag() })
                     .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
-                let max_len = pattern_end - note.start;
+                let max_len = editable_end - note.start;
                 let mut len = note.len;
                 let mut pitch = note.pitch;
                 let mut start = note.start;
@@ -2287,7 +2288,7 @@ impl VinteriaApp {
                             // the body moves both ways: up/down = pitch, left/right = time (snapped to the grid)
                             let semitones = ((origin.y - pointer.y) / row_h).round() as i32;
                             pitch = (i32::from(note.pitch) + semitones).clamp(0, i32::from(high_pitch)) as u8;
-                            let latest = i64::from(pattern_end.saturating_sub(note.len).max(clip_start));
+                            let latest = i64::from(editable_end.saturating_sub(note.len).max(clip_start));
                             if snapped != 0 {
                                 start = (i64::from(note.start) + snapped).clamp(i64::from(clip_start), latest) as u32;
                             }
@@ -2337,7 +2338,11 @@ impl VinteriaApp {
                 ui.data_mut(|d| d.remove::<(usize, u32, u8, f64)>(tap_id));
             } else if let Some((index, len, pitch, start)) = edit {
                 self.m_playlist_undo_step();
-                let note = &mut self.project.patterns[pi].notes[index];
+                let pattern = &mut self.project.patterns[pi];
+                pattern.length_steps = pattern.length_steps.max(
+                    start.saturating_add(len).min(editable_end).div_ceil(TICKS_PER_STEP),
+                );
+                let note = &mut pattern.notes[index];
                 let moved = note.pitch != pitch;
                 let track = note.track;
                 let velocity = note.vel;
@@ -2366,13 +2371,16 @@ impl VinteriaApp {
                     // place on the chosen grid: the tap position rounded down to it
                     let raw = ((pt.x - rect.left()) / step_w * TICKS_PER_STEP as f32).max(0.0) as u32;
                     let tick = clip_start + (raw / snap * snap).min((duration - 1) / snap * snap);
+                    if tick >= editable_end {
+                        return rect.min;
+                    }
                     let mut pitches = if chords {
                         let tone = crate::theory::snap_to_scale(key_root, key_scale, pitch);
                         crate::theory::stack_chord(key_root, key_scale, tone, 3)
                     } else {
                         vec![pitch]
                     };
-                    let len = (if chords { snap.max(TICKS_PER_STEP) * 4 } else { snap }).min(pattern_end - tick);
+                    let len = (if chords { snap.max(TICKS_PER_STEP) * 4 } else { snap }).min(editable_end - tick);
                     let notes = &mut self.project.patterns[pi].notes;
                     pitches.retain(|&pitch| {
                         if notes.iter().any(|note| note.pitch == pitch
@@ -2386,6 +2394,8 @@ impl VinteriaApp {
                         true
                     });
                     if !pitches.is_empty() {
+                        let pattern = &mut self.project.patterns[pi];
+                        pattern.length_steps = pattern.length_steps.max((tick + len).div_ceil(TICKS_PER_STEP));
                         self.m_playlist_undo_step();
                         self.m_preview_piano_notes(ui.ctx(), track, pitches, 100);
                     }
@@ -2517,12 +2527,14 @@ impl VinteriaApp {
                 if let Some(step) = record_step {
                     let step = if playing { play_step } else { step % steps };
                     let start = clip_start + step as u32 * TICKS_PER_STEP;
-                    let len = TICKS_PER_STEP.min(pattern_end - start);
-                    let notes = &mut self.project.patterns[pi].notes;
-                    if !notes.iter().any(|note| note.pitch == pitch && note.start < start + len
+                    let len = TICKS_PER_STEP.min(editable_end.saturating_sub(start));
+                    let pattern = &mut self.project.patterns[pi];
+                    let notes = &mut pattern.notes;
+                    if len > 0 && !notes.iter().any(|note| note.pitch == pitch && note.start < start + len
                         && start < note.start.saturating_add(note.len))
                     {
                         notes.push(crate::piano_roll::Note { start, len, pitch, vel: 100, track, slide: false, chance: 100, pan: 0, mute: false });
+                        pattern.length_steps = pattern.length_steps.max((start + len).div_ceil(TICKS_PER_STEP));
                     }
                     record_step = Some(if playing { step } else { (step + 1) % steps });
                 }
