@@ -718,7 +718,7 @@ impl Engine {
             }
             self.tick_metronome(local);
             let remaining = range.map_or(u64::MAX, |(_, _, end)| u64::from(end - local));
-            self.fire(0, None, pat, local, abs, remaining, swing, None, 0);
+            self.fire(0, None, pat, local % period, abs, remaining, swing, None, 0);
             self.position = local;
             self.song_tick = self.song_tick.wrapping_add(1);
             if let Some((_, start, end)) = range {
@@ -780,7 +780,7 @@ impl Engine {
                 }
             }
         }
-        let pat_remaining = (pat.len_ticks() - local) as u64;
+        let pat_remaining = u64::from(pat.len_ticks().max(1).saturating_sub(local));
         // the level of the Playlist track this pattern is played on
         let lane_vol = self.clip_fade * lane.and_then(|l| self.project.arrangement.tracks.get(l)).map_or(1.0, |t| t.volume) * lane.map_or(1.0, |l| self.lane_auto.get(l).copied().unwrap_or(1.0));
         for n in pat.notes.iter().filter(|n| n.start == local && !n.mute) {
