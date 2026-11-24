@@ -587,3 +587,8 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 - Landscape: Done / Play / Stop / Full view / Tools stay at the top of the side column; only the tools under them scroll.
 - Zoom bar over the ruler like FL's: drag the middle to scroll, drag an end to zoom in time (the other end stays put).
 - Checked on the desktop build in mobile mode (portrait and landscape). Note: a mouse that jumps between clicks drags the grid's ScrollArea (desktop/mouse only); with touch input every tap lands on its row (headless check).
+
+### Android 1.0.100
+
+- Refine the existing Pulse mobile style in both themes: lightly translucent transport, clip actions and landscape Piano Roll toolbar, softer Playlist clips and matching lavender notes and event bars.
+- UI geometry and editing gestures are preserved. Visual verification on Android is pending.

@@ -1,5 +1,5 @@
 //! Phone layout in the style of the Pulse messenger (the PC keeps its own AOS look).
-//! Phone navigation and solid surfaces shared across the mobile screens.
+//! Phone navigation and surfaces shared across the mobile screens.
 use super::*;
 use crate::mixer::{NUM_CH, NUM_INSERTS};
 use crate::sequencer::{DRUM_NAMES, NUM_DRUMS, TICKS_PER_STEP};
@@ -38,6 +38,19 @@ fn p_bg() -> Color32 {
 fn bar_fill() -> Color32 {
     pick(0xFF252E3D, 0xFFF5F8FC)
 }
+// A lightly translucent tint gives controls a frosted surface without blurring the grid.
+fn glass_fill() -> Color32 {
+    pick(0xEB344157, 0xF2FAFCFF)
+}
+
+fn glass_edge() -> Color32 {
+    pick(0xFF697B97, 0xFFA2B3CA)
+}
+
+fn piano_note_fill() -> Color32 {
+    pick(0xFFC9BAF6, 0xFFBBACE9)
+}
+
 fn outline() -> Color32 {
     pick(0xFF52627B, 0xFF8496AE)
 }
@@ -911,7 +924,7 @@ impl VinteriaApp {
     /// automation, render, export, sections), so the Playlist needs no right-hand drawer.
     fn m_landscape_playlist_dock(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("m_playlist_dock").show_separator_line(false).exact_height(52.0)
-            .frame(Frame::none().fill(bar_fill()).stroke(Stroke::new(1.0, outline()))
+            .frame(Frame::none().fill(glass_fill()).stroke(Stroke::new(1.0, glass_edge()))
                 .inner_margin(Margin { left: 6.0, right: 6.0, top: 4.0, bottom: 4.0 }))
             .show(ctx, |ui| {
                 mobile_visuals(ui);
@@ -1167,7 +1180,8 @@ impl VinteriaApp {
 
     fn m_studio_transport_dock(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("m_studio_transport_dock").show_separator_line(false)
-            .frame(Frame::none().fill(bar_fill()).inner_margin(Margin { left: 6.0, right: 6.0, top: 6.0, bottom: 12.0 }))
+            .frame(Frame::none().fill(glass_fill()).stroke(Stroke::new(1.0, glass_edge()))
+                .inner_margin(Margin { left: 6.0, right: 6.0, top: 6.0, bottom: 12.0 }))
             .show(ctx, |ui| {
                 mobile_visuals(ui);
                 ui.horizontal(|ui| {
@@ -2353,7 +2367,8 @@ impl VinteriaApp {
         } else {
             let area = ui.available_rect_before_wrap();
             let sidebar = Rect::from_min_max(pos2(area.right() - toolbar_width, area.top()), area.max);
-            ui.painter().rect_filled(sidebar, 10.0, bar_fill());
+            ui.painter().rect_filled(sidebar, 10.0, glass_fill());
+            ui.painter().rect_stroke(sidebar, 10.0, Stroke::new(1.0, glass_edge()));
             let mut side = ui.new_child(egui::UiBuilder::new().id_salt("piano_toolbar").max_rect(sidebar.shrink(2.0)));
             side.set_clip_rect(sidebar.intersect(ui.clip_rect()));
             side.set_width(sidebar.width() - 4.0);
@@ -2664,8 +2679,7 @@ impl VinteriaApp {
                     }
                 }
                 let visual = body(len, pitch, start);
-                let tint = lane_col(3);
-                p.rect_filled(visual, 5.0, tint);
+                p.rect_filled(visual, 5.0, piano_note_fill());
                 if note.slide { piano_slide_mark(&p, visual); }
                 let grip = Rect::from_center_size(visual.right_center() - vec2(3.0, 0.0), vec2(2.0, 10.0));
                 p.rect_filled(grip, 1.0, Color32::WHITE.linear_multiply(0.8));
@@ -3002,7 +3016,7 @@ impl VinteriaApp {
                 let base = if target == 1 { range.center().y } else { range.bottom() };
                 let inset = (width * 0.16).min(2.0);
                 let bar = Rect::from_min_max(pos2(x + inset, y.min(base)), pos2(x + width - inset, y.max(base) + 1.0));
-                let color = if response.hovered() || response.dragged() { p_accent() } else { lane_col(3) };
+                let color = if response.hovered() || response.dragged() { p_accent() } else { piano_note_fill() };
                 painter.rect_filled(bar, 2.0, color);
                 painter.circle_filled(pos2(x + width * 0.5, y), 3.0, color);
                 let label = match target { 0 => format!("Velocity {}", note.vel), 1 => format!("Pan {}", note.pan), _ => format!("Chance {}%", note.chance) };
@@ -4716,8 +4730,8 @@ impl VinteriaApp {
                 let resize_from = ui.data(|d| d.get_temp::<f32>(resize_id));
                 let resizing = resize_from.is_some();
                 let col = lane_col(c.lane);
-                let pastel = if c.audio { argb(0xFFCAF0F8) } else { argb(0xFFBDB2FF) };
-                let fill = tint(col, pastel, if is_dark() { 0.22 } else { 0.33 });
+                let pastel = if c.audio { argb(0xFFD6EEF5) } else { argb(0xFFDED1F3) };
+                let fill = tint(col, pastel, if is_dark() { 0.38 } else { 0.42 });
                 let fill = if c.mute { tint(fill, card_fill(), 0.45) } else { fill };
                 p.rect_filled(r, 5.0, fill);
                 if playing && !c.mute && active_lanes[c.lane].is_some() && (c.start..c.end_tick()).contains(&pos) {
@@ -6422,8 +6436,8 @@ fn playlist_clip_bar(ctx: &egui::Context, id: egui::Id, anchor: Pos2, actions: &
         .movable(false).show(ctx, |ui| {
             let (area, _) = ui.allocate_exact_size(bounds.size(), Sense::click());
             let p = ui.painter();
-            p.rect_filled(area, 14.0, bar_fill());
-            p.rect_stroke(area, 14.0, Stroke::new(1.0, outline()));
+            p.rect_filled(area, 14.0, glass_fill());
+            p.rect_stroke(area, 14.0, Stroke::new(1.0, glass_edge()));
             let slot = |index: usize| Rect::from_min_size(
                 pos2(area.left() + pad + index as f32 * (button + gap), area.top() + pad), vec2(button, button));
             for (index, &(symbol, label, enabled)) in actions.iter().enumerate() {
