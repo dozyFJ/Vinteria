@@ -494,3 +494,8 @@ Browser открывается слева рядом с Playlist в обеих �
 
 - Landscape Playlist: Select, Clone, Undo and Redo moved from the floating pill into one bottom dock bar. The studio controls chevron sits at the right end of the same bar and opens the controls column above it. Portrait and full view keep the floating pill; other landscape sections keep the old drawer chevron.
 - Native Android touch testing is pending.
+
+### Android 1.0.84
+
+- The Playlist clip action menu is no longer a radial wheel: tapping a clip shows one row of icons (Open, Extend, Shorten, Clone, Delete, Close) just above the tap point, or below it when there is no room. The screen is no longer dimmed; tapping outside still closes it.
+- Native Android touch testing is pending.

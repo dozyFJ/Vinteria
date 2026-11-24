@@ -4743,7 +4743,7 @@ impl VinteriaApp {
                     (Icon::CloneClips, "Clone clip", true),
                     (Icon::Trash, "Delete clip", true),
                 ];
-                if let Some(action) = playlist_clip_wheel(ui.ctx(), clip_menu_id, anchor, &actions) {
+                if let Some(action) = playlist_clip_bar(ui.ctx(), clip_menu_id, anchor, &actions) {
                     ui.data_mut(|d| d.remove::<(usize, Pos2)>(clip_menu_id));
                     match action {
                         0 => selection = Some((c.lane, Some(index), Some(c.start), true)),
@@ -5667,49 +5667,56 @@ impl VinteriaApp {
     }
 }
 
-fn playlist_clip_wheel(ctx: &egui::Context, id: egui::Id, anchor: Pos2, actions: &[(Icon, &str, bool); 5]) -> Option<usize> {
+/// Clip actions as one row of icons right above the tapped point (below it when there is no room above).
+fn playlist_clip_bar(ctx: &egui::Context, id: egui::Id, anchor: Pos2, actions: &[(Icon, &str, bool); 5]) -> Option<usize> {
     let screen = ctx.screen_rect();
-    let size = 170.0_f32.min(screen.width()).min(screen.height());
-    let radius = size / 2.0;
-    let center = anchor.clamp(screen.min + vec2(radius, radius), screen.max - vec2(radius, radius));
-    let bounds = Rect::from_center_size(center, vec2(size, size));
+    let button = 44.0;
+    let gap = 2.0;
+    let pad = 4.0;
+    let count = actions.len() as f32 + 1.0;
+    let size = vec2(count * button + (count - 1.0) * gap + pad * 2.0, button + pad * 2.0);
+    let above = anchor.y - size.y - 14.0;
+    let top = if above >= screen.top() + 4.0 { above } else { anchor.y + 14.0 };
+    let min = pos2(anchor.x - size.x * 0.5, top)
+        .clamp(screen.min + vec2(4.0, 4.0), (screen.max - size - vec2(4.0, 4.0)).max(screen.min));
+    let bounds = Rect::from_min_size(min, size);
     let cancel = usize::MAX;
     let mut action = ctx.input(|input| input.key_pressed(egui::Key::Escape).then_some(cancel));
     egui::Area::new(id.with("scrim")).order(egui::Order::Foreground).fixed_pos(screen.min)
         .movable(false).show(ctx, |ui| {
-            let (area, hit) = ui.allocate_exact_size(screen.size(), Sense::click());
-            ui.painter().rect_filled(area, 0.0, Color32::from_black_alpha(45));
+            let (_, hit) = ui.allocate_exact_size(screen.size(), Sense::click());
             if hit.clicked() {
                 action = Some(cancel);
             }
         });
-    egui::Area::new(id.with("wheel")).order(egui::Order::Foreground).fixed_pos(bounds.min)
+    egui::Area::new(id.with("bar")).order(egui::Order::Foreground).fixed_pos(bounds.min)
         .movable(false).show(ctx, |ui| {
             let (area, _) = ui.allocate_exact_size(bounds.size(), Sense::click());
-            let center = area.center();
             let p = ui.painter();
-            p.circle_filled(center, radius - 1.0, bar_fill());
-            p.circle_stroke(center, radius - 1.0, Stroke::new(1.0, outline()));
-            let circle = (size * 0.24).min(44.0);
+            p.rect_filled(area, 14.0, bar_fill());
+            p.rect_stroke(area, 14.0, Stroke::new(1.0, outline()));
+            let slot = |index: usize| Rect::from_min_size(
+                pos2(area.left() + pad + index as f32 * (button + gap), area.top() + pad), vec2(button, button));
             for (index, &(symbol, label, enabled)) in actions.iter().enumerate() {
-                let angle = -std::f32::consts::FRAC_PI_2 + index as f32 * std::f32::consts::TAU / actions.len() as f32;
-                let point = center + vec2(angle.cos(), angle.sin()) * (radius - circle * 0.66);
-                let button = Rect::from_center_size(point, vec2(circle, circle));
-                let hit = ui.interact(button, id.with(index), if enabled { Sense::click() } else { Sense::hover() })
+                let rect = slot(index);
+                let hit = ui.interact(rect, id.with(index), if enabled { Sense::click() } else { Sense::hover() })
                     .on_hover_text(label);
-                p.circle_filled(point, circle * 0.5, if hit.hovered() && enabled { selected_fill() } else { card_fill() });
+                if hit.hovered() && enabled {
+                    p.rect_filled(rect, 9.0, selected_fill());
+                }
                 let color = if !enabled { muted().gamma_multiply(0.55) } else if index == 4 { RED } else { ink() };
-                icon(p, symbol, point, color);
+                icon(p, symbol, rect.center(), color);
                 if hit.clicked() && enabled {
                     action = Some(index);
                 }
             }
-            let close = Rect::from_center_size(center, vec2(circle, circle));
+            let close = slot(actions.len());
+            p.line_segment([pos2(close.left() - gap * 0.5 - 0.5, close.top() + 8.0), pos2(close.left() - gap * 0.5 - 0.5, close.bottom() - 8.0)],
+                Stroke::new(1.0, outline()));
             if ui.interact(close, id.with("close"), Sense::click()).on_hover_text("Close clip actions").clicked() {
                 action = Some(cancel);
             }
-            p.circle_stroke(center, circle * 0.5, Stroke::new(1.0, outline()));
-            p.text(center, Align2::CENTER_CENTER, "×", FontId::proportional(21.0), ink());
+            p.text(close.center(), Align2::CENTER_CENTER, "×", FontId::proportional(21.0), ink());
         });
     action
 }
