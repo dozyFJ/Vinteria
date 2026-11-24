@@ -641,3 +641,9 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 
 - Redesign the portrait Studio dock with round icon buttons, a position slider and Playlist options in the dock. The current section icon opens a menu for Playlist, Drum Rack, Piano Roll, Session, Mixer and Tracks. The landscape dock keeps its layout.
 - Native Android visual and touch verification is pending.
+
+### Android 1.0.110
+
+- Portrait Playlist selects on a tap, opens MIDI Piano Roll or audio settings on a double tap, and opens a labelled action grid on hold. Landscape retains its existing clip menu and gestures.
+- Refresh portrait Track Settings with a frosted header, rounded tabs, a compact MIDI instrument action grid and an Audio sample card.
+- Native Android touch and layout verification is pending.

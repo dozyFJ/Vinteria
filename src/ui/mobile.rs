@@ -391,7 +391,7 @@ fn control_state(p: &Painter, rect: Rect, radius: f32, response: &Response, fore
 }
 
 /// Filled primary action or outlined tonal button.
-fn p_button(ui: &mut Ui, text: &str, primary: bool, size: egui::Vec2) -> Response {
+pub(super) fn p_button(ui: &mut Ui, text: &str, primary: bool, size: egui::Vec2) -> Response {
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let p = ui.painter();
     let radius = rect.height() * 0.5;
@@ -3594,6 +3594,8 @@ impl VinteriaApp {
         let title = track.name.clone();
         let screen = ctx.screen_rect();
         let width = screen.width();
+        let portrait = width < screen.height();
+        let kind = if track.kind == crate::arrangement::TrackKind::Audio { "Audio track" } else { "MIDI track" };
         let sheet_h = (screen.height() * 0.78).min(screen.height() - 40.0);
         let origin = pos2(screen.left(), screen.bottom() - sheet_h * shown);
         let mut done = false;
@@ -3609,7 +3611,13 @@ impl VinteriaApp {
                 let size = vec2(width, sheet_h);
                 let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
                 let mut inner = rect.shrink(9.0);
-                ui.painter().rect_filled(rect, egui::Rounding { nw: 18.0, ne: 18.0, ..Default::default() }, p_bg());
+                let corners = egui::Rounding { nw: 20.0, ne: 20.0, ..Default::default() };
+                ui.painter().rect_filled(rect, corners, p_bg());
+                if portrait {
+                    let header = Rect::from_min_size(rect.min, vec2(rect.width(), 76.0));
+                    ui.painter().rect_filled(header, corners, glass_fill());
+                    ui.painter().line_segment([header.left_bottom(), header.right_bottom()], Stroke::new(1.0, glass_edge()));
+                }
                 // grip: swipe it down (or tap it) to close
                 let head = Rect::from_min_size(rect.min, vec2(rect.width(), 22.0));
                 let grip = ui.interact(head, id.with("grip"), Sense::click_and_drag());
@@ -3625,7 +3633,14 @@ impl VinteriaApp {
                 mobile_visuals(&mut content);
                 content.horizontal(|ui| {
                     done |= p_button(ui, "Done", true, vec2(60.0, 32.0)).clicked();
-                    ui.add(egui::Label::new(RichText::new(&title).size(15.0).strong()).truncate());
+                    if portrait {
+                        ui.vertical(|ui| {
+                            ui.add(egui::Label::new(RichText::new(&title).size(17.0).strong()).truncate());
+                            ui.label(RichText::new(kind).size(11.0).color(muted()));
+                        });
+                    } else {
+                        ui.add(egui::Label::new(RichText::new(&title).size(15.0).strong()).truncate());
+                    }
                 });
                 let mut detail = arrangement_ui::DetailCtx {
                     roll_track: &mut self.roll.track,
@@ -5177,13 +5192,20 @@ impl VinteriaApp {
                     continue;
                 }
 
-                if clip.long_touched() && !c.audio {
+                let open_editor = if portrait { clip.double_clicked() } else { clip.long_touched() && !c.audio };
+                let open_menu = if portrait {
+                    clip.long_touched() || clip.secondary_clicked()
+                } else {
+                    clip.clicked() || clip.secondary_clicked()
+                };
+                if open_editor && !(portrait && open_menu) {
                     ui.data_mut(|d| d.remove::<(usize, Pos2)>(clip_menu_id));
                     selection = Some((c.lane, Some(i), Some(c.start), true));
-                } else if clip.clicked() || clip.secondary_clicked() {
-                    if let Some(pointer) = clip.interact_pointer_pos() {
-                        ui.data_mut(|d| d.insert_temp(clip_menu_id, (i, pointer)));
-                    }
+                } else if open_menu {
+                    let pointer = clip.interact_pointer_pos().unwrap_or(hit.intersect(ui.clip_rect()).center());
+                    ui.data_mut(|d| d.insert_temp(clip_menu_id, (i, pointer)));
+                    selection = Some((c.lane, Some(i), Some(c.start), false));
+                } else if clip.clicked() {
                     selection = Some((c.lane, Some(i), Some(c.start), false));
                 }
 
@@ -5711,7 +5733,7 @@ impl VinteriaApp {
                     (Icon::Settings, "MIDI clip settings", true),
                 ];
                 let actions = if c.audio { &actions[..5] } else { &actions[..] };
-                if let Some(action) = playlist_clip_bar(ui.ctx(), clip_menu_id, anchor, actions) {
+                if let Some(action) = playlist_clip_menu(ui.ctx(), clip_menu_id, anchor, actions, portrait) {
                     ui.data_mut(|d| d.remove::<(usize, Pos2)>(clip_menu_id));
                     match action {
                         0 => selection = Some((c.lane, Some(index), Some(c.start), true)),
@@ -6793,18 +6815,25 @@ impl VinteriaApp {
 }
 
 /// Clip actions as one row of icons right above the tapped point (below it when there is no room above).
-fn playlist_clip_bar(ctx: &egui::Context, id: egui::Id, anchor: Pos2, actions: &[(Icon, &str, bool)]) -> Option<usize> {
+fn playlist_clip_menu(
+    ctx: &egui::Context, id: egui::Id, anchor: Pos2, actions: &[(Icon, &str, bool)], portrait: bool,
+) -> Option<usize> {
     let screen = ctx.screen_rect();
     let gap = 2.0;
     let pad = 4.0;
-    let count = actions.len() as f32 + 1.0;
-    let button_width = ((screen.width() - 8.0 - (count - 1.0) * gap - pad * 2.0) / count).clamp(1.0, 44.0);
-    let button_height = 44.0;
-    let size = vec2(count * button_width + (count - 1.0) * gap + pad * 2.0, button_height + pad * 2.0);
+    let columns = if portrait { 3 } else { actions.len() + 1 };
+    let rows = if portrait { actions.len().div_ceil(columns) } else { 1 };
+    let count = columns as f32;
+    let header = if portrait { 44.0 } else { 0.0 };
+    let button_width = ((screen.width() - 8.0 - (count - 1.0) * gap - pad * 2.0) / count)
+        .clamp(1.0, if portrait { 86.0 } else { 44.0 });
+    let button_height = if portrait { 52.0 } else { 44.0 };
+    let size = vec2(count * button_width + (count - 1.0) * gap + pad * 2.0,
+        header + rows as f32 * (button_height + gap) - gap + pad * 2.0);
     let above = anchor.y - size.y - 14.0;
     let top = if above >= screen.top() + 4.0 { above } else { anchor.y + 14.0 };
     let min = pos2(anchor.x - size.x * 0.5, top)
-        .clamp(screen.min + vec2(4.0, 4.0), (screen.max - size - vec2(4.0, 4.0)).max(screen.min));
+        .clamp(screen.min + vec2(4.0, 4.0), (screen.max - size - vec2(4.0, 4.0)).max(screen.min + vec2(4.0, 4.0)));
     let bounds = Rect::from_min_size(min, size);
     let cancel = usize::MAX;
     let mut action = ctx.input(|input| input.key_pressed(egui::Key::Escape).then_some(cancel));
@@ -6821,7 +6850,8 @@ fn playlist_clip_bar(ctx: &egui::Context, id: egui::Id, anchor: Pos2, actions: &
             p.rect_filled(area, 14.0, glass_fill());
             p.rect_stroke(area, 14.0, Stroke::new(1.0, glass_edge()));
             let slot = |index: usize| Rect::from_min_size(
-                pos2(area.left() + pad + index as f32 * (button_width + gap), area.top() + pad),
+                pos2(area.left() + pad + (index % columns) as f32 * (button_width + gap),
+                    area.top() + pad + header + (index / columns) as f32 * (button_height + gap)),
                 vec2(button_width, button_height));
             for (index, &(symbol, label, enabled)) in actions.iter().enumerate() {
                 let rect = slot(index);
@@ -6831,14 +6861,39 @@ fn playlist_clip_bar(ctx: &egui::Context, id: egui::Id, anchor: Pos2, actions: &
                     p.rect_filled(rect, 9.0, selected_fill());
                 }
                 let color = if !enabled { muted().gamma_multiply(0.55) } else if index == 4 { RED } else { ink() };
-                icon(p, symbol, rect.center(), color);
+                if portrait {
+                    if !hit.hovered() {
+                        p.rect_filled(rect.shrink(1.0), 10.0, card_fill());
+                    }
+                    icon(p, symbol, pos2(rect.center().x, rect.top() + 17.0), color);
+                    let caption = match index {
+                        0 if actions.len() == 6 => "Piano Roll",
+                        0 => "Audio",
+                        1 => "Extend",
+                        2 => "Shorten",
+                        3 => "Clone",
+                        4 => "Delete",
+                        _ => "Settings",
+                    };
+                    p.text(pos2(rect.center().x, rect.bottom() - 11.0), Align2::CENTER_CENTER,
+                        caption, FontId::proportional(11.0), color);
+                } else {
+                    icon(p, symbol, rect.center(), color);
+                }
                 if hit.clicked() && enabled {
                     action = Some(index);
                 }
             }
-            let close = slot(actions.len());
-            p.line_segment([pos2(close.left() - gap * 0.5 - 0.5, close.top() + 8.0), pos2(close.left() - gap * 0.5 - 0.5, close.bottom() - 8.0)],
-                Stroke::new(1.0, outline()));
+            let close = if portrait {
+                p.text(pos2(area.left() + 12.0, area.top() + pad + header * 0.5), Align2::LEFT_CENTER,
+                    "Clip actions", FontId::proportional(14.0), ink());
+                Rect::from_min_size(pos2(area.right() - pad - 44.0, area.top() + pad), vec2(44.0, header))
+            } else {
+                let close = slot(actions.len());
+                let x = close.left() - gap * 0.5 - 0.5;
+                p.line_segment([pos2(x, close.top() + 8.0), pos2(x, close.bottom() - 8.0)], Stroke::new(1.0, outline()));
+                close
+            };
             if ui.interact(close, id.with("close"), Sense::click()).on_hover_text("Close clip actions").clicked() {
                 action = Some(cancel);
             }

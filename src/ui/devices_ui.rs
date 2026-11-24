@@ -112,22 +112,50 @@ fn show(ui: &mut Ui, p: &mut Project, st: &mut ArrState, dc: &mut DetailCtx, plu
                 let response = card_ui(ui, instrument_width, |ui| {
                     let title = current.map_or("No instrument yet".to_owned(), |t| Inst::from_track(t).title().to_owned());
                     ui.label(RichText::new(&title).strong().size(17.0));
-                    ui.add_space(4.0);
-                    if mobile_action(ui, "Choose instrument", "Pick the sound engine: synth, 808 bass, sampler, drums…").clicked() {
-                        open_panel(0);
-                    }
-                    if mobile_action(ui, "Load WAV", "Turn one of your samples into the instrument, played across the keys").clicked() {
-                        open_panel(1);
-                    }
-                    if let Some(t) = current {
-                        if mobile_action(ui, "Presets", &format!("Ready-made sounds for {title}")).clicked() {
-                            open_panel(2);
+                    let screen = ui.ctx().screen_rect();
+                    if screen.width() < screen.height() {
+                        ui.add_space(6.0);
+                        ui.columns(2, |cols| {
+                            if mobile_action(&mut cols[0], "Instrument", "Choose engine").clicked() {
+                                open_panel(0);
+                            }
+                            if mobile_action(&mut cols[1], "Load WAV", "Use a sample").clicked() {
+                                open_panel(1);
+                            }
+                        });
+                        if current.is_some() {
+                            ui.columns(2, |cols| {
+                                if mobile_action(&mut cols[0], "Presets", "Choose a sound").clicked() {
+                                    open_panel(2);
+                                }
+                                if mobile_action(&mut cols[1], "Editor", "Shape the sound").clicked() {
+                                    ctx.data_mut(|d| d.insert_temp(egui::Id::new(INSTRUMENT_EDITOR), lane));
+                                }
+                            });
                         }
-                        if mobile_action(ui, "Open editor", "Every knob of this instrument, full screen").clicked() {
-                            ui.data_mut(|d| d.insert_temp(egui::Id::new(INSTRUMENT_EDITOR), lane));
+                        if let Some(track) = current {
+                            ui.separator();
+                            ui.spacing_mut().slider_width = (ui.available_width() * 0.52).max(42.0);
+                            tone_level(ui, p, lane, track);
                         }
+                    } else {
                         ui.add_space(4.0);
-                        tone_level(ui, p, lane, t);
+                        if mobile_action(ui, "Choose instrument", "Pick the sound engine: synth, 808 bass, sampler, drums…").clicked() {
+                            open_panel(0);
+                        }
+                        if mobile_action(ui, "Load WAV", "Turn one of your samples into the instrument, played across the keys").clicked() {
+                            open_panel(1);
+                        }
+                        if let Some(t) = current {
+                            if mobile_action(ui, "Presets", &format!("Ready-made sounds for {title}")).clicked() {
+                                open_panel(2);
+                            }
+                            if mobile_action(ui, "Open editor", "Every knob of this instrument, full screen").clicked() {
+                                ui.data_mut(|d| d.insert_temp(egui::Id::new(INSTRUMENT_EDITOR), lane));
+                            }
+                            ui.add_space(4.0);
+                            tone_level(ui, p, lane, t);
+                        }
                     }
                 });
                 if let Some(payload) = response.dnd_release_payload::<DragItem>() {
@@ -543,7 +571,12 @@ pub(super) fn mobile_track_settings(
     let landscape = screen.width() >= screen.height();
     let mut tabs = |ui: &mut Ui, width: f32| {
         for (index, label) in [source_label, "Controls", "Effects"].iter().enumerate() {
-            if ui.add_sized([width, 44.0], egui::Button::new(*label).selected(page == index)).clicked() {
+            let response = if landscape {
+                ui.add_sized([width, 44.0], egui::Button::new(*label).selected(page == index))
+            } else {
+                super::mobile::p_button(ui, label, page == index, egui::vec2(width, 44.0))
+            };
+            if response.clicked() {
                 page = index;
             }
         }
@@ -583,7 +616,14 @@ pub(super) fn mobile_track_settings(
                 let sample = state.sel_clip.and_then(|index| project.arrangement.clips.get(index))
                     .filter(|clip| clip.audio && clip.lane == lane).map(|clip| clip.pattern)
                     .or(project.arrangement.tracks[lane].audio_brush);
-                super::track_ui::sample_panel(ui, project, lane, sample, false, shared);
+                if landscape {
+                    super::track_ui::sample_panel(ui, project, lane, sample, false, shared);
+                } else {
+                    card_ui(ui, (ui.available_width() - 22.0).max(0.0), |ui| {
+                        ui.label(RichText::new("Track sample").strong());
+                        super::track_ui::sample_panel(ui, project, lane, sample, false, shared);
+                    });
+                }
             }
             0 => {
                 let sampler = &project.arrangement.tracks[lane].sampler;
