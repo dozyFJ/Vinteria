@@ -4198,12 +4198,10 @@ impl VinteriaApp {
                 if clip.long_touched() && !c.audio {
                     ui.data_mut(|d| d.remove::<(usize, Pos2)>(clip_menu_id));
                     selection = Some((c.lane, Some(i), Some(c.start), true));
-                } else if clip.double_clicked() || clip.secondary_clicked() {
+                } else if clip.clicked() || clip.secondary_clicked() {
                     if let Some(pointer) = clip.interact_pointer_pos() {
                         ui.data_mut(|d| d.insert_temp(clip_menu_id, (i, pointer)));
                     }
-                    selection = Some((c.lane, Some(i), Some(c.start), false));
-                } else if clip.clicked() {
                     selection = Some((c.lane, Some(i), Some(c.start), false));
                 }
 

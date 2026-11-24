@@ -484,3 +484,8 @@ Browser открывается слева рядом с Playlist в обеих �
 
 - The landscape Piano Roll section uses the full grid width without the left Studio sidebar. Playlist and orientation controls are available in the right toolbar.
 - While editing a MIDI clip, the Playlist Browser and track actions cannot cover the Piano Roll. Native Android touch testing is pending.
+
+### Android 1.0.82
+
+- A single tap on an Audio or MIDI clip in Playlist opens its radial action menu in normal editing mode. Long-press still opens MIDI directly in Piano Roll, and Select mode still toggles selection.
+- Native Android touch testing is pending.
