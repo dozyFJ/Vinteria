@@ -653,3 +653,9 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 - The portrait Studio dock replaces the top header. Browser, BPM, metronome, automation, Mic, MIDI and render remain available via the dock's Studio menu.
 - Portrait Playlist moves track cards and Master to a collapsible left rail. Tap or swipe its Tracks handle to expand or collapse, retaining timeline alignment, track actions and drop targets. Landscape keeps its right rail.
 - Native Android touch and layout verification is pending.
+
+### Android 1.0.112
+
+- Replace Drum Rack pattern chips with a grid selector and bind edits to a Playlist MIDI clip. First step entry creates a clip on the selected unlocked MIDI track when there is room, otherwise on a dedicated Drum Rack track. To Audio uses the existing selection bounce.
+- Drum step grid supports Bar, 1/2, 1/4, 1/8 and 1/16. Coarser views keep the hidden intermediate steps intact.
+- Native Android verification is pending.

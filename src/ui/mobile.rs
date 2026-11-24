@@ -1914,17 +1914,56 @@ impl VinteriaApp {
         ui.add_space(8.0);
     }
 
+    fn m_drum_rack_clip(&self) -> Option<usize> {
+        let clips = &self.project.arrangement.clips;
+        let editable = |clip: &crate::arrangement::Clip| {
+            !clip.audio && clip.offset == 0 && self.project.patterns.get(clip.pattern).is_some()
+                && self.project.arrangement.tracks.get(clip.lane).is_some_and(|track| !track.playlist_locked)
+        };
+        self.arr.sel_clip.filter(|&index| clips.get(index).is_some_and(editable))
+            .or_else(|| clips.iter().position(|clip| editable(clip)
+                && clip.pattern == self.project.current_pattern
+                && self.project.arrangement.tracks[clip.lane].name == "Drum Rack"))
+    }
+
+    fn m_create_drum_rack_clip(&mut self, source: usize) -> Option<usize> {
+        let mut pattern = crate::sequencer::Pattern::new("Drum Rack", self.project.patterns[source].length_steps.clamp(16, crate::sequencer::MAX_STEPS as u32));
+        pattern.clip_only = true;
+        pattern.drums.clone_from(&self.project.patterns[source].drums);
+        let start = self.shared.position.load(Ordering::Relaxed) / TICKS_PER_BAR * TICKS_PER_BAR;
+        let duration = pattern.len_ticks();
+        let lane = self.arr.sel_lane;
+        let can_use_lane = self.project.arrangement.tracks.get(lane).is_some_and(|track|
+            track.kind == crate::arrangement::TrackKind::Midi && !track.playlist_locked)
+            && self.project.arrangement.can_place(
+                &crate::arrangement::Clip::new(self.project.patterns.len(), lane, start, duration, false), None);
+        let target = if can_use_lane { lane } else {
+            self.project.arrangement.add_track(crate::arrangement::TrackKind::Midi);
+            let lane = self.project.arrangement.tracks.len() - 1;
+            self.project.arrangement.tracks[lane].name = "Drum Rack".into();
+            self.project.arrangement.tracks[lane].instrument = Some(Track::Drums);
+            self.project.arrangement.tracks[lane].blank = false;
+            lane
+        };
+        let index = self.project.arrangement.clips.len();
+        let clip = crate::arrangement::Clip::new(self.project.patterns.len(), target, start, duration, false);
+        self.project.patterns.push(pattern);
+        self.project.arrangement.clips.push(clip);
+        Some(index)
+    }
+
     /// Drum step sequencer: one card per drum, two rows of 8 big steps per 16-step page.
     /// Step sequencer laid out like FL Studio Mobile: one row per drum (name on the left, selected one highlighted,
     /// hold it for the sound menu), the steps in a line on the right; the Mixer and Sample tabs swap the steps for
     /// that row's knobs; the graph editor under the rows edits velocity, pan, pitch or chance per step.
     fn m_steps(&mut self, ui: &mut Ui) {
-        let pi = self.project.current_pattern;
+        let active_clip = self.m_drum_rack_clip();
+        let pi = active_clip.map_or(self.project.current_pattern, |index| self.project.arrangement.clips[index].pattern);
         if pi >= self.project.patterns.len() {
-            self.m_pattern_chips(ui);
             ui.label(RichText::new("No pattern yet. Start from a template in Projects.").color(muted()));
             return;
         }
+        self.project.current_pattern = pi;
         let tab_id = egui::Id::new("m_steps_tab");
         let sel_id = egui::Id::new("m_steps_selected");
         let graph_id = egui::Id::new("m_steps_graph");
@@ -1933,11 +1972,27 @@ impl VinteriaApp {
         let mut selected = ui.data(|d| d.get_temp::<usize>(sel_id)).unwrap_or(0).min(NUM_DRUMS - 1);
         let mut graph = ui.data(|d| d.get_temp::<u8>(graph_id)).unwrap_or(0);
         let mut graph_open = ui.data(|d| d.get_temp::<bool>(graph_open_id)).unwrap_or(true);
-        // top bar: pattern, swing, tabs
+        let grid_id = egui::Id::new("m_steps_grid");
+        let mut snap = ui.data(|d| d.get_temp::<u32>(grid_id)).unwrap_or(TICKS_PER_STEP);
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            self.m_pattern_chips(ui);
+            ui.spacing_mut().interact_size.y = 38.0;
+            egui::ComboBox::from_id_salt("m_steps_grid_choice").width(88.0)
+                .selected_text(format!("Grid {}", grid_label(snap))).show_ui(ui, |ui| {
+                    for (ticks, label) in GRID_VALUES.into_iter().filter(|&(ticks, _)| ticks >= TICKS_PER_STEP) {
+                        ui.selectable_value(&mut snap, ticks, label);
+                    }
+                });
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(index) = active_clip {
+                if p_button(ui, "To Audio", false, vec2(78.0, 38.0)).clicked() {
+                    self.m_stop(ui.ctx());
+                    self.m_select_studio_section(ui.ctx(), SEC_PLAYLIST);
+                    ui.data_mut(|d| d.insert_temp(egui::Id::new("render_selection_job"), vec![index]));
+                    return;
+                }
+            }
         });
+        ui.data_mut(|d| d.insert_temp(grid_id, snap));
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             let (rect, resp) = ui.allocate_exact_size(vec2(92.0, 36.0), Sense::click_and_drag());
@@ -1959,7 +2014,11 @@ impl VinteriaApp {
             }
         });
         ui.add_space(4.0);
-        let len = self.project.patterns[pi].length_steps.max(16) as usize;
+        let pattern = &self.project.patterns[pi];
+        let len = active_clip.map_or(pattern.length_steps.max(16), |index| {
+            self.project.arrangement.clips[index].len.div_ceil(TICKS_PER_STEP).min(pattern.length_steps)
+        }).clamp(1, crate::sequencer::MAX_STEPS as u32) as usize;
+        let stride = (snap / TICKS_PER_STEP).max(1) as usize;
         let playing = self.playing() && !self.project.song_mode;
         let play_step = (self.shared.position.load(Ordering::Relaxed) / TICKS_PER_STEP) as usize % len;
         let name_w = 104.0;
@@ -1969,6 +2028,7 @@ impl VinteriaApp {
         let mut sound_menu = None;
         let mut step_edit = None;
         let mut hit_lane = None;
+        let mut toggle = None;
         {
             // own layout instead of a ScrollArea: a sideways swipe on the steps scrolls them, a tap hits exactly the
             // cell under the finger (the ScrollArea's own drag shifted taps by a step)
@@ -1977,7 +2037,7 @@ impl VinteriaApp {
             let origin = view.min;
             let offset_id = egui::Id::new(("m_steps_offset", pi));
             let visible_w = (view.width() - name_w).max(step_w);
-            let max_offset = (len as f32 * step_w - visible_w).max(0.0);
+            let max_offset = (len.div_ceil(stride) as f32 * step_w - visible_w).max(0.0);
             let mut offset = ui.data(|d| d.get_temp::<f32>(offset_id)).unwrap_or(0.0).clamp(0.0, max_offset);
             let steps_area = Rect::from_min_max(pos2(view.left() + name_w, view.top()),
                 pos2(view.right(), view.top() + NUM_DRUMS as f32 * row_h));
@@ -2000,8 +2060,8 @@ impl VinteriaApp {
                 let col = lane_col(lane);
                 match tab {
                     0 => {
-                        for s in 0..len {
-                            let x = steps_left + s as f32 * step_w;
+                        for s in (0..len).step_by(stride) {
+                            let x = steps_left + (s / stride) as f32 * step_w;
                             let cell = Rect::from_min_size(pos2(x, y), vec2(step_w, row_h)).shrink2(vec2(1.5, 3.0));
                             if cell.right() < view.left() + name_w || cell.left() > view.right() {
                                 continue;
@@ -2018,19 +2078,14 @@ impl VinteriaApp {
                             } else {
                                 p.rect_filled(cell, 3.0, shade);
                             }
-                            if playing && play_step == s {
+                            if playing && play_step / stride == s / stride {
                                 p.rect_stroke(cell.expand(1.0), 3.0, Stroke::new(2.0, if st.on { Color32::WHITE } else { p_accent().gamma_multiply(0.6) }));
                             }
                             let resp = ui.interact(cell.intersect(steps_area), ui.id().with(("fl_step", lane, s)), Sense::click());
                             if resp.long_touched() || resp.secondary_clicked() {
                                 step_edit = Some((pi, lane, s));
                             } else if resp.clicked() {
-                                let st = &mut self.project.patterns[pi].drums[lane][s];
-                                st.on = !st.on;
-                                if st.on && st.vel == 0 {
-                                    st.vel = 100;
-                                }
-                                hit_lane = Some(lane);
+                                toggle = Some((lane, s));
                             }
                         }
                     }
@@ -2141,8 +2196,8 @@ impl VinteriaApp {
                 p.text(label.center(), Align2::CENTER_CENTER, format!("{}\n{}", DRUM_NAMES[selected], labels[graph as usize]),
                     FontId::proportional(12.0), muted());
                 let col = lane_col(selected);
-                for s in 0..len {
-                    let x = steps_left + s as f32 * step_w;
+                for s in (0..len).step_by(stride) {
+                    let x = steps_left + (s / stride) as f32 * step_w;
                     let cell = Rect::from_min_size(pos2(x, plot_top), vec2(step_w, plot_h)).shrink2(vec2(2.0, 0.0));
                     if cell.right() < view.left() + name_w || cell.left() > view.right() {
                         continue;
@@ -2181,6 +2236,23 @@ impl VinteriaApp {
                         match graph { 0 => st.vel = 100, 1 => st.pan = 0, 2 => st.pitch = 0, _ => st.prob = 100 }
                     }
                 }
+            }
+        }
+        if let Some((lane, step)) = toggle {
+            let target = active_clip.map_or_else(|| self.m_create_drum_rack_clip(pi), Some);
+            if let Some(index) = target {
+                let clip = self.project.arrangement.clips[index];
+                let cell = &mut self.project.patterns[clip.pattern].drums[lane][step];
+                cell.on = !cell.on;
+                if cell.on && cell.vel == 0 {
+                    cell.vel = 100;
+                }
+                self.arr.sel_lane = clip.lane;
+                self.arr.sel_clip = Some(index);
+                self.project.current_pattern = clip.pattern;
+                self.m_playlist_undo_step();
+                self.publish_edits();
+                hit_lane = Some(lane);
             }
         }
         if let Some(lane) = hit_lane {
