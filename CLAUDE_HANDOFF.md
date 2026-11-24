@@ -467,3 +467,8 @@ Browser открывается слева рядом с Playlist в обеих �
 
 - Master gain and its pencil automation are edited inside the Playlist sidebar card. The central grid stays free of Master UI in both orientations.
 - Double-tap a Playlist clip to show its radial action menu. Hold a MIDI clip to open Piano Roll directly.
+
+### Android 1.0.79
+
+- Landscape studio moves transport and section controls from the left sidebar into a collapsible drawer centered on the right edge. The bottom chevron stays available. Portrait keeps its existing layout.
+- Native Android touch testing is pending.

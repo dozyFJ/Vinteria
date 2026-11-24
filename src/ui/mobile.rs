@@ -694,6 +694,9 @@ impl VinteriaApp {
                 self.m_nav_drawer(ctx);
             } else {
                 self.m_studio_sidebar(ctx);
+                if self.m_tab == 1 {
+                    self.m_landscape_controls_drawer(ctx);
+                }
                 self.m_mixer_sheet(ctx);
             }
         } else {
@@ -862,9 +865,42 @@ impl VinteriaApp {
                 } else {
                     self.m_studio_undo_redo(ui, width);
                 }
-                ui.separator();
-                mobile_scroll(egui::ScrollArea::vertical()).id_salt("m_studio_controls")
-                    .auto_shrink([false, false]).show(ui, |ui| self.m_studio_controls(ui, ctx, width));
+            });
+    }
+
+    fn m_landscape_controls_drawer(&mut self, ctx: &egui::Context) {
+        let id = egui::Id::new("m_landscape_controls_drawer");
+        let open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+        let width = 48.0;
+        let height = (ctx.screen_rect().height() - 68.0).min(420.0).max(1.0);
+        egui::Area::new(id.with("area")).order(egui::Order::Foreground)
+            .anchor(Align2::RIGHT_CENTER, [-6.0, 0.0]).movable(false)
+            .show(ctx, |ui| {
+                mobile_visuals(ui);
+                Frame::none().fill(bar_fill()).rounding(18.0)
+                    .stroke(Stroke::new(1.0, outline())).inner_margin(4.0)
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        if open {
+                            mobile_scroll(egui::ScrollArea::vertical()).max_height(height)
+                                .id_salt("m_studio_controls").auto_shrink([true, true])
+                                .show(ui, |ui| self.m_studio_controls(ui, ctx, width));
+                            ui.separator();
+                        }
+                        let (rect, response) = ui.allocate_exact_size(vec2(width, 44.0), Sense::click());
+                        let center = rect.center();
+                        let direction = if open { 1.0 } else { -1.0 };
+                        ui.painter().add(Shape::line(
+                            vec![center + vec2(-direction * 4.0, -7.0),
+                                 center + vec2(direction * 3.0, 0.0),
+                                 center + vec2(-direction * 4.0, 7.0)],
+                            Stroke::new(2.0, ink()),
+                        ));
+                        let label = if open { "Hide studio controls" } else { "Show studio controls" };
+                        if response.on_hover_text(label).clicked() {
+                            ctx.data_mut(|d| d.insert_temp(id, !open));
+                        }
+                    });
             });
     }
 
