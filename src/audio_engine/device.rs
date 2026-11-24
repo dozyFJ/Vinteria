@@ -103,6 +103,14 @@ mod io {
         pub buffer_frames: u32,
         pub error: Option<String>,
         err_flag: Arc<AtomicBool>,
+        /// phone watchdog: reopen the output by itself when the stream errors out or stops calling back
+        pub auto_reopen: bool,
+        /// buffer size the phone asked for (frames); reused when the stream is reopened
+        pub buffer_pref: u32,
+        last_callbacks: u64,
+        last_progress: web_time::Instant,
+        last_reopen: Option<web_time::Instant>,
+        pub reopens: u32,
     }
 
     impl AudioIo {
@@ -117,14 +125,20 @@ mod io {
                 buffer_frames: 0,
                 error: None,
                 err_flag: Arc::new(AtomicBool::new(false)),
+                auto_reopen: cfg!(target_os = "android"),
+                buffer_pref: if cfg!(target_os = "android") { 1024 } else { 512 },
+                last_callbacks: 0,
+                last_progress: web_time::Instant::now(),
+                last_reopen: None,
+                reopens: 0,
             };
             a.refresh_devices();
             let default = cpal::default_host().default_output_device().and_then(|d| d.name().ok());
             let name = default.or_else(|| a.devices.first().cloned()).unwrap_or_default();
-            // 512 frames: a safe margin so other programs / a busy window do not starve the callback (crackling)
+            // 512 frames on a PC; 1024 (~21 ms) on a phone, where a cheap CPU starved 512 and crackled
             let preferred_rate = if cfg!(target_os = "android") { 48000 } else { 0 };
             crate::boot_log(&format!("audio device '{name}'"));
-            a.open(&name, preferred_rate, 512);
+            a.open(&name, preferred_rate, a.buffer_pref);
             a
         }
 
@@ -140,6 +154,12 @@ mod io {
                 buffer_frames: 0,
                 error: Some("Safe mode: sound is off".into()),
                 err_flag: Arc::new(AtomicBool::new(false)),
+                auto_reopen: false,
+                buffer_pref: 0,
+                last_callbacks: 0,
+                last_progress: web_time::Instant::now(),
+                last_reopen: None,
+                reopens: 0,
             }
         }
 
@@ -163,6 +183,57 @@ mod io {
             if self.err_flag.swap(false, Ordering::Relaxed) {
                 self.error = Some("Audio stream error (device removed?) - choose a device again".into());
                 self.stream = None;
+            }
+        }
+
+        /// Phone watchdog, called every frame: when the stream reported an error (audio focus lost, Bluetooth / headphone
+        /// switch, the app was in the background) or has stopped calling back, open the default output again, at most
+        /// every 2 s. Without it the phone stayed silent until the app restarted, and Play flipped back because the
+        /// engine never received it.
+        pub fn keep_alive(&mut self) {
+            if !self.auto_reopen {
+                self.poll_error();
+                return;
+            }
+            let now = web_time::Instant::now();
+            let callbacks = self.shared.callbacks.load(Ordering::Relaxed);
+            if callbacks != self.last_callbacks {
+                self.last_callbacks = callbacks;
+                self.last_progress = now;
+            }
+            let errored = self.err_flag.swap(false, Ordering::Relaxed);
+            let stalled = self.stream.is_some() && now.duration_since(self.last_progress).as_secs_f32() > 1.5;
+            let missing = self.stream.is_none();
+            let due = self.last_reopen.map_or(true, |at| now.duration_since(at).as_secs_f32() > 2.0);
+            if (errored || stalled || missing) && due {
+                self.last_reopen = Some(now);
+                self.last_progress = now;
+                self.reopens += 1;
+                let playing = self.shared.playing.load(Ordering::Relaxed);
+                let position = self.shared.position.load(Ordering::Relaxed);
+                self.refresh_devices();
+                let name = cpal::default_host().default_output_device().and_then(|d| d.name().ok())
+                    .or_else(|| self.devices.first().cloned()).unwrap_or_else(|| self.device_name.clone());
+                let rate = self.sample_rate;
+                self.open(&name, rate, self.buffer_pref);
+                crate::boot_log(&format!("audio reopened ({}): errored={errored} stalled={stalled} -> {:?}", self.reopens, self.error));
+                if playing {
+                    // the new engine starts stopped at 0: carry on where the old one was
+                    self.shared.send(Cmd::PlayFrom(position));
+                }
+            }
+        }
+
+        /// Open the default output again now, with `buffer` frames (the phone's "Restart audio").
+        pub fn reopen_now(&mut self, buffer: u32) {
+            self.buffer_pref = buffer;
+            self.last_reopen = None;
+            self.stream = None;
+            self.keep_alive();
+            if !self.auto_reopen {
+                let name = self.device_name.clone();
+                let rate = self.sample_rate;
+                self.open(&name, rate, buffer);
             }
         }
 

@@ -2238,7 +2238,7 @@ impl eframe::App for VinteriaApp {
             crate::boot_done();
         }
         paint_glass_background(ctx);
-        self.audio.poll_error();
+        self.audio.keep_alive();
         crate::silence_system_beeps();
         self.check_update(ctx);
         self.toasts_ui(ctx);

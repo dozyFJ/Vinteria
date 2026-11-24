@@ -6020,6 +6020,29 @@ impl VinteriaApp {
             };
             ui.painter().text(rect.left_top() + vec2(16.0, 14.0), Align2::LEFT_TOP, "Audio output", FontId::proportional(15.0), ink());
             ui.painter().text(rect.left_top() + vec2(16.0, 36.0), Align2::LEFT_TOP, status, FontId::proportional(12.0), muted());
+            ui.add_space(6.0);
+            // buffer: smaller = less delay, bigger = no crackles on a busy phone
+            let latency = |frames: u32| frames as f32 / self.audio.sample_rate.max(1) as f32 * 1000.0;
+            ui.label(RichText::new("Audio buffer (crackles? pick a bigger one)").size(12.0).color(muted()));
+            let mut pick = None;
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let w = (ui.available_width() - 8.0) / 3.0;
+                for (frames, label) in [(512u32, "Fast"), (1024, "Stable"), (2048, "Extra safe")] {
+                    let text = format!("{label}\n{:.0} ms", latency(frames));
+                    if p_button(ui, &text, self.audio.buffer_pref == frames, vec2(w, 48.0)).clicked() {
+                        pick = Some(frames);
+                    }
+                }
+            });
+            if p_button(ui, "Restart audio", false, vec2(ui.available_width(), TOUCH)).clicked() {
+                pick = Some(self.audio.buffer_pref.max(256));
+            }
+            if let Some(frames) = pick {
+                self.audio.reopen_now(frames);
+            }
+            ui.label(RichText::new(format!("Running buffers: {} · reconnects: {}",
+                self.shared.callbacks.load(Ordering::Relaxed), self.audio.reopens)).size(11.0).color(muted()));
             ui.add_space(10.0);
             #[cfg(target_os = "android")]
             if let Some(updater) = &mut self.android_updater {

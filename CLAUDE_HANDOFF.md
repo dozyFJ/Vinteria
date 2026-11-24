@@ -560,3 +560,9 @@ Browser открывается слева рядом с Playlist в обеих �
 
 - Piano Roll Oct − / Oct +: they always moved the view by an octave, but on an empty grid only the small key labels changed, so they looked dead. Now the octave in view is shown between the buttons (C3, C4…, same naming as the keys) and the octave that comes into view glows for a moment. Limits 0–9 are respected.
 - Checked on the desktop build in mobile mode (portrait and landscape): Oct + moves B3→B4 with the glow, Oct − moves back.
+
+### Android 1.0.96
+
+- Phone audio watchdog (`AudioIo::keep_alive`, every frame): when the output stream errors out (audio focus lost, Bluetooth/headphone switch, back from the background) or stops calling back for 1.5 s, the default output is opened again (at most every 2 s) and a playing transport carries on from its position. Before, the stream was just dropped: no sound until the app restarted, and Play flipped back because the engine never got it.
+- Android buffer 512 → 1024 frames (~21 ms) by default; Settings → Sound has Fast (512) / Stable (1024) / Extra safe (2048), Restart audio, and a line with running buffers and reconnects for diagnosis.
+- Diagnosis: a headless end-to-end run (phone UI → shared → the real audio callback, not committed) passed: Playlist clip sounds, pause keeps the place, play resumes, stop rewinds, quick play/pause, Piano Roll plays and loops only the clip in pattern mode, Playlist after Piano Roll starts the song from the start, no silent buffers while editing during playback. So the reported silence / play-stop trouble points at the Android output stream, which this addresses.
