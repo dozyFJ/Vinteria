@@ -479,3 +479,8 @@ Browser открывается слева рядом с Playlist в обеих �
 - Move the landscape Piano Roll toolbar to the right in both sheet and full view. Keys, time ruler and note grid occupy the left. Native Android touch testing is pending.
 - Move the landscape track settings tabs to a vertical column on the right of the bottom sheet.
 - Landscape Playlist track actions open as a scrollable panel at the left edge.
+
+### Android 1.0.81
+
+- The landscape Piano Roll section uses the full grid width without the left Studio sidebar. Playlist and orientation controls are available in the right toolbar.
+- While editing a MIDI clip, the Playlist Browser and track actions cannot cover the Piano Roll. Native Android touch testing is pending.

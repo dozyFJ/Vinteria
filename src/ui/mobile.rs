@@ -692,7 +692,7 @@ impl VinteriaApp {
                 self.m_studio_transport_dock(ctx);
                 self.m_mixer_sheet(ctx);
                 self.m_nav_drawer(ctx);
-            } else {
+            } else if self.m_sec != SEC_PIANO {
                 self.m_studio_sidebar(ctx);
                 if self.m_tab == 1 {
                     self.m_landscape_controls_drawer(ctx);
@@ -704,7 +704,7 @@ impl VinteriaApp {
             self.m_hub_navigation(ctx);
         }
         if self.m_tab == 1 && self.m_sec == SEC_PLAYLIST {
-            if !full_view {
+            if !full_view && !self.m_clip_piano_open(ctx) {
                 self.m_browser_sidebar(ctx);
             }
         } else {
@@ -754,9 +754,7 @@ impl VinteriaApp {
                 ctx.request_repaint_after(std::time::Duration::from_secs_f64(remaining));
             }
         }
-        let piano_visible = self.m_tab == 1 && (self.m_sec == SEC_PIANO
-            || ctx.data(|d| d.get_temp::<usize>(egui::Id::new("m_clip_sheet_selection")))
-                .and_then(|index| self.project.arrangement.clips.get(index)).is_some_and(|clip| !clip.audio));
+        let piano_visible = self.m_tab == 1 && (self.m_sec == SEC_PIANO || self.m_clip_piano_open(ctx));
         if !piano_visible || !ctx.input(|input| input.pointer.primary_down()) {
             let held_id = egui::Id::new("m_piano_held");
             let held = ctx.data_mut(|d| {
@@ -1942,6 +1940,12 @@ impl VinteriaApp {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 if drawer.is_some() {
                     close = p_button(ui, "Done", true, vec2(60.0, 44.0)).clicked();
+                } else if !portrait {
+                    let ctx = ui.ctx().clone();
+                    if p_button(ui, "Playlist", false, vec2(66.0, 44.0)).clicked() {
+                        self.m_select_studio_section(&ctx, SEC_PLAYLIST);
+                    }
+                    self.m_studio_orientation_button(ui, &ctx, 44.0);
                 }
                 if !valid_pattern {
                     return;
@@ -2686,6 +2690,13 @@ impl VinteriaApp {
         self.project.current_pattern = edit_pattern;
         self.m_playlist_undo_step();
         Ok(())
+    }
+
+    fn m_clip_piano_open(&self, ctx: &egui::Context) -> bool {
+        ctx.data(|d| d.get_temp::<usize>(egui::Id::new("m_clip_sheet_selection")))
+            .filter(|&index| self.arr.sel_clip == Some(index))
+            .and_then(|index| self.project.arrangement.clips.get(index))
+            .is_some_and(|clip| !clip.audio)
     }
 
     fn m_clip_sheet(&mut self, ctx: &egui::Context) {
@@ -4721,7 +4732,12 @@ impl VinteriaApp {
             self.project.arrangement.group_playlist_track(source, track, folder);
             ui.ctx().request_repaint();
         }
-        if let Some(lane) = ui.data(|d| d.get_temp::<usize>(options_id)).filter(|&lane| lane < tracks) {
+        if self.m_clip_piano_open(ui.ctx()) {
+            ui.data_mut(|d| {
+                d.remove::<usize>(options_id);
+                d.remove::<bool>(options_id.with("confirm_delete"));
+            });
+        } else if let Some(lane) = ui.data(|d| d.get_temp::<usize>(options_id)).filter(|&lane| lane < tracks) {
             if self.m_playlist_track_modal(ui.ctx(), lane, options_id) {
                 name_pick = Some((lane, true));
             }
