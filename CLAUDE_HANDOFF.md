@@ -544,3 +544,9 @@ Browser открывается слева рядом с Playlist в обеих �
 - Phone Browser laid out like Ableton's: search with an Import (+) button on top; left column CATEGORIES (Sounds, Drums, Instruments, Effects) and PLACES (each sample pack and the loose Library files, with counts); right column the items with ▷ to preview a sample (tap again to stop) and a drag grip; "Tap to: …" destination at the bottom. The drawer is wider (96% of a portrait screen, 62% in landscape) to fit both panes. Drums = samples whose name/path looks like a drum (kick, snare, hat, …).
 - Drag a sound straight onto a Playlist track from anywhere on its row: a sideways drag picks it up, an up/down drag scrolls the list. No need to select a track first.
 - Checked on the desktop build in mobile mode at 400×860: dragging Factory Kick by its grip onto Audio 1 and Factory Perc by the row onto Audio 2 creates the clips.
+
+### Android 1.0.93
+
+- Track settings → Instrument on the phone: instead of small menus, four big actions with a line on what each does: Choose instrument, Load WAV, Presets, Open editor. The first three open a left side panel: instruments with what each is for (✓ on the current one), samples with search and the preview triangle (the pick becomes a Sampler), presets (stay open to compare; the last one is highlighted). Tapping outside or × closes it; it always sits above the sheet.
+- Open editor now works on the phone: the PC plugin window (preset library + engine knobs) full screen with Done. Before, it set a flag only the PC drew.
+- Checked on the desktop build in mobile mode at 400×860: Poly Synth chosen, Soft Pad applied (Tone 5000 → 1800), Factory Hi-Hat loaded as 808 Sampler, editor opened and closed.

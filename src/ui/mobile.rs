@@ -2946,7 +2946,186 @@ impl VinteriaApp {
                     &mut detail, &mut self.plugin_window, &mut self.lib, &self.shared);
             });
         if done || ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
-            ctx.data_mut(|d| d.remove::<bool>(id));
+            ctx.data_mut(|d| {
+                d.remove::<bool>(id);
+                d.remove::<(usize, u8)>(egui::Id::new(devices_ui::INSTRUMENT_PANEL));
+                d.remove::<usize>(egui::Id::new(devices_ui::INSTRUMENT_EDITOR));
+            });
+        } else {
+            self.m_instrument_panel(ctx);
+            self.m_instrument_editor(ctx);
+        }
+    }
+
+    /// The instrument's full editor (the PC plugin window), full screen with Done.
+    fn m_instrument_editor(&mut self, ctx: &egui::Context) {
+        let id = egui::Id::new(devices_ui::INSTRUMENT_EDITOR);
+        let Some(lane) = ctx.data(|d| d.get_temp::<usize>(id)) else { return };
+        let Some((name, track)) = self.project.arrangement.tracks.get(lane).and_then(|t| t.instrument.map(|i| (t.name.clone(), i))) else {
+            ctx.data_mut(|d| d.remove::<usize>(id));
+            return;
+        };
+        self.inst = instruments_ui::Inst::from_track(track);
+        let screen = ctx.screen_rect();
+        let mut done = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+        let mut picked = None;
+        ctx.memory_mut(|m| m.areas_mut().move_to_top(egui::LayerId::new(egui::Order::Foreground, id.with("area"))));
+        egui::Area::new(id.with("area")).order(egui::Order::Foreground).fixed_pos(screen.min).movable(false).constrain(false)
+            .show(ctx, |ui| {
+                let (rect, _) = ui.allocate_exact_size(screen.size(), Sense::click());
+                ui.painter().rect_filled(rect, 0.0, p_bg());
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(8.0)));
+                mobile_visuals(&mut child);
+                child.horizontal(|ui| {
+                    done |= p_button(ui, "Done", true, vec2(64.0, 40.0)).clicked();
+                    ui.add(egui::Label::new(RichText::new(format!("{name} · {}", self.inst.title())).size(16.0).strong()).truncate());
+                });
+                child.add_space(6.0);
+                mobile_scroll(egui::ScrollArea::both()).id_salt("m_instrument_editor_scroll").auto_shrink([false, false])
+                    .show(&mut child, |ui| {
+                        picked = instruments_ui::show(ui, &mut self.project, &mut self.inst, lane);
+                    });
+            });
+        if let Some(pt) = picked {
+            // a preset can live on another engine: the track follows it
+            self.project.arrangement.tracks[lane].instrument = Some(pt);
+            self.roll.track = pt;
+            self.live_track = pt;
+        }
+        if done {
+            ctx.data_mut(|d| d.remove::<usize>(id));
+        }
+    }
+
+    /// Left side panel for the phone instrument actions: instruments (with what each is for), WAV samples, presets.
+    fn m_instrument_panel(&mut self, ctx: &egui::Context) {
+        let id = egui::Id::new(devices_ui::INSTRUMENT_PANEL);
+        let Some((lane, kind)) = ctx.data(|d| d.get_temp::<(usize, u8)>(id)) else { return };
+        if lane >= self.project.arrangement.tracks.len() {
+            ctx.data_mut(|d| d.remove::<(usize, u8)>(id));
+            return;
+        }
+        let screen = ctx.screen_rect();
+        let width = (screen.width() * 0.82).min(360.0);
+        let shown = ctx.animate_bool_with_time(id.with("slide"), true, 0.14);
+        let rect = Rect::from_min_size(pos2(screen.left() - width * (1.0 - shown), screen.top()), vec2(width, screen.height()));
+        let current = self.project.arrangement.tracks[lane].instrument;
+        let title = match kind {
+            0 => "Choose instrument".to_owned(),
+            1 => "Load WAV".to_owned(),
+            _ => format!("Presets · {}", current.map_or("", |t| t.name())),
+        };
+        let mut close = ctx.input(|i| i.pointer.any_pressed() && i.pointer.press_origin().is_some_and(|at| !rect.contains(at)));
+        let mut pick_instrument = None;
+        let mut pick_sample = None;
+        let mut pick_preset = None;
+        let preview_id = egui::Id::new("m_browser_preview");
+        let mut preview = ctx.data(|d| d.get_temp::<PathBuf>(preview_id));
+        let mut preview_toggle = None;
+        // always above the track sheet it was opened from
+        ctx.memory_mut(|m| m.areas_mut().move_to_top(egui::LayerId::new(egui::Order::Foreground, id.with("panel"))));
+        egui::Area::new(id.with("panel")).order(egui::Order::Foreground).fixed_pos(rect.min).constrain(false).movable(false)
+            .show(ctx, |ui| {
+                Frame::none().fill(bar_fill()).rounding(egui::Rounding { ne: 16.0, se: 16.0, ..Default::default() })
+                    .stroke(Stroke::new(1.0, outline())).inner_margin(Margin::symmetric(12.0, 12.0)).show(ui, |ui| {
+                        mobile_visuals(ui);
+                        ui.set_min_size(rect.size() - vec2(24.0, 24.0));
+                        ui.set_max_size(rect.size() - vec2(24.0, 24.0));
+                        ui.horizontal(|ui| {
+                            ui.add(egui::Label::new(RichText::new(&title).size(19.0).strong()).truncate());
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                close |= p_button(ui, "×", false, vec2(40.0, 40.0)).clicked();
+                            });
+                        });
+                        let hint = match kind {
+                            0 => "The instrument is the sound engine that plays this track's notes.",
+                            1 => "The sample becomes a Sampler instrument. The triangle plays it first.",
+                            _ => "Tap to try a preset; the panel stays open so you can compare.",
+                        };
+                        ui.label(RichText::new(hint).size(11.0).color(muted()));
+                        ui.add_space(6.0);
+                        match kind {
+                            0 => { mobile_scroll(egui::ScrollArea::vertical()).id_salt("m_inst_list").show(ui, |ui| {
+                                for t in [Track::Synth, Track::Wavetable, Track::Analog, Track::Bass808, Track::Sampler, Track::Drums] {
+                                    let name = if current == Some(t) { format!("{}  ✓", t.name()) } else { t.name().to_owned() };
+                                    if devices_ui::mobile_action(ui, &name, devices_ui::instrument_blurb(t)).clicked() {
+                                        pick_instrument = Some(t);
+                                    }
+                                }
+                            }); }
+                            1 => {
+                                let query_id = id.with("query");
+                                let mut query = ui.data(|d| d.get_temp::<String>(query_id)).unwrap_or_default();
+                                ui.add_sized([ui.available_width(), 34.0], egui::TextEdit::singleline(&mut query).hint_text("Search samples"));
+                                let filter = query.trim().to_lowercase();
+                                ui.data_mut(|d| d.insert_temp(query_id, query));
+                                mobile_scroll(egui::ScrollArea::vertical()).id_salt("m_inst_samples").show(ui, |ui| {
+                                    if self.lib.files.is_empty() {
+                                        ui.label(RichText::new("No WAV files yet. Import them in the Browser (+).").size(12.0).color(muted()));
+                                    }
+                                    for path in &self.lib.files {
+                                        let name = path.file_stem().unwrap_or_default().to_string_lossy();
+                                        if !filter.is_empty() && !name.to_lowercase().contains(&filter) {
+                                            continue;
+                                        }
+                                        let playing = preview.as_ref() == Some(path);
+                                        let (row, play) = browser_list_row(ui, &name, Some(playing), browser::DragItem::Sample(path.clone()));
+                                        if play {
+                                            preview_toggle = Some(path.clone());
+                                        } else if row.clicked() {
+                                            pick_sample = Some(path.clone());
+                                        }
+                                    }
+                                });
+                            }
+                            _ => { mobile_scroll(egui::ScrollArea::vertical()).id_salt("m_inst_presets").show(ui, |ui| {
+                                match current {
+                                    Some(t) => {
+                                        let last = ui.data(|d| d.get_temp::<String>(id.with(("preset", lane))));
+                                        for preset in instruments_ui::presets_of(t) {
+                                            let active = last.as_deref() == Some(preset);
+                                            if p_button(ui, preset, active, vec2(ui.available_width(), 44.0)).clicked() {
+                                                pick_preset = Some((t, preset));
+                                            }
+                                        }
+                                    }
+                                    None => { ui.label(RichText::new("Choose an instrument first.").color(muted())); }
+                                }
+                            }); }
+                        }
+                    });
+            });
+        if let Some(path) = preview_toggle {
+            if preview.as_ref() == Some(&path) {
+                self.shared.send(Cmd::PreviewStop);
+                preview = None;
+            } else if let Ok(data) = crate::project::load_wav(&path) {
+                self.shared.send(Cmd::Preview(std::sync::Arc::new(data)));
+                preview = Some(path);
+            }
+            ctx.data_mut(|d| match &preview {
+                Some(path) => d.insert_temp(preview_id, path.clone()),
+                None => d.remove::<PathBuf>(preview_id),
+            });
+        }
+        let mut detail = arrangement_ui::DetailCtx { roll_track: &mut self.roll.track, live_track: &mut self.live_track, inst: &mut self.inst };
+        if let Some(t) = pick_instrument {
+            devices_ui::assign(&mut self.project, lane, t, &mut detail);
+            close = true;
+        }
+        if let Some(path) = pick_sample {
+            self.lib.assign_track_sampler(&mut self.project, lane, &path);
+            devices_ui::assign(&mut self.project, lane, Track::Sampler, &mut detail);
+            self.shared.send(Cmd::PreviewStop);
+            ctx.data_mut(|d| d.remove::<PathBuf>(preview_id));
+            close = true;
+        }
+        if let Some((t, preset)) = pick_preset {
+            instruments_ui::apply_named_lane(&mut self.project, lane, t, preset);
+            ctx.data_mut(|d| d.insert_temp(id.with(("preset", lane)), preset.to_owned()));
+        }
+        if close || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            ctx.data_mut(|d| d.remove::<(usize, u8)>(id));
         }
     }
 
@@ -5988,6 +6167,20 @@ fn piano_toolbar_row(ui: &mut Ui, portrait: bool, add: impl FnOnce(&mut Ui)) {
     } else {
         ui.with_layout(egui::Layout::top_down(egui::Align::Center), add);
     }
+}
+
+/// A full-width phone action: a title and one line on what it does.
+pub(super) fn mobile_action(ui: &mut Ui, title: &str, what: &str) -> Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 56.0), Sense::click());
+    let p = ui.painter();
+    let card = rect.shrink2(vec2(0.0, 2.0));
+    p.rect_filled(card, 10.0, if response.is_pointer_button_down_on() { selected_fill() } else { card_fill() });
+    p.rect_stroke(card, 10.0, Stroke::new(1.0, outline()));
+    let text = Rect::from_min_max(card.min + vec2(12.0, 0.0), pos2(card.right() - 26.0, card.bottom()));
+    fit_label(p, text, card.top() + 18.0, title, ink(), 15.0);
+    fit_label(p, text, card.top() + 37.0, what, muted(), 11.0);
+    p.text(card.right_center() - vec2(12.0, 0.0), Align2::RIGHT_CENTER, "›", FontId::proportional(20.0), muted());
+    response
 }
 
 /// FL-style knob: dark disc with an indicator; `t` in 0..1 (pan: 0.5 is centre, drawn from the top).

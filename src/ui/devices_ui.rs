@@ -10,6 +10,41 @@ fn free_insert(p: &Project) -> Option<usize> {
         && !p.channels.iter().take(NUM_CH).any(|c| c.output == Some(i)))
 }
 
+/// Side panel the phone instrument actions open: (lane, 0 = instruments, 1 = WAV samples, 2 = presets).
+pub(super) const INSTRUMENT_PANEL: &str = "m_instrument_panel";
+/// Lane whose instrument editor is open full screen on the phone.
+pub(super) const INSTRUMENT_EDITOR: &str = "m_instrument_editor";
+
+/// What each instrument is for, shown in the phone's instrument list.
+pub(super) fn instrument_blurb(t: Track) -> &'static str {
+    match t {
+        Track::Wavetable => "Morphing digital waves: pads, leads, plucks",
+        Track::Synth => "Classic polyphonic synth for chords and leads",
+        Track::Bass808 => "Deep 808 bass with glide, for trap and hip-hop",
+        Track::Analog => "Warm analog-style synth for bass and leads",
+        Track::Sampler => "Plays one WAV across the keyboard",
+        Track::Drums => "Drum kit: edit the pads in Steps",
+    }
+}
+
+/// The two quick knobs under an instrument: tone (filter) and level.
+fn tone_level(ui: &mut Ui, p: &mut Project, lane: usize, t: Track) {
+    let tr = &mut p.arrangement.tracks[lane];
+    let (tone, level) = match t {
+        Track::Wavetable => (Some(&mut tr.snd.wt.cutoff), Some(&mut tr.snd.wt.volume)),
+        Track::Synth => (Some(&mut tr.snd.synth.lp_cutoff), Some(&mut tr.snd.synth.volume)),
+        Track::Analog => (Some(&mut tr.snd.analog.cutoff), Some(&mut tr.snd.analog.volume)),
+        Track::Bass808 => (Some(&mut tr.snd.bass.tone), Some(&mut tr.snd.bass.volume)),
+        Track::Sampler => (None, Some(&mut tr.sampler.volume)),
+        Track::Drums => (None, None),
+    };
+    if let Some(v) = tone { ui.add(egui::Slider::new(v, 40.0..=18000.0).logarithmic(true).text("Tone")); }
+    if let Some(v) = level { ui.add(egui::Slider::new(v, 0.0..=3.0).text("Level")); }
+    if t == Track::Drums { ui.label("Edit sounds in the Channel Rack."); }
+}
+
+pub(super) use super::mobile::mobile_action;
+
 fn card_ui(ui: &mut Ui, width: f32, content: impl FnOnce(&mut Ui)) -> egui::Response {
     egui::Frame::none().fill(PANEL2()).rounding(5.0).stroke(Stroke::new(1.0_f32, border())).inner_margin(10.0).show(ui, |ui| {
         ui.vertical(|ui| {
@@ -20,7 +55,7 @@ fn card_ui(ui: &mut Ui, width: f32, content: impl FnOnce(&mut Ui)) -> egui::Resp
     }).response
 }
 
-fn assign(p: &mut Project, lane: usize, track: Track, dc: &mut DetailCtx) {
+pub(super) fn assign(p: &mut Project, lane: usize, track: Track, dc: &mut DetailCtx) {
     p.arrangement.tracks[lane].instrument = Some(track);
     p.arrangement.tracks[lane].blank = false;
     *dc.roll_track = track; *dc.live_track = track; *dc.inst = Inst::from_track(track);
@@ -69,7 +104,40 @@ fn show(ui: &mut Ui, p: &mut Project, st: &mut ArrState, dc: &mut DetailCtx, plu
                 });
             }
             if !effects_only && !mobile_instrument { ui.label(RichText::new("→").color(DIM())); }
-            if effects_only {} else if kind == TrackKind::Midi {
+            if effects_only {} else if kind == TrackKind::Midi && mobile_instrument {
+                // phone: big actions with a line on what each does; the lists open in a left side panel
+                let current = p.arrangement.tracks[lane].instrument;
+                let ctx = ui.ctx().clone();
+                let open_panel = |kind: u8| ctx.data_mut(|d| d.insert_temp(egui::Id::new(INSTRUMENT_PANEL), (lane, kind)));
+                let response = card_ui(ui, instrument_width, |ui| {
+                    let title = current.map_or("No instrument yet".to_owned(), |t| Inst::from_track(t).title().to_owned());
+                    ui.label(RichText::new(&title).strong().size(17.0));
+                    ui.add_space(4.0);
+                    if mobile_action(ui, "Choose instrument", "Pick the sound engine: synth, 808 bass, sampler, drums…").clicked() {
+                        open_panel(0);
+                    }
+                    if mobile_action(ui, "Load WAV", "Turn one of your samples into the instrument, played across the keys").clicked() {
+                        open_panel(1);
+                    }
+                    if let Some(t) = current {
+                        if mobile_action(ui, "Presets", &format!("Ready-made sounds for {title}")).clicked() {
+                            open_panel(2);
+                        }
+                        if mobile_action(ui, "Open editor", "Every knob of this instrument, full screen").clicked() {
+                            ui.data_mut(|d| d.insert_temp(egui::Id::new(INSTRUMENT_EDITOR), lane));
+                        }
+                        ui.add_space(4.0);
+                        tone_level(ui, p, lane, t);
+                    }
+                });
+                if let Some(payload) = response.dnd_release_payload::<DragItem>() {
+                    match &*payload {
+                        DragItem::Instrument(t) => assign(p, lane, *t, dc),
+                        DragItem::Sample(path) => { lib.assign_track_sampler(p, lane, path); assign(p, lane, Track::Sampler, dc); }
+                        _ => {}
+                    }
+                }
+            } else if kind == TrackKind::Midi {
                 let mut picked = None;
                 let current = p.arrangement.tracks[lane].instrument;
                 let response = card_ui(ui, instrument_width, |ui| {
@@ -97,18 +165,7 @@ fn show(ui: &mut Ui, p: &mut Project, st: &mut ArrState, dc: &mut DetailCtx, plu
                                 if ui.button(preset).clicked() { super::instruments_ui::apply_named_lane(p, lane, t, preset); ui.close_menu(); }
                             }
                         });
-                        let tr = &mut p.arrangement.tracks[lane];
-                        let (tone, level) = match t {
-                            Track::Wavetable => (Some(&mut tr.snd.wt.cutoff), Some(&mut tr.snd.wt.volume)),
-                            Track::Synth => (Some(&mut tr.snd.synth.lp_cutoff), Some(&mut tr.snd.synth.volume)),
-                            Track::Analog => (Some(&mut tr.snd.analog.cutoff), Some(&mut tr.snd.analog.volume)),
-                            Track::Bass808 => (Some(&mut tr.snd.bass.tone), Some(&mut tr.snd.bass.volume)),
-                            Track::Sampler => (None, Some(&mut tr.sampler.volume)),
-                            Track::Drums => (None, None),
-                        };
-                        if let Some(v) = tone { ui.add(egui::Slider::new(v, 40.0..=18000.0).logarithmic(true).text("Tone")); }
-                        if let Some(v) = level { ui.add(egui::Slider::new(v, 0.0..=3.0).text("Level")); }
-                        if t == Track::Drums { ui.label("Edit sounds in the Channel Rack."); }
+                        tone_level(ui, p, lane, t);
                     } else {
                         let (r, _) = ui.allocate_exact_size(vec2(instrument_width, 106.0), Sense::hover());
                         ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, "Drop an instrument or WAV\nor use Choose", egui::FontId::proportional(13.0), DIM());
