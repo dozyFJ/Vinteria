@@ -4992,9 +4992,10 @@ impl VinteriaApp {
         let confirm_id = id.with("confirm_delete");
         let mut confirm = ctx.data(|d| d.get_temp::<bool>(confirm_id)).unwrap_or(false) && can_delete;
         let screen = ctx.screen_rect();
-        let width = (screen.width() - 48.0).clamp(1.0, 320.0);
+        let landscape = screen.width() >= screen.height();
+        let width = (screen.width() - 48.0).clamp(1.0, if landscape { 208.0 } else { 320.0 });
         let mut close = ctx.input(|input| input.key_pressed(egui::Key::Escape));
-        egui::Area::new(id.with("scrim")).order(egui::Order::Middle).fixed_pos(screen.min).movable(false)
+        egui::Area::new(id.with("scrim")).order(egui::Order::Foreground).fixed_pos(screen.min).movable(false)
             .show(ctx, |ui| {
                 let (rect, hit) = ui.allocate_exact_size(screen.size(), Sense::click());
                 ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha(145));
@@ -5007,9 +5008,13 @@ impl VinteriaApp {
         let mut ungroup = false;
         let mut toggle_lock = false;
         let mut delete = false;
-        egui::Area::new(id.with("dialog")).order(egui::Order::Foreground)
-            .anchor(Align2::CENTER_CENTER, [0.0, 0.0]).movable(false)
-            .show(ctx, |ui| {
+        let area = egui::Area::new(id.with("dialog")).order(egui::Order::Foreground).movable(false);
+        let area = if landscape {
+            area.fixed_pos(screen.min + vec2(4.0, 4.0))
+        } else {
+            area.anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+        };
+        area.show(ctx, |ui| {
                 Frame::none().fill(p_bg()).stroke(Stroke::new(1.0, outline())).rounding(16.0)
                     .inner_margin(12.0).show(ui, |ui| {
                         mobile_visuals(ui);
@@ -5018,24 +5023,27 @@ impl VinteriaApp {
                             ui.add_sized([(width - 52.0).max(1.0), 44.0], egui::Label::new(RichText::new(title).size(17.0).strong()).truncate());
                             close |= p_button(ui, "×", false, vec2(44.0, 44.0)).clicked();
                         });
-                        let size = vec2(width, TOUCH);
-                        if confirm {
-                            ui.label("Delete this track and its clips?");
-                            delete = p_button(ui, "Delete track", true, size).clicked();
-                            if p_button(ui, "Cancel", false, size).clicked() { confirm = false; }
-                            return;
-                        }
-                        main = p_button(ui, "Main", false, size).clicked();
-                        effects = p_button(ui, "Effects", false, size).clicked();
-                        toggle_mute = p_button(ui, if muted_track { "Enable track" } else { "Disable track" }, muted_track, size).clicked();
-                        toggle_solo = p_button(ui, if solo { "Turn solo off" } else { "Solo" }, solo, size).clicked();
-                        toggle_lock = p_button(ui, if locked { "Unlock track" } else { "Lock track" }, locked, size).clicked();
-                        if can_delete {
-                            confirm = p_button(ui, "Delete track…", false, size).clicked();
-                        }
-                        if grouped && !locked {
-                            ungroup = p_button(ui, "Remove from group", false, size).clicked();
-                        }
+                        mobile_scroll(egui::ScrollArea::vertical()).max_height((screen.height() - 84.0).max(1.0))
+                            .auto_shrink([false, true]).show(ui, |ui| {
+                                let size = vec2(width, TOUCH);
+                                if confirm {
+                                    ui.label("Delete this track and its clips?");
+                                    delete = p_button(ui, "Delete track", true, size).clicked();
+                                    if p_button(ui, "Cancel", false, size).clicked() { confirm = false; }
+                                    return;
+                                }
+                                main = p_button(ui, "Main", false, size).clicked();
+                                effects = p_button(ui, "Effects", false, size).clicked();
+                                toggle_mute = p_button(ui, if muted_track { "Enable track" } else { "Disable track" }, muted_track, size).clicked();
+                                toggle_solo = p_button(ui, if solo { "Turn solo off" } else { "Solo" }, solo, size).clicked();
+                                toggle_lock = p_button(ui, if locked { "Unlock track" } else { "Lock track" }, locked, size).clicked();
+                                if can_delete {
+                                    confirm = p_button(ui, "Delete track…", false, size).clicked();
+                                }
+                                if grouped && !locked {
+                                    ungroup = p_button(ui, "Remove from group", false, size).clicked();
+                                }
+                            });
                     });
             });
         if toggle_mute || toggle_solo || ungroup || toggle_lock {
