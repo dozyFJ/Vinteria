@@ -554,7 +554,6 @@ const STUDIO_SECTIONS: [(&str, Icon); 6] = [
     ("Session", Icon::Session), ("Mixer", Icon::Mixer), ("Tracks", Icon::Tracks),
 ];
 const SEC_PLAYLIST: usize = 0;
-const DRAWER_OPEN: &str = "m_nav_drawer_open";
 const CONTROLS_DRAWER: &str = "m_landscape_controls_drawer";
 /// set by the press that closed the clip action row, so the same tap does not also act on an empty Playlist cell
 const CLIP_MENU_DISMISSED: &str = "m_playlist_clip_menu_dismissed";
@@ -735,9 +734,11 @@ impl VinteriaApp {
                         }
                     });
             } else if portrait {
-                self.m_studio_transport_dock(ctx);
-                self.m_mixer_sheet(ctx);
-                self.m_nav_drawer(ctx);
+                self.m_studio_portrait_top_bar(ctx);
+                if self.m_tab == 1 {
+                    self.m_studio_transport_dock(ctx);
+                    self.m_mixer_sheet(ctx);
+                }
             } else if self.m_sec != SEC_PIANO {
                 self.m_studio_sidebar(ctx);
                 if self.m_sec == SEC_PLAYLIST {
@@ -1403,7 +1404,7 @@ impl VinteriaApp {
                 });
                 ui.separator();
                 ui.horizontal(|ui| {
-                    let space = ((ui.available_width() - 6.0 * TOUCH) / 7.0).max(0.0);
+                    let space = ((ui.available_width() - 5.0 * TOUCH) / 6.0).max(0.0);
                     ui.spacing_mut().item_spacing.x = space;
                     ui.add_space(space);
                     let playing = self.m_transport_playing(ctx);
@@ -1421,9 +1422,6 @@ impl VinteriaApp {
                     }
                     if dock_icon(ui, Icon::Forward, false, "Next bar").clicked() {
                         self.m_seek(ctx, (bar + 1).min(bars - 1) * TICKS_PER_BAR);
-                    }
-                    if dock_icon(ui, Icon::Menu, false, "Studio menu").clicked() {
-                        ctx.data_mut(|d| d.insert_temp(egui::Id::new(DRAWER_OPEN), true));
                     }
                     let (name, symbol) = STUDIO_SECTIONS.get(self.m_sec).copied().unwrap_or(STUDIO_SECTIONS[0]);
                     dock_menu(ui, symbol, name, true, |ui| {
@@ -1504,106 +1502,84 @@ impl VinteriaApp {
         ctx.request_repaint();
     }
 
-    /// left drawer like the Claude app: sections (the active one highlighted) and the project actions
-    fn m_nav_drawer(&mut self, ctx: &egui::Context) {
-        let open_id = egui::Id::new(DRAWER_OPEN);
-        let open = ctx.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
-        let t = ctx.animate_bool_with_time(open_id.with("anim"), open, 0.16);
-        if t <= 0.0 {
-            return;
-        }
-        let screen = ctx.screen_rect();
-        let width = (screen.width() * 0.8).min(320.0);
-        let mut close = false;
-        egui::Area::new(open_id.with("scrim")).order(egui::Order::Middle).fixed_pos(screen.min)
+    fn m_studio_portrait_top_bar(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::top("m_studio_portrait_top_bar").show_separator_line(false)
+            .frame(Frame::none().fill(glass_fill()).stroke(Stroke::new(1.0, glass_edge()))
+                .inner_margin(Margin::symmetric(6.0, 3.0)))
             .show(ctx, |ui| {
-                let (rect, resp) = ui.allocate_exact_size(screen.size(), Sense::click_and_drag());
-                ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha((150.0 * t) as u8));
-                if resp.clicked() || resp.drag_stopped() {
-                    close = true;
-                }
-            });
-        let mut action = None;
-        egui::Area::new(open_id.with("panel")).order(egui::Order::Foreground)
-            .fixed_pos(pos2(screen.left() - width * (1.0 - t), screen.top()))
-            .show(ctx, |ui| {
-                Frame::none().fill(bar_fill()).rounding(egui::Rounding { ne: 16.0, se: 16.0, ..Default::default() })
-                    .inner_margin(Margin { left: 12.0, right: 12.0, top: 18.0, bottom: 18.0 })
-                    .show(ui, |ui| {
-                        mobile_visuals(ui);
-                        ui.set_min_size(vec2(width - 24.0, screen.height() - 36.0));
-                        ui.set_max_width(width - 24.0);
-                        ui.horizontal(|ui| {
-                            ui.add_space(6.0);
-                            ui.label(RichText::new("Winteria").size(26.0).strong().color(ink()));
-                        });
-                        ui.horizontal(|ui| {
-                            ui.add_space(6.0);
-                            ui.add(egui::Label::new(RichText::new(&self.project.name).size(13.0).color(muted())).truncate());
-                        });
-                        ui.add_space(14.0);
-                        egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
-                            mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_studio_drawer_quick")
-                                .auto_shrink([false, true]).show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 2.0;
-                                        self.m_studio_quick_controls(ui, ctx, 40.0);
-                                        #[cfg(not(target_arch = "wasm32"))]
-                                        self.m_render_track_button(ui, ctx, 40.0);
-                                    });
+                mobile_visuals(ui);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 3.0;
+                    dock_menu(ui, Icon::Menu, "Project actions", false, |ui| {
+                        self.m_studio_project_actions(ui, ctx);
+                    });
+                    if self.m_sec == SEC_PLAYLIST {
+                        self.m_studio_browser_button(ui, ctx, TOUCH);
+                    } else if dock_icon(ui, Icon::Folder, false, "Browser").clicked() {
+                        self.m_select_studio_section(ctx, SEC_PLAYLIST);
+                        ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_browser_open"), true));
+                    }
+                    let width = ui.available_width().max(1.0);
+                    ui.allocate_ui_with_layout(vec2(width, TOUCH), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_studio_top_controls")
+                            .max_width(width).auto_shrink([false, true]).show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 2.0;
+                                    self.m_studio_quick_controls(ui, ctx, 38.0);
+                                    #[cfg(not(target_arch = "wasm32"))]
+                                    self.m_render_track_button(ui, ctx, 38.0);
                                 });
-                            if drawer_row(ui, Icon::Folder, "Browser", false).clicked() {
-                                self.m_select_studio_section(ctx, SEC_PLAYLIST);
-                                ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_browser_open"), true));
-                                close = true;
+                            });
+                    });
+                });
+            });
+    }
+
+    fn m_studio_project_actions(&mut self, ui: &mut Ui, ctx: &egui::Context) {
+        ui.set_min_width(194.0);
+        ui.add(egui::Label::new(RichText::new(&self.project.name).strong()).truncate());
+        ui.separator();
+        mobile_scroll(egui::ScrollArea::vertical()).max_height(ctx.screen_rect().height() * 0.68)
+            .auto_shrink([false, true]).show(ui, |ui| {
+                let rec = if self.record { "Disarm recording" } else { "Arm recording" };
+                let items = [
+                    (Icon::Rewind, "Return to start", 0),
+                    (Icon::Record, rec, 1),
+                    (Icon::Folder, "Save project", 2),
+                    (Icon::Share, "Export or share", 3),
+                    (Icon::FullView, "Full view", 4),
+                    (Icon::Orientation, "Switch to landscape", 5),
+                    (Icon::Settings, "Settings", 7),
+                    (Icon::Exit, "Leave project", 6),
+                ];
+                for (symbol, label, id) in items {
+                    if id == 5 && !cfg!(target_os = "android") {
+                        continue;
+                    }
+                    if drawer_row(ui, symbol, label, id == 1 && self.record).clicked() {
+                        match id {
+                            0 => self.return_to_start(ctx, self.playing()),
+                            1 => self.m_toggle_studio_record(ctx),
+                            2 => { self.m_save_project_to_list(ctx); }
+                            3 => {
+                                self.m_export.open = true;
+                                self.m_export.song = self.m_sec == SEC_PLAYLIST;
                             }
-                            ui.separator();
-                            let rec = if self.record { "Disarm recording" } else { "Arm recording" };
-                            let mut items = vec![
-                                (Icon::Rewind, "Return to start", 0),
-                                (Icon::Record, rec, 1),
-                                (Icon::Folder, "Save project", 2),
-                                (Icon::Share, "Export or share", 3),
-                                (Icon::FullView, "Full view", 4),
-                            ];
-                            if cfg!(target_os = "android") {
-                                items.push((Icon::Orientation, "Switch to landscape", 5));
-                            }
-                            items.push((Icon::Settings, "Settings", 7));
-                            items.push((Icon::Exit, "Leave project", 6));
-                            for (symbol, label, id) in items {
-                                if drawer_row(ui, symbol, label, id == 1 && self.record).clicked() {
-                                    action = Some(id);
+                            4 => ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_studio_full_view"), true)),
+                            5 => ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_studio_landscape"), true)),
+                            7 => {
+                                if self.m_save_pending_project(ctx) {
+                                    self.m_tab = 2;
+                                    self.m_sec = 0;
                                 }
                             }
-                        });
-                    });
-            });
-        if let Some(id) = action {
-            close = true;
-            match id {
-                0 => self.return_to_start(ctx, self.playing()),
-                1 => self.m_toggle_studio_record(ctx),
-                2 => { self.m_save_project_to_list(ctx); }
-                3 => {
-                    self.m_export.open = true;
-                    self.m_export.song = self.m_sec == SEC_PLAYLIST;
-                }
-                4 => ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_studio_full_view"), true)),
-                5 => ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_studio_landscape"), true)),
-                7 => {
-                    if self.m_save_pending_project(ctx) {
-                        self.m_tab = 2;
-                        self.m_sec = 0;
+                            _ => self.m_leave_studio(ctx),
+                        }
+                        ui.close_menu();
+                        break;
                     }
                 }
-                _ => self.m_leave_studio(ctx),
-            }
-        }
-        if close {
-            ctx.data_mut(|d| d.insert_temp(open_id, false));
-        }
-        ctx.request_repaint();
+            });
     }
 
     #[allow(dead_code)]

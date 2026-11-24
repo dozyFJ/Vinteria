@@ -681,3 +681,9 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 
 - Give the existing mobile dark theme a Chat Pulse-inspired graphite-and-silver palette. Graphite Silver uses the Chat Pulse night accent on transport and selection controls, with charcoal cards and neutral grid lines. Light colors and the clip and note palettes are preserved.
 - Native Android visual verification is pending.
+
+### Android 1.0.117
+
+- Restore the portrait top bar for BPM, recording, automation and Browser. Project actions open from the top-bar menu instead of the left drawer.
+- Remove the duplicate project-menu button from the dock and retain the transport and section selector there.
+- Native Android visual and touch verification is pending.
