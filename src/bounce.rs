@@ -185,7 +185,6 @@ fn render_to_audio_in(project: &mut Project, lane: Option<usize>, dir: &Path) ->
         return Ok(None);
     }
     let bars = export::default_bars(&q).max(1);
-    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let settings = ExportSettings { sample_rate: 48000, depth: BitDepth::Pcm16, bars, tail_secs: 1.5 };
     // The imported track runs through the project's master chain on playback.
     q.master_fx = crate::project::MasterFx::default();
@@ -196,31 +195,7 @@ fn render_to_audio_in(project: &mut Project, lane: Option<usize>, dir: &Path) ->
     if data.iter().fold(0.0f32, |m, v| m.max(v.abs())) < 1e-4 {
         return Ok(None);
     }
-    let clean = |s: &str| -> String { s.chars().map(|ch| if ch.is_alphanumeric() { ch } else { '_' }).collect() };
-    let base = format!("{}_{}_render", clean(&project.name), clean(&name));
-    let (file, writer) = (1_u32..).find_map(|take| {
-        let name = if take == 1 { base.clone() } else { format!("{base}_{take}") };
-        let path = dir.join(format!("{name}.wav"));
-        match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(writer) => Some(Ok((path, writer))),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
-            Err(error) => Some(Err(format!("{}: {error}", path.display()))),
-        }
-    }).ok_or("Could not reserve a render file")??;
-    if let Err(error) = export::write_wav_to(std::io::BufWriter::new(writer), &data, &settings) {
-        let _ = std::fs::remove_file(&file);
-        return Err(error);
-    }
-    let mono: Vec<f32> = data.chunks(2).map(|f| (f[0] + f.get(1).copied().unwrap_or(f[0])) * 0.5).collect();
-    let secs = mono.len() as f32 / settings.sample_rate as f32;
-    let idx = project.pool_index(&format!("{name} (render)"), &file.to_string_lossy(), Arc::new(SampleData { rate: settings.sample_rate, mono }));
-    project.arrangement.add_track(TrackKind::Audio);
-    let new_lane = project.arrangement.tracks.len() - 1;
-    project.arrangement.tracks[new_lane].name = format!("{name} (render)");
-    // the render starts at the beginning of the song, so the clip does too
-    let len = ((secs * project.bpm / 60.0 * PPQ as f32).floor() as u32).max(24);
-    project.arrangement.clips.push(Clip::new(idx, new_lane, 0, len, true));
-    project.arrangement.tracks[new_lane].audio_brush = Some(idx);
+    let new_lane = store_render(project, dir, &name, &data, &settings, 0, None)?;
     if let Some(lane) = lane {
         project.arrangement.tracks[lane].mute = true;
         if project.arrangement.tracks[lane].solo {
@@ -236,6 +211,77 @@ fn render_to_audio_in(project: &mut Project, lane: Option<usize>, dir: &Path) ->
     }
     project.song_mode = true;
     Ok(Some(new_lane))
+}
+
+fn store_render(project: &mut Project, dir: &Path, name: &str, data: &[f32], settings: &ExportSettings,
+    start: u32, duration: Option<u32>) -> Result<usize, String>
+{
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let clean = |s: &str| -> String { s.chars().map(|ch| if ch.is_alphanumeric() { ch } else { '_' }).collect() };
+    let base = format!("{}_{}_render", clean(&project.name), clean(name));
+    let (file, writer) = (1_u32..).find_map(|take| {
+        let name = if take == 1 { base.clone() } else { format!("{base}_{take}") };
+        let path = dir.join(format!("{name}.wav"));
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(writer) => Some(Ok((path, writer))),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
+            Err(error) => Some(Err(format!("{}: {error}", path.display()))),
+        }
+    }).ok_or("Could not reserve a render file")??;
+    if let Err(error) = export::write_wav_to(std::io::BufWriter::new(writer), data, settings) {
+        let _ = std::fs::remove_file(&file);
+        return Err(error);
+    }
+    let mono: Vec<f32> = data.chunks(2).map(|f| (f[0] + f.get(1).copied().unwrap_or(f[0])) * 0.5).collect();
+    let secs = mono.len() as f32 / settings.sample_rate as f32;
+    let idx = project.pool_index(&format!("{name} (render)"), &file.to_string_lossy(), Arc::new(SampleData { rate: settings.sample_rate, mono }));
+    project.arrangement.add_track(TrackKind::Audio);
+    let new_lane = project.arrangement.tracks.len() - 1;
+    project.arrangement.tracks[new_lane].name = format!("{name} (render)");
+    let len = duration.unwrap_or_else(|| ((secs * project.bpm / 60.0 * PPQ as f32).floor() as u32).max(24));
+    project.arrangement.clips.push(Clip::new(idx, new_lane, start, len, true));
+    project.arrangement.tracks[new_lane].audio_brush = Some(idx);
+    Ok(new_lane)
+}
+
+pub fn render_selection_to_audio(project: &mut Project, indices: &[usize]) -> Result<Option<usize>, String> {
+    let clips = &project.arrangement.clips;
+    let mut audible = Vec::new();
+    for &index in indices {
+        let Some(clip) = clips.get(index) else { continue; };
+        let Some(track) = project.arrangement.tracks.get(clip.lane) else { continue; };
+        if track.playlist_locked {
+            return Err("Unlock the selected tracks before rendering.".into());
+        }
+        if !clip.mute && (if clip.audio { !project.arrangement.muted(clip.lane) }
+            else { !project.arrangement.silent(clip.lane) })
+        {
+            audible.push(index);
+        }
+    }
+    let Some(start) = audible.iter().map(|&index| clips[index].start).min() else { return Ok(None); };
+    let end = audible.iter().map(|&index| clips[index].end_tick()).max().unwrap_or(start);
+    let mut source = project.clone();
+    source.arrangement.clips = audible.iter().map(|&index| clips[index]).collect();
+    source.master_fx = crate::project::MasterFx::default();
+    source.master_volume = 1.0;
+    source.master_chain.clear();
+    source.master_auto.clear();
+    let settings = ExportSettings { sample_rate: 48000, depth: BitDepth::Pcm16, bars: 1, tail_secs: 0.0 };
+    let data = export::render_range(&source, &settings, start, end)?;
+    if data.iter().all(|value| value.abs() < 1e-4) {
+        return Ok(None);
+    }
+    let lane = store_render(project, Path::new("bounces"), "Rendered selection", &data, &settings, start, Some(end - start))?;
+    let solo = project.arrangement.tracks.iter().any(|track| track.solo);
+    let rendered = &mut project.arrangement.tracks[lane];
+    rendered.rendered_mix = true;
+    rendered.solo = solo;
+    for index in audible {
+        project.arrangement.clips[index].mute = true;
+    }
+    project.song_mode = true;
+    Ok(Some(lane))
 }
 
 /// A fresh Beat track for a pattern: first in the list, plays whatever the pattern holds (drums and per-note instruments).

@@ -74,6 +74,42 @@ pub fn render(project: &Project, s: &ExportSettings) -> Vec<f32> {
     out
 }
 
+/// Render a song interval at its original timeline position. Discard the pre-roll
+/// so sustained notes, sample offsets, automation and effect state reach the start intact.
+pub fn render_range(project: &Project, settings: &ExportSettings, start: u32, end: u32) -> Result<Vec<f32>, String> {
+    if end <= start { return Err("Empty render range".into()); }
+    let bpm = project.bpm.clamp(20.0, 400.0);
+    let frames_at = |tick| (f64::from(tick) * 60.0 * f64::from(settings.sample_rate)
+        / (f64::from(bpm) * f64::from(PPQ))).round() as usize;
+    let first = frames_at(start);
+    let last = frames_at(end);
+    if last > settings.sample_rate as usize * 600 || last.saturating_sub(first) > settings.sample_rate as usize * 300 {
+        return Err("Choose a shorter range within the first ten minutes.".into());
+    }
+    let mut project = project.clone();
+    project.bpm = bpm;
+    project.song_mode = true;
+    project.metronome = false;
+    project.loop_on = true;
+    project.loop_start = 0;
+    project.loop_bars = end.div_ceil(TICKS_PER_BAR).saturating_add(1);
+    let mut engine = Engine::new(settings.sr());
+    engine.set_project(Arc::new(project));
+    engine.play();
+    let mut scratch = [0.0; 2048];
+    let mut discard = first * 2;
+    while discard > 0 {
+        let count = discard.min(scratch.len());
+        engine.render(&mut scratch[..count]);
+        discard -= count;
+    }
+    let mut out = vec![0.0; (last - first) * 2];
+    for chunk in out.chunks_mut(scratch.len()) {
+        engine.render(chunk);
+    }
+    Ok(out)
+}
+
 impl ExportSettings {
     fn sr(&self) -> f32 {
         self.sample_rate as f32
@@ -194,6 +230,12 @@ pub fn export(project: &Project, s: &ExportSettings, path: &Path) -> Result<Stri
     let data = render(project, s);
     write_wav(path, &data, s)?;
     verify_wav(path, &data, s)
+}
+
+pub fn export_range(project: &Project, settings: &ExportSettings, start: u32, end: u32, path: &Path) -> Result<String, String> {
+    let data = render_range(project, settings, start, end)?;
+    write_wav(path, &data, settings)?;
+    verify_wav(path, &data, settings)
 }
 
 #[cfg(test)]

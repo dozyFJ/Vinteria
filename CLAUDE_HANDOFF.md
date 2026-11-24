@@ -443,3 +443,14 @@ Browser открывается слева рядом с Playlist в обеих �
 
 - Android live playback gets 3 dB of output gain ahead of the existing master limiter. Project levels and offline WAV renders use unity output gain.
 - Playback level and limiter behavior still need an on-device listening check.
+
+### Android 1.0.75
+
+- Playlist options export the selected loop to WAV at its exact boundaries, with pre-roll for notes and effects already sounding at its start.
+- Select Audio and MIDI clips, then choose Clips → Render selection. The rendered audio is placed at the original start on a new track. It mutes the rendered source clips and supports Undo.
+- Playlist labels remain readable when clipped at the viewport edge, and grid subdivisions thin out at dense zoom levels.
+- Playlist Select, Clone, Undo and Redo float above the transport at the lower left, leaving the top of the timeline free.
+- Landscape Playlist keeps the track cards, track actions, Add track controls and Master on the right. The right column can collapse, and its mixer drawer works in both orientations.
+- The landscape left toolbar pins Browser for Playlist and uses the floating toolbar for its history buttons.
+- Landscape Piano Roll opens as a bottom sheet with a drag handle and a Full view option.
+- Master is a dedicated Playlist lane in both orientations. With the pencil enabled, choose its card or timeline row to edit the master volume curve.

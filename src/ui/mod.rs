@@ -500,13 +500,18 @@ impl VinteriaApp {
             self.track_render = None;
             self.arr.msg = match result {
                 Ok(Some((project, lane))) => {
+                    if self.is_mobile() {
+                        self.m_playlist_undo_step();
+                    }
                     self.project = project;
                     if self.is_mobile() {
                         self.arr.sel_lane = lane;
                         self.arr.sel_clip = Some(self.project.arrangement.clips.len() - 1);
+                        self.arr.sel.clear();
+                        let start = self.project.arrangement.clips.last().map_or(0, |clip| clip.start);
                         ctx.data_mut(|d| {
                             d.insert_temp(egui::Id::new("m_playlist_reveal_track"), lane);
-                            d.insert_temp(egui::Id::new("m_playlist_reveal_tick"), 0_u32);
+                            d.insert_temp(egui::Id::new("m_playlist_reveal_tick"), start);
                         });
                     }
                     format!("Rendered to {}", self.project.arrangement.tracks[lane].name)
@@ -518,20 +523,26 @@ impl VinteriaApp {
             return false;
         }
 
-        let Some(target) = ctx.data_mut(|d| d.remove_temp::<Option<usize>>(id)) else { return false };
+        let (target, selection) = ctx.data_mut(|d| (
+            d.remove_temp::<Option<usize>>(id),
+            d.remove_temp::<Vec<usize>>(egui::Id::new("render_selection_job")),
+        ));
+        let Some(target) = target.or_else(|| selection.as_ref().map(|_| None)) else { return false; };
         let source_name = match target {
             Some(lane) => {
                 let Some(track) = self.project.arrangement.tracks.get(lane) else { return false };
                 track.name.clone()
             }
+            None if selection.is_some() => "Selected clips".into(),
             None => "Playlist mix".into(),
         };
         let mut project = self.project.clone();
         let (tx, result) = crossbeam_channel::bounded(1);
         let worker = std::thread::Builder::new().name("winteria-track-render".into()).spawn(move || {
-            let result = match target {
-                Some(lane) => crate::bounce::render_track_to_audio(&mut project, lane),
-                None => crate::bounce::render_mix_to_audio(&mut project),
+            let result = match (target, selection) {
+                (_, Some(indices)) => crate::bounce::render_selection_to_audio(&mut project, &indices),
+                (Some(lane), None) => crate::bounce::render_track_to_audio(&mut project, lane),
+                (None, None) => crate::bounce::render_mix_to_audio(&mut project),
             }.map(|lane| lane.map(|lane| (project, lane)));
             let _ = tx.send(result);
         });

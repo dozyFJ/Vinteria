@@ -119,7 +119,17 @@ pub fn take_voice_result() -> Option<Result<PathBuf, String>> {
 
 pub fn export_wav(project: &crate::project::Project, settings: &crate::audio_engine::export::ExportSettings, name: &str) -> Result<(), String> {
     use crate::audio_engine::export;
-    let data = export::render(project, settings);
+    download_rendered_wav(name, export::render(project, settings), settings)
+}
+
+pub fn export_wav_range(project: &crate::project::Project, settings: &crate::audio_engine::export::ExportSettings,
+    name: &str, start: u32, end: u32) -> Result<(), String>
+{
+    download_rendered_wav(name, crate::audio_engine::export::render_range(project, settings, start, end)?, settings)
+}
+
+fn download_rendered_wav(name: &str, data: Vec<f32>, settings: &crate::audio_engine::export::ExportSettings) -> Result<(), String> {
+    use crate::audio_engine::export;
     let mut bytes = Vec::new();
     export::write_wav_to(std::io::Cursor::new(&mut bytes), &data, settings)?;
     download_wav(name, &bytes);
