@@ -664,3 +664,9 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 
 - Simplify the portrait dock section menu to Playlist, Drum Rack, Session and Mixer. Piano Roll remains available from a MIDI clip.
 - Native Android touch verification is pending.
+
+### Android 1.0.114
+
+- Replace portrait Playlist's side rail with a horizontally scrolling row of track cards above the dock. The timeline uses the full width. Track actions, plugin drops, grouping, Master and Add track remain on the strip.
+- Remove section shortcuts from the portrait Studio drawer. They are available from the dock section menu.
+- Native Android touch and layout verification is pending.
