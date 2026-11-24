@@ -670,3 +670,9 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 - Replace portrait Playlist's side rail with a horizontally scrolling row of track cards above the dock. The timeline uses the full width. Track actions, plugin drops, grouping, Master and Add track remain on the strip.
 - Remove section shortcuts from the portrait Studio drawer. They are available from the dock section menu.
 - Native Android touch and layout verification is pending.
+
+### Android 1.0.115
+
+- Polish the portrait track strip with edge padding, automatic reveal when the active track changes and a slim draggable position indicator.
+- Present portrait track actions in a frosted bottom sheet with a drag handle and the existing actions and confirmation.
+- Native Android touch and layout verification is pending.
