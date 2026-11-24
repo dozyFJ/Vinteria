@@ -538,3 +538,9 @@ Browser открывается слева рядом с Playlist в обеих �
 - Mobile Mixer laid out like FL Studio's mixer: a header (Mixer · selected channel, FX / Route / EQ), the channel strips on the left (Master + Insert 1–8: number box, vertical name, green LED mute, pan knob, stereo meter, square fader, coloured dots for the tracks feeding it; double-tap pan or fader resets) and the dock of the selected strip on the right.
 - Dock FX: ten FL-style slots (name, wet knob, on/off LED); an empty slot opens the effect list, a filled one expands Remove, Automate (for a track's own insert) and the effect controls. Route: the tracks playing through the strip with routing picker, volume and mute, "+ Route a track here", and the bus name. EQ (Master): the master EQ and compressor.
 - Checked on the desktop build in mobile mode at 400×860 and 860×400.
+
+### Android 1.0.92
+
+- Phone Browser laid out like Ableton's: search with an Import (+) button on top; left column CATEGORIES (Sounds, Drums, Instruments, Effects) and PLACES (each sample pack and the loose Library files, with counts); right column the items with ▷ to preview a sample (tap again to stop) and a drag grip; "Tap to: …" destination at the bottom. The drawer is wider (96% of a portrait screen, 62% in landscape) to fit both panes. Drums = samples whose name/path looks like a drum (kick, snare, hat, …).
+- Drag a sound straight onto a Playlist track from anywhere on its row: a sideways drag picks it up, an up/down drag scrolls the list. No need to select a track first.
+- Checked on the desktop build in mobile mode at 400×860: dragging Factory Kick by its grip onto Audio 1 and Factory Perc by the row onto Audio 2 creates the clips.

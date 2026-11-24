@@ -3266,10 +3266,11 @@ impl VinteriaApp {
         let id = egui::Id::new("m_browser_open");
         let open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
         let screen = ctx.screen_rect();
+        // wide enough for the two panes (categories / items)
         let width = if screen.width() < screen.height() {
-            (screen.width() * 0.8).min(360.0)
+            (screen.width() * 0.96).min(520.0)
         } else {
-            (screen.width() * 0.45).clamp(220.0, 360.0)
+            (screen.width() * 0.62).clamp(320.0, 600.0)
         };
         let dragging = egui::DragAndDrop::has_any_payload(ctx);
         let drag_id = id.with("dragging");
@@ -3331,99 +3332,238 @@ impl VinteriaApp {
         }
     }
 
+    /// Phone browser laid out like Ableton's: search on top, Categories and Places on the left, the items of the
+    /// selected category or pack on the right (▷ previews a sample), the tap destination at the bottom.
     fn m_browser_items(&mut self, ui: &mut Ui) {
-        let tab_id = egui::Id::new("m_browser_plugins");
         let query_id = egui::Id::new("m_browser_query");
-        let mut plugins = ui.data(|d| d.get_temp::<bool>(tab_id)).unwrap_or(false);
+        let cat_id = egui::Id::new("m_browser_category");
+        let place_id = egui::Id::new("m_browser_place");
+        let preview_id = egui::Id::new("m_browser_preview");
         let mut query = ui.data(|d| d.get_temp::<String>(query_id)).unwrap_or_default();
+        // 0 Sounds, 1 Drums, 2 Instruments, 3 Effects
+        let mut category = ui.data(|d| d.get_temp::<u8>(cat_id)).unwrap_or(0);
+        let mut place = ui.data(|d| d.get_temp::<String>(place_id)).unwrap_or_default();
+        // other screens open the browser on Sounds or on Plugins
+        match ui.data_mut(|d| d.remove_temp::<bool>(egui::Id::new("m_browser_plugins"))) {
+            Some(true) if category < 2 => category = 2,
+            Some(false) if category >= 2 => category = 0,
+            _ => {}
+        }
+        #[cfg(target_arch = "wasm32")]
+        if let Some(files) = crate::web::take_sample_list() {
+            self.lib.files = files;
+        }
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            let half = (ui.available_width() - 4.0) * 0.5;
-            if p_button(ui, "Sounds", !plugins, vec2(half, 36.0)).clicked() {
-                plugins = false;
-            }
-            if p_button(ui, "Plugins", plugins, vec2(half, 36.0)).clicked() {
-                plugins = true;
-            }
-        });
-        ui.add_space(2.0);
-        #[cfg(target_arch = "wasm32")]
-        if !plugins {
-            if let Some(files) = crate::web::take_sample_list() {
-                self.lib.files = files;
-            }
-            ui.horizontal_wrapped(|ui| {
-                if p_button(ui, "Import WAV", false, vec2(100.0, 40.0)).clicked() {
-                    crate::web::choose_sounds(false);
-                }
-                if p_button(ui, "Import folder", false, vec2(108.0, 40.0)).clicked() {
-                    crate::web::choose_sounds(true);
-                }
+            let import_w = if cfg!(any(target_os = "android", target_arch = "wasm32")) { 44.0 } else { 0.0 };
+            ui.add_sized([(ui.available_width() - import_w - 4.0).max(60.0), 34.0],
+                egui::TextEdit::singleline(&mut query).hint_text("Search").vertical_align(egui::Align::Center));
+            #[cfg(target_arch = "wasm32")]
+            ui.menu_button(RichText::new("+").size(18.0), |ui| {
+                if ui.button("Import WAV").clicked() { crate::web::choose_sounds(false); ui.close_menu(); }
+                if ui.button("Import folder").clicked() { crate::web::choose_sounds(true); ui.close_menu(); }
             });
-        }
-        #[cfg(target_os = "android")]
-        if !plugins {
-            let pending = egui::Id::new("m_sound_import_pending");
-            let status = egui::Id::new("m_sound_import_status");
-            let busy = ui.data(|d| d.get_temp::<bool>(pending)).unwrap_or(false);
-            // 0 = single WAVs, 1 = pack from a ZIP, 2 = pack from a folder
-            let mut pick = None;
-            ui.add_enabled_ui(!busy, |ui| {
-                let button = egui::Button::new(RichText::new("+  Import").size(14.0)).min_size(vec2(ui.available_width(), 38.0));
-                egui::menu::menu_custom_button(ui, button, |ui| {
-                    ui.set_min_width(170.0);
-                    for (kind, label) in [(0, "WAV files"), (1, "Pack (.zip)"), (2, "Pack folder")] {
-                        if ui.add(egui::Button::new(label).min_size(vec2(170.0, 40.0))).clicked() {
-                            pick = Some(kind);
-                            ui.close_menu();
+            #[cfg(target_os = "android")]
+            {
+                let pending = egui::Id::new("m_sound_import_pending");
+                let status = egui::Id::new("m_sound_import_status");
+                let busy = ui.data(|d| d.get_temp::<bool>(pending)).unwrap_or(false);
+                let mut pick = None;
+                ui.add_enabled_ui(!busy, |ui| {
+                    let button = egui::Button::new(RichText::new("+").size(18.0)).min_size(vec2(40.0, 34.0));
+                    egui::menu::menu_custom_button(ui, button, |ui| {
+                        ui.set_min_width(170.0);
+                        for (kind, label) in [(0, "WAV files"), (1, "Pack (.zip)"), (2, "Pack folder")] {
+                            if ui.add(egui::Button::new(label).min_size(vec2(170.0, 40.0))).clicked() {
+                                pick = Some(kind);
+                                ui.close_menu();
+                            }
                         }
-                    }
+                    });
                 });
-            });
-            if let Some(kind) = pick {
-                let result = self.android_updater.as_ref()
-                    .ok_or_else(|| "Android file picker is unavailable.".to_owned())
-                    .and_then(|android| if kind == 0 { android.choose_sounds() } else { android.choose_pack(kind == 2) });
-                let hint = match kind {
-                    0 => "Select one or more WAV files.",
-                    1 => "Select a ZIP with WAV files.",
-                    _ => "Select a folder with WAV files.",
-                };
-                ui.data_mut(|d| match result {
-                    Ok(()) => {
-                        d.insert_temp(pending, true);
-                        d.insert_temp(status, hint.to_owned());
-                    }
-                    Err(error) => d.insert_temp(status, error),
-                });
+                if let Some(kind) = pick {
+                    let result = self.android_updater.as_ref()
+                        .ok_or_else(|| "Android file picker is unavailable.".to_owned())
+                        .and_then(|android| if kind == 0 { android.choose_sounds() } else { android.choose_pack(kind == 2) });
+                    let hint = match kind {
+                        0 => "Select one or more WAV files.",
+                        1 => "Select a ZIP with WAV files.",
+                        _ => "Select a folder with WAV files.",
+                    };
+                    ui.data_mut(|d| match result {
+                        Ok(()) => {
+                            d.insert_temp(pending, true);
+                            d.insert_temp(status, hint.to_owned());
+                        }
+                        Err(error) => d.insert_temp(status, error),
+                    });
+                }
             }
-            if let Some(status) = ui.data(|d| d.get_temp::<String>(status)) {
-                ui.label(RichText::new(status).size(11.0).color(muted()));
+        });
+        #[cfg(target_os = "android")]
+        if let Some(status) = ui.data(|d| d.get_temp::<String>(egui::Id::new("m_sound_import_status"))) {
+            ui.label(RichText::new(status).size(11.0).color(muted()));
+        }
+        let filter = query.trim().to_lowercase();
+        let plugins = category >= 2;
+        // packs = first folder under a library root
+        #[cfg(target_arch = "wasm32")]
+        let browser_root = std::path::Path::new("Browser samples");
+        let pack_of = |path: &std::path::Path| -> String {
+            #[cfg(target_arch = "wasm32")]
+            let roots = self.lib.dirs.iter().map(PathBuf::as_path).chain(std::iter::once(browser_root));
+            #[cfg(not(target_arch = "wasm32"))]
+            let roots = self.lib.dirs.iter().map(PathBuf::as_path);
+            roots.into_iter().find_map(|root| path.strip_prefix(root).ok())
+                .filter(|rel| rel.components().count() > 1)
+                .and_then(|rel| rel.components().next())
+                .map(|c| c.as_os_str().to_string_lossy().to_string())
+                .unwrap_or_default()
+        };
+        let mut packs: Vec<(String, usize)> = vec![];
+        for path in &self.lib.files {
+            let pack = pack_of(path);
+            match packs.iter_mut().find(|(name, _)| *name == pack) {
+                Some((_, count)) => *count += 1,
+                None => packs.push((pack, 1)),
             }
         }
-        ui.add_sized([ui.available_width(), 34.0], egui::TextEdit::singleline(&mut query).hint_text("Search")
-            .vertical_align(egui::Align::Center));
-        let filter = query.trim().to_lowercase();
-        ui.data_mut(|d| {
-            d.insert_temp(tab_id, plugins);
-            d.insert_temp(query_id, query);
-        });
+        packs.sort_by_key(|(name, _)| (name.is_empty(), name.to_lowercase()));
+        const DRUM_WORDS: [&str; 13] = ["kick", "snare", "clap", "hat", "perc", "drum", "tom", "rim", "cymbal", "crash", "ride", "808", "shaker"];
+        let files: Vec<PathBuf> = if plugins { vec![] } else {
+            self.lib.files.iter().filter(|path| {
+                let name = path.to_string_lossy().to_lowercase();
+                (filter.is_empty() || path.file_stem().unwrap_or_default().to_string_lossy().to_lowercase().contains(&filter))
+                    && (category != 1 || DRUM_WORDS.iter().any(|word| name.contains(word)))
+                    // "" = everything, "/" = loose files outside any pack, otherwise one pack
+                    && (place.is_empty() || pack_of(path) == if place == "/" { "" } else { place.as_str() })
+            }).cloned().collect()
+        };
+        let picking_clip = ui.data(|d| d.get_temp::<(usize, u32)>(egui::Id::new("m_audio_clip_target"))).is_some();
         let midi_available = self.project.arrangement.tracks.get(self.arr.sel_lane)
             .is_some_and(|track| track.kind == crate::arrangement::TrackKind::Midi);
         let midi_destination = DRUM_NAMES.len();
         let drum_id = egui::Id::new("m_browser_drum_destination");
         let mut drum_destination = ui.data(|d| d.get_temp::<usize>(drum_id))
             .filter(|&lane| lane < DRUM_NAMES.len() || (lane == midi_destination && midi_available));
-        let picking_clip = ui.data(|d| d.get_temp::<(usize, u32)>(egui::Id::new("m_audio_clip_target"))).is_some();
-        if !plugins && !picking_clip {
+        let mut sound = None;
+        let mut drum = None;
+        let mut instrument = None;
+        let mut effect = None;
+        let mut preview = ui.data(|d| d.get_temp::<PathBuf>(preview_id));
+        let mut preview_toggle: Option<PathBuf> = None;
+
+        let bottom_h = if plugins || picking_clip { 0.0 } else { 38.0 };
+        let body = ui.available_rect_before_wrap();
+        let body = Rect::from_min_max(body.min + vec2(0.0, 4.0), pos2(body.right(), body.bottom() - bottom_h));
+        let left_w = (body.width() * 0.36).clamp(96.0, 160.0);
+        let left = Rect::from_min_max(body.min, pos2(body.left() + left_w, body.bottom()));
+        let right = Rect::from_min_max(pos2(left.right() + 6.0, body.top()), body.max);
+        ui.allocate_rect(body, Sense::hover());
+        ui.painter().rect_filled(left, 8.0, card_fill().gamma_multiply(0.7));
+        ui.painter().rect_filled(right, 8.0, card_fill().gamma_multiply(0.45));
+        // left: categories and places
+        let mut side = ui.new_child(egui::UiBuilder::new().id_salt("m_browser_side").max_rect(left.shrink(4.0)));
+        side.set_clip_rect(left.intersect(ui.clip_rect()));
+        mobile_scroll(egui::ScrollArea::vertical()).id_salt("m_browser_side_scroll").auto_shrink([false, false])
+            .show(&mut side, |ui| {
+                let entry = |ui: &mut Ui, label: &str, active: bool| -> bool {
+                    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::click());
+                    if active {
+                        ui.painter().rect_filled(rect, 6.0, selected_fill());
+                        ui.painter().rect_filled(Rect::from_min_size(rect.min, vec2(3.0, rect.height())), 1.5, p_accent());
+                    }
+                    fit_label(ui.painter(), rect.shrink2(vec2(8.0, 0.0)), rect.center().y, label, if active { ink() } else { muted() }, 13.0);
+                    response.clicked()
+                };
+                ui.label(RichText::new("CATEGORIES").size(10.0).color(muted()));
+                for (index, label) in ["Sounds", "Drums", "Instruments", "Effects"].into_iter().enumerate() {
+                    if entry(ui, label, category == index as u8 && (index >= 2 || place.is_empty())) {
+                        category = index as u8;
+                        place.clear();
+                    }
+                }
+                ui.add_space(6.0);
+                ui.label(RichText::new("PLACES").size(10.0).color(muted()));
+                for (pack, count) in &packs {
+                    let label = if pack.is_empty() { format!("Library ({count})") } else { format!("{pack} ({count})") };
+                    let key = if pack.is_empty() { "/".to_owned() } else { pack.clone() };
+                    if entry(ui, &label, category == 0 && place == key) {
+                        category = 0;
+                        place = key;
+                    }
+                }
+                if packs.is_empty() {
+                    ui.label(RichText::new("No sample packs yet. Use + to import.").size(10.0).color(muted()));
+                }
+            });
+        // right: the items
+        let mut list = ui.new_child(egui::UiBuilder::new().id_salt("m_browser_list_ui").max_rect(right.shrink(4.0)));
+        list.set_clip_rect(right.intersect(ui.clip_rect()));
+        list.horizontal(|ui| {
+            ui.label(RichText::new("Name").size(11.0).color(muted()));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let count = match category { 2 => Track::ALL.len(), 3 => crate::fx::ALL.len(), _ => files.len() };
+                ui.label(RichText::new(count.to_string()).size(11.0).color(muted()));
+            });
+        });
+        mobile_scroll(egui::ScrollArea::vertical()).id_salt(("m_browser_list", category, place.clone()))
+            .auto_shrink([false, false]).show(&mut list, |ui| {
+                match category {
+                    2 => for track in Track::ALL {
+                        if track.name().to_lowercase().contains(&filter)
+                            && browser_list_row(ui, track.name(), None, browser::DragItem::Instrument(track)).0.clicked()
+                        {
+                            instrument = Some(track);
+                        }
+                    },
+                    3 => for kind in crate::fx::ALL {
+                        if kind.name().to_lowercase().contains(&filter) && browser_list_row(ui, kind.name(), None, kind).0.clicked() {
+                            effect = Some(kind);
+                        }
+                    },
+                    _ => {
+                        if files.is_empty() {
+                            ui.label(RichText::new(if self.lib.files.is_empty() { "No WAV files in the sample library." } else { "Nothing matches." })
+                                .size(12.0).color(muted()));
+                        }
+                        for path in &files {
+                            let name = path.file_stem().unwrap_or_default().to_string_lossy();
+                            let playing = preview.as_ref() == Some(path);
+                            let (response, play) = browser_list_row(ui, &name, Some(playing), browser::DragItem::Sample(path.clone()));
+                            let response = response.on_hover_text("Tap to use · ▷ to listen · hold for drum pads");
+                            response.context_menu(|ui| {
+                                ui.label("Assign to drum pad");
+                                for (lane, label) in DRUM_NAMES.iter().enumerate() {
+                                    if ui.button(*label).clicked() {
+                                        drum = Some((lane, path.clone()));
+                                        ui.close_menu();
+                                    }
+                                }
+                            });
+                            if play {
+                                preview_toggle = Some(path.clone());
+                            } else if response.clicked() {
+                                if let Some(lane) = drum_destination.filter(|_| !picking_clip) {
+                                    drum = Some((lane, path.clone()));
+                                } else {
+                                    sound = Some(path.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        // bottom: where a tapped sample goes
+        if bottom_h > 0.0 {
             let destination = match drum_destination {
                 Some(lane) => DRUM_NAMES.get(lane).copied().unwrap_or("Selected MIDI track"),
                 None => self.project.arrangement.tracks.get(self.arr.sel_lane)
                     .filter(|track| track.kind == crate::arrangement::TrackKind::Audio)
                     .map_or("New audio track", |track| track.name.as_str()),
             };
-            let dest_button = egui::Button::new(RichText::new(format!("Tap to: {destination}")).size(12.0).color(muted()))
-                .min_size(vec2(ui.available_width(), 30.0)).truncate();
+            let dest_button = egui::Button::new(RichText::new(format!("Tap to: {destination}")).size(12.0).color(ink()))
+                .min_size(vec2(ui.available_width(), 32.0)).truncate();
             egui::menu::menu_custom_button(ui, dest_button, |ui| {
                 if ui.selectable_value(&mut drum_destination, None, "Audio clip").clicked() {
                     ui.close_menu();
@@ -3437,104 +3577,33 @@ impl VinteriaApp {
                         ui.close_menu();
                     }
                 }
-            }).response.on_hover_text("Tap a sample to assign it here");
-            ui.data_mut(|d| {
-                if let Some(lane) = drum_destination {
-                    d.insert_temp(drum_id, lane);
-                } else {
-                    d.remove::<usize>(drum_id);
-                }
-            });
+            }).response.on_hover_text("Tap a sample to put it here");
         }
-        let mut sound = None;
-        let mut drum = None;
-        let mut instrument = None;
-        let mut effect = None;
-        mobile_scroll(egui::ScrollArea::vertical()).id_salt(("m_browser_list", plugins)).show(ui, |ui| {
-            if plugins {
-                for track in Track::ALL {
-                    if track.name().to_lowercase().contains(&filter)
-                        && browser_drag_row(ui, track.name(), browser::DragItem::Instrument(track)).clicked()
-                    {
-                        instrument = Some(track);
-                    }
-                }
-                ui.separator();
-                for kind in crate::fx::ALL {
-                    if kind.name().to_lowercase().contains(&filter)
-                        && browser_drag_row(ui, kind.name(), kind).clicked()
-                    {
-                        effect = Some(kind);
-                    }
-                }
+        if let Some(path) = preview_toggle {
+            if preview.as_ref() == Some(&path) {
+                self.shared.send(Cmd::PreviewStop);
+                preview = None;
             } else {
-                if self.lib.files.is_empty() {
-                    ui.label("No WAV files in the sample library.");
+                match crate::project::load_wav(&path) {
+                    Ok(data) => {
+                        self.shared.send(Cmd::Preview(std::sync::Arc::new(data)));
+                        preview = Some(path);
+                    }
+                    Err(error) => self.arr.msg = error,
                 }
-                // samples grouped by pack (the first folder under a library root); a search shows a flat list
-                let mut groups: Vec<(String, Vec<PathBuf>)> = vec![];
-                for path in &self.lib.files {
-                    let name = path.file_stem().unwrap_or_default().to_string_lossy().to_lowercase();
-                    if !filter.is_empty() && !name.contains(&filter) {
-                        continue;
-                    }
-                    #[cfg(target_arch = "wasm32")]
-                    let root = std::path::Path::new("Browser samples");
-                    #[cfg(target_arch = "wasm32")]
-                    let roots = self.lib.dirs.iter().map(PathBuf::as_path).chain(std::iter::once(root));
-                    #[cfg(not(target_arch = "wasm32"))]
-                    let roots = self.lib.dirs.iter().map(PathBuf::as_path);
-                    let pack = if filter.is_empty() {
-                        roots.into_iter().find_map(|root| path.strip_prefix(root).ok())
-                            .filter(|rel| rel.components().count() > 1)
-                            .and_then(|rel| rel.components().next())
-                            .map(|c| c.as_os_str().to_string_lossy().to_string())
-                            .unwrap_or_default()
-                    } else {
-                        String::new()
-                    };
-                    match groups.iter_mut().find(|(g, _)| *g == pack) {
-                        Some((_, files)) => files.push(path.clone()),
-                        None => groups.push((pack, vec![path.clone()])),
-                    }
-                }
-                groups.sort_by_key(|(g, _)| (g.is_empty(), g.to_lowercase()));
-                let mut row = |ui: &mut Ui, path: &PathBuf| {
-                    let name = path.file_stem().unwrap_or_default().to_string_lossy();
-                    let response = browser_drag_row(ui, &name, browser::DragItem::Sample(path.clone()))
-                        .on_hover_text("Hold to assign to a drum pad");
-                    response.context_menu(|ui| {
-                        ui.label("Assign to drum pad");
-                        for (lane, label) in DRUM_NAMES.iter().enumerate() {
-                            if ui.button(*label).clicked() {
-                                drum = Some((lane, path.clone()));
-                                ui.close_menu();
-                            }
-                        }
-                    });
-                    if response.clicked() {
-                        if let Some(lane) = drum_destination.filter(|_| !picking_clip) {
-                            drum = Some((lane, path.clone()));
-                        } else {
-                            sound = Some(path.clone());
-                        }
-                    }
-                };
-                for (pack, files) in &groups {
-                    if pack.is_empty() {
-                        for path in files {
-                            row(ui, path);
-                        }
-                    } else {
-                        egui::CollapsingHeader::new(RichText::new(format!("{pack}  ({})", files.len())).strong())
-                            .id_salt(("m_pack", pack)).default_open(false)
-                            .show(ui, |ui| {
-                                for path in files {
-                                    row(ui, path);
-                                }
-                            });
-                    }
-                }
+            }
+        }
+        ui.data_mut(|d| {
+            d.insert_temp(query_id, query);
+            d.insert_temp(cat_id, category);
+            d.insert_temp(place_id, place);
+            match preview {
+                Some(path) => d.insert_temp(preview_id, path),
+                None => d.remove::<PathBuf>(preview_id),
+            }
+            match drum_destination {
+                Some(lane) => d.insert_temp(drum_id, lane),
+                None => d.remove::<usize>(drum_id),
             }
         });
         if let Some((lane, path)) = drum {
@@ -5845,6 +5914,17 @@ fn playlist_clip_bar(ctx: &egui::Context, id: egui::Id, anchor: Pos2, actions: &
     action
 }
 
+/// One line of text cut to `rect`, vertically centred on `y`.
+fn fit_label(painter: &egui::Painter, rect: Rect, y: f32, text: &str, color: Color32, size: f32) {
+    if rect.width() < 15.0 || !rect.is_positive() {
+        return;
+    }
+    let mut job = egui::text::LayoutJob::single_section(text.to_owned(), egui::TextFormat::simple(FontId::proportional(size), color));
+    job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width());
+    let galley = painter.layout_job(job);
+    painter.with_clip_rect(rect).galley(pos2(rect.left(), y - galley.size().y * 0.5), galley, color);
+}
+
 fn playlist_label(painter: &egui::Painter, rect: Rect, y: f32, text: &str, color: Color32) {
     if rect.width() < 15.0 || !rect.is_positive() {
         return;
@@ -5976,25 +6056,67 @@ fn portrait_view(ui: &Ui) -> bool {
     screen.width() < screen.height()
 }
 
-fn browser_drag_row<T: std::any::Any + Send + Sync>(ui: &mut Ui, label: &str, item: T) -> Response {
+/// A browser list row: ▷ (samples only, filled while previewing), the name, and a drag grip on the right.
+/// Returns the row response and whether ▷ was tapped.
+fn browser_list_row<T: std::any::Any + Send + Sync>(ui: &mut Ui, label: &str, preview: Option<bool>, item: T) -> (Response, bool) {
     let width = ui.available_width();
-    let (rect, response) = ui.allocate_exact_size(vec2(width, 40.0), Sense::click());
-    let grip_rect = Rect::from_min_size(rect.min, vec2(26.0, rect.height()));
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 36.0), Sense::click_and_drag());
+    let grip_rect = Rect::from_min_max(pos2(rect.right() - 26.0, rect.top()), rect.max);
     let grip = ui.interact(grip_rect, response.id.with("grip"), Sense::drag());
-    grip.dnd_set_drag_payload(item);
-    let p = ui.painter();
-    let fill = if response.is_pointer_button_down_on() { selected_fill() } else { card_fill() };
-    p.rect_filled(rect.shrink2(vec2(0.0, 2.0)), 10.0, fill);
-    for col in [-3.0, 3.0] {
-        for row in [-6.0, 0.0, 6.0] {
-            p.circle_filled(grip_rect.center() + vec2(col + 2.0, row), 1.6, muted());
+    let mut item = Some(item);
+    if grip.dragged() {
+        if let Some(item) = item.take() {
+            grip.dnd_set_drag_payload(item);
         }
     }
-    let text = Rect::from_min_max(pos2(grip_rect.right() + 4.0, rect.top()), pos2(rect.right() - 8.0, rect.bottom()));
-    let galley = ui.painter().layout(label.to_owned(), FontId::proportional(13.5), ink(), f32::INFINITY);
-    let mut job = egui::text::LayoutJob::single_section(label.to_owned(), egui::TextFormat::simple(FontId::proportional(13.5), ink()));
-    job.wrap = egui::text::TextWrapping::truncate_at_width(text.width());
-    let shown = if galley.size().x > text.width() { ui.painter().layout_job(job) } else { galley };
-    p.galley(pos2(text.left(), text.center().y - shown.size().y * 0.5), shown, ink());
-    response.union(grip)
+    // the whole row: a sideways drag picks the item up (drop it on a Playlist track), an up/down drag scrolls the list
+    let gesture = response.id.with("gesture");
+    if response.drag_started() {
+        ui.data_mut(|d| d.remove::<bool>(gesture));
+    }
+    if response.dragged() {
+        let mut sideways = ui.data(|d| d.get_temp::<bool>(gesture));
+        if sideways.is_none() {
+            let moved = ui.input(|i| i.pointer.press_origin().zip(i.pointer.interact_pos()).map(|(a, b)| b - a));
+            if let Some(moved) = moved.filter(|m| m.length() >= 8.0) {
+                sideways = Some(moved.x.abs() > moved.y.abs());
+                ui.data_mut(|d| d.insert_temp(gesture, moved.x.abs() > moved.y.abs()));
+            }
+        }
+        match sideways {
+            Some(true) => if let Some(item) = item.take() {
+                egui::DragAndDrop::set_payload(ui.ctx(), item);
+            },
+            Some(false) => ui.scroll_with_delta(vec2(0.0, response.drag_delta().y)),
+            None => {}
+        }
+    }
+    let p = ui.painter();
+    if response.is_pointer_button_down_on() {
+        p.rect_filled(rect.shrink2(vec2(0.0, 1.0)), 6.0, selected_fill());
+    }
+    p.line_segment([rect.left_bottom(), rect.right_bottom()], Stroke::new(0.5, grid_line()));
+    let mut text_left = rect.left() + 6.0;
+    let mut played = false;
+    if let Some(playing) = preview {
+        let play_rect = Rect::from_min_size(rect.min, vec2(30.0, rect.height()));
+        let c = play_rect.center();
+        let tri = vec![c + vec2(-4.0, -6.0), c + vec2(6.0, 0.0), c + vec2(-4.0, 6.0)];
+        if playing {
+            p.add(Shape::convex_polygon(tri, p_accent(), Stroke::NONE));
+        } else {
+            p.add(Shape::closed_line(tri, Stroke::new(1.3, muted())));
+        }
+        played = ui.interact(play_rect, response.id.with("play"), Sense::click()).on_hover_text("Listen").clicked();
+        text_left = play_rect.right();
+    }
+    for col in [-3.0, 3.0] {
+        for row in [-6.0, 0.0, 6.0] {
+            p.circle_filled(grip_rect.center() + vec2(col, row), 1.4, muted());
+        }
+    }
+    let text = Rect::from_min_max(pos2(text_left, rect.top()), pos2(grip_rect.left() - 2.0, rect.bottom()));
+    fit_label(p, text, rect.center().y, label, if preview == Some(true) { p_accent() } else { ink() }, 13.0);
+    (response.union(grip), played)
 }
+
