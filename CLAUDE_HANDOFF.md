@@ -620,3 +620,8 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 - Piano Roll has a Select mode on the ruler. Tap a beat or drag over multiple beats, then Copy → duplicates their notes into the next beat range. Copy can extend the clip when space permits, and forks shared patterns before editing.
 - Portrait Piano Roll puts transport and tools in one horizontally scrolling toolbar. Loop selection remains available when Select is off.
 - Android touch verification is pending.
+
+### Android 1.0.106
+
+- In Piano Roll Select mode, drag on empty grid to select notes with a marquee. Drag a selected note to move the group in time and pitch, with grid snap and a live preview. The selection has a contrasting outline in both themes. Ruler selection and Copy → remain available.
+- Native Android touch verification is pending.

@@ -2464,11 +2464,14 @@ impl VinteriaApp {
         }
         let mut pi = pi;
         if history_changed {
-            ui.data_mut(|d| d.remove::<String>(length_error_id));
+            ui.data_mut(|d| {
+                d.remove::<String>(length_error_id);
+                d.remove::<Vec<usize>>(copy_id.with(("notes", pi)));
+            });
             ui.ctx().request_repaint();
             return close;
         }
-        ui.label(RichText::new(if selecting { "Tap or drag the ruler to select beats · Copy →" } else if slide_mode { "Tap a note to toggle slide" } else { "Drag the ruler to loop · Double-tap a note to delete" })
+        ui.label(RichText::new(if selecting { "Drag empty grid to select · Drag a selected note to move" } else if slide_mode { "Tap a note to toggle slide" } else { "Drag the ruler to loop · Double-tap a note to delete" })
             .size(11.0).color(muted()));
         if extend {
             match self.m_extend_piano(pi, clip_index) {
@@ -2591,7 +2594,7 @@ impl VinteriaApp {
         let grid_id = ("m_piano_grid_pc", editor);
         let initialized = egui::Id::new((grid_id, "initialized"));
         let mut scroll = mobile_scroll(egui::ScrollArea::both()).id_salt(grid_id)
-            .drag_to_scroll(!pinching).max_height(grid.height()).auto_shrink([false, false]);
+            .drag_to_scroll(!pinching && !selecting).max_height(grid.height()).auto_shrink([false, false]);
         // no auto-follow: the view stays where the user scrolled it, only the playhead line moves
         let first_view = !ui.data(|d| d.get_temp::<bool>(initialized)).unwrap_or(false);
         if first_view || oct != previous_oct {
@@ -2602,7 +2605,8 @@ impl VinteriaApp {
             scroll = if axis == 0 { scroll.horizontal_scroll_offset(offset) } else { scroll.vertical_scroll_offset(offset) };
         }
         let out = scroll.show(&mut grid_ui, |ui| {
-            let (rect, resp) = ui.allocate_exact_size(vec2(duration as f32 / TICKS_PER_STEP as f32 * step_w, rows as f32 * row_h), Sense::click());
+            let grid_sense = if selecting && !pinching { Sense::click_and_drag() } else { Sense::click() };
+            let (rect, resp) = ui.allocate_exact_size(vec2(duration as f32 / TICKS_PER_STEP as f32 * step_w, rows as f32 * row_h), grid_sense);
             let p = ui.painter_at(rect);
             panel(&p, rect, 4.0);
             // after Oct − / +: the octave that came into view glows for a moment
@@ -2665,6 +2669,97 @@ impl VinteriaApp {
                 let color = if record_step.is_some() { RED } else { p_accent() };
                 p.line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], Stroke::new(2.0, color));
             }
+            let body = |len: u32, pitch: u8, start: u32| {
+                let visible_start = start.max(clip_start);
+                let visible_len = start.saturating_add(len).min(pattern_end).saturating_sub(visible_start);
+                let x = rect.left() + visible_start.saturating_sub(clip_start) as f32 / TICKS_PER_STEP as f32 * step_w;
+                let y = rect.top() + (high_pitch - pitch) as f32 * row_h;
+                let width = (visible_len as f32 / TICKS_PER_STEP as f32 * step_w).max(6.0);
+                Rect::from_min_size(pos2(x + 1.0, y + 1.0), vec2(width - 2.0, row_h - 2.0))
+            };
+            let selected_id = copy_id.with(("notes", pi));
+            let drag_id = selected_id.with("drag");
+            let notes = &self.project.patterns[pi].notes;
+            let mut selected = ui.data(|d| d.get_temp::<Vec<usize>>(selected_id)).unwrap_or_default();
+            let editable = |note: &crate::piano_roll::Note| {
+                note.start >= clip_start && note.start.saturating_add(note.len) <= editable_end
+                    && note.pitch <= high_pitch
+            };
+            selected.retain(|&index| notes.get(index).is_some_and(editable));
+            let mut group_delta = (0i64, 0i32);
+            let mut commit_group = false;
+            if !selecting || pinching {
+                ui.data_mut(|d| {
+                    d.remove::<(Pos2, Pos2, bool)>(drag_id);
+                    if !selecting {
+                        d.remove::<Vec<usize>>(selected_id);
+                    }
+                });
+            } else {
+                let mut drag = ui.data(|d| d.get_temp::<(Pos2, Pos2, bool)>(drag_id));
+                let note_at = |point: Pos2| notes.iter().enumerate().rev().find(|(_, note)| {
+                    editable(note) && body(note.len, note.pitch, note.start).expand(1.0).contains(point)
+                }).map(|(index, _)| index);
+                let point = resp.interact_pointer_pos();
+                if resp.drag_started() {
+                    if let Some(origin) = ui.input(|input| input.pointer.press_origin()).or(point) {
+                        let moving = if let Some(index) = note_at(origin) {
+                            if !selected.contains(&index) {
+                                selected = vec![index];
+                            }
+                            true
+                        } else {
+                            false
+                        };
+                        drag = Some((origin, origin, moving));
+                    }
+                }
+                if let Some((origin, last, moving)) = drag.filter(|_| resp.dragged() || resp.drag_stopped()) {
+                    let point = point.unwrap_or(last).clamp(p.clip_rect().min, p.clip_rect().max);
+                    if moving && !selected.is_empty() {
+                        let mut min_start = editable_end;
+                        let mut max_end = clip_start;
+                        let mut min_pitch = high_pitch;
+                        let mut max_pitch = 0;
+                        for index in &selected {
+                            let note = notes[*index];
+                            min_start = min_start.min(note.start);
+                            max_end = max_end.max(note.start + note.len);
+                            min_pitch = min_pitch.min(note.pitch);
+                            max_pitch = max_pitch.max(note.pitch);
+                        }
+                        let step = i64::from(snap);
+                        let left = i64::from(min_start - clip_start) / step;
+                        let right = i64::from(editable_end - max_end) / step;
+                        let units = ((point.x - origin.x) / pixels_per_tick / snap as f32).round() as i64;
+                        let semitones = ((origin.y - point.y) / row_h).round() as i32;
+                        group_delta = (units.clamp(-left, right) * step,
+                            semitones.clamp(-i32::from(min_pitch), i32::from(high_pitch - max_pitch)));
+                        commit_group = resp.drag_stopped() && !selected.is_empty() && group_delta != (0, 0);
+                    } else {
+                        let area = Rect::from_two_pos(origin, point);
+                        selected = notes.iter().enumerate().filter(|(_, note)| {
+                            editable(note) && area.intersects(body(note.len, note.pitch, note.start))
+                        }).map(|(index, _)| index).collect();
+                        p.rect_filled(area, 3.0, p_accent().gamma_multiply(0.18));
+                        p.rect_stroke(area, 3.0, Stroke::new(1.2, p_accent()));
+                    }
+                    drag = (!resp.drag_stopped()).then_some((origin, point, moving));
+                } else if resp.clicked() {
+                    selected = point.and_then(note_at).into_iter().collect();
+                    drag = None;
+                } else if !ui.input(|input| input.pointer.primary_down()) {
+                    drag = None;
+                }
+                ui.data_mut(|d| {
+                    d.insert_temp(selected_id, selected.clone());
+                    if let Some(drag) = drag {
+                        d.insert_temp(drag_id, drag);
+                    } else {
+                        d.remove::<(Pos2, Pos2, bool)>(drag_id);
+                    }
+                });
+            }
             let tap_id = resp.id.with("last_piano_note_tap");
             let mut remove = None;
             let mut toggle_slide = None;
@@ -2699,22 +2794,14 @@ impl VinteriaApp {
                 if note.pitch > high_pitch || note.start >= editable_end || note.start.saturating_add(note.len) <= clip_start {
                     continue;
                 }
-                let body = |len: u32, pitch: u8, start: u32| {
-                    let visible_start = start.max(clip_start);
-                    let visible_len = start.saturating_add(len).min(pattern_end).saturating_sub(visible_start);
-                    let x = rect.left() + visible_start.saturating_sub(clip_start) as f32 / TICKS_PER_STEP as f32 * step_w;
-                    let y = rect.top() + (high_pitch - pitch) as f32 * row_h;
-                    let width = (visible_len as f32 / TICKS_PER_STEP as f32 * step_w).max(6.0);
-                    Rect::from_min_size(pos2(x + 1.0, y + 1.0), vec2(width - 2.0, row_h - 2.0))
-                };
                 let original = body(note.len, note.pitch, note.start);
                 let id = resp.id.with(("note", index));
-                let note_response = ui.interact(original.expand(1.0), id, if pinching { Sense::hover() } else { Sense::click_and_drag() })
+                let note_response = ui.interact(original.expand(1.0), id, if selecting || pinching { Sense::hover() } else { Sense::click_and_drag() })
                     .on_hover_cursor(egui::CursorIcon::Grab);
                 let edge = Rect::from_min_max(
                     pos2(original.right() - original.width().min(14.0), original.top()),
                     original.right_bottom());
-                let handle = ui.interact(edge, id.with("length"), if pinching { Sense::hover() } else { Sense::click_and_drag() })
+                let handle = ui.interact(edge, id.with("length"), if selecting || pinching { Sense::hover() } else { Sense::click_and_drag() })
                     .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
                 let max_len = editable_end - note.start;
                 let mut len = note.len;
@@ -2762,8 +2849,16 @@ impl VinteriaApp {
                         }
                     }
                 }
+                let highlighted = selecting && selected.contains(&index);
+                if highlighted {
+                    start = (i64::from(start) + group_delta.0) as u32;
+                    pitch = (i32::from(pitch) + group_delta.1) as u8;
+                }
                 let visual = body(len, pitch, start);
-                p.rect_filled(visual, 5.0, piano_note_fill());
+                p.rect_filled(visual, 5.0, if highlighted { pick(0xFFDCEAFF, 0xFFC5DDF7) } else { piano_note_fill() });
+                if highlighted {
+                    p.rect_stroke(visual, 5.0, Stroke::new(1.4, pick(0xFF89B3FF, 0xFF345983)));
+                }
                 if note.slide { piano_slide_mark(&p, visual); }
                 let grip = Rect::from_center_size(visual.right_center() - vec2(3.0, 0.0), vec2(2.0, 10.0));
                 p.rect_filled(grip, 1.0, Color32::WHITE.linear_multiply(0.8));
@@ -2795,7 +2890,16 @@ impl VinteriaApp {
                     }
                 }
             }
-            if pinching {
+            if commit_group {
+                self.m_playlist_undo_step();
+                let pattern = &mut self.project.patterns[pi];
+                for index in selected {
+                    let note = &mut pattern.notes[index];
+                    note.start = (i64::from(note.start) + group_delta.0) as u32;
+                    note.pitch = (i32::from(note.pitch) + group_delta.1) as u8;
+                    pattern.length_steps = pattern.length_steps.max((note.start + note.len).div_ceil(TICKS_PER_STEP));
+                }
+            } else if pinching || selecting {
                 ui.data_mut(|d| d.remove::<(usize, u32, u8, f64)>(tap_id));
             } else if let Some((index, len, pitch, start)) = edit {
                 self.m_playlist_undo_step();
