@@ -4142,22 +4142,11 @@ impl VinteriaApp {
                 }
 
             }
-            if show_master {
+            if show_master && automation && self.arr.auto_master {
                 let area = Rect::from_min_size(pos2(gx, gy + row_count as f32 * lane_h), vec2(rect.width(), lane_h));
-                let fill = if self.arr.auto_master { selected_fill() } else { card_fill() };
-                p.rect_filled(area, 0.0, fill);
+                p.rect_filled(area, 0.0, selected_fill());
                 p.hline(area.x_range(), area.top(), Stroke::new(1.0, outline()));
-                if self.arr.auto_master && automation {
-                    self.m_playlist_automation(ui, area, bar_w, bars, pinching, true);
-                } else {
-                    let visible = area.intersect(grid).intersect(ui.clip_rect());
-                    if visible.is_positive() {
-                        p.text(visible.left_center() + vec2(8.0, 0.0), Align2::LEFT_CENTER,
-                            "Master volume", FontId::proportional(11.0), muted());
-                        let row = ui.interact(visible, resp.id.with("master_track"), Sense::click());
-                        select_master = !pinching && !select_mode && row.clicked();
-                    }
-                }
+                self.m_playlist_automation(ui, area, bar_w, bars, pinching, true);
             }
             if let Some(row) = track_rows[self.arr.sel_lane].filter(|_| automation && !self.arr.auto_master
                 && !self.project.arrangement.tracks[self.arr.sel_lane].playlist_locked)

@@ -458,3 +458,7 @@ Browser открывается слева рядом с Playlist в обеих �
 ### Android 1.0.76
 
 - Refresh the flat mobile theme in light and dark modes. Improve control press states and the Playlist's visual contrast between clips, track cards and the grid.
+
+### Android 1.0.77
+
+- Keep the Master card in the Playlist sidebar. Only draw the timeline lane when the pencil is active and Master is selected.
