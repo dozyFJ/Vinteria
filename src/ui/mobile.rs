@@ -499,7 +499,6 @@ enum MobileMixerChannel {
 
 #[derive(Clone, Copy, PartialEq)]
 enum MobileMixerPage {
-    Channels,
     Effects,
     Master,
 }
@@ -5286,111 +5285,205 @@ impl VinteriaApp {
         });
     }
 
+    /// FL-style mixer: a row of strips (Master first, then the insert buses) with faders and meters on top, and
+    /// everything about the selected strip below it: level, pan, which tracks feed it, its effects.
     fn m_mixer(&mut self, ui: &mut Ui) {
         let channel_id = egui::Id::new(MIXER_CHANNEL);
-        let page_id = egui::Id::new(MIXER_PAGE);
-        let fallback = if self.arr.sel_lane < self.project.arrangement.tracks.len() {
-            MobileMixerChannel::Track(self.arr.sel_lane)
-        } else {
-            MobileMixerChannel::Master
-        };
-        let mut channel = ui.data(|d| d.get_temp::<MobileMixerChannel>(channel_id)).unwrap_or(fallback);
+        let mut channel = ui.data(|d| d.get_temp::<MobileMixerChannel>(channel_id)).unwrap_or(MobileMixerChannel::Master);
         match channel {
-            MobileMixerChannel::Track(lane) if lane >= self.project.arrangement.tracks.len() => channel = fallback,
-            MobileMixerChannel::Insert(insert) if insert >= NUM_INSERTS => channel = fallback,
+            MobileMixerChannel::Track(lane) if lane >= self.project.arrangement.tracks.len() => channel = MobileMixerChannel::Master,
+            MobileMixerChannel::Insert(insert) if insert >= NUM_INSERTS => channel = MobileMixerChannel::Master,
             _ => {}
         }
-        let mut page = ui.data(|d| d.get_temp::<MobileMixerPage>(page_id)).unwrap_or(MobileMixerPage::Channels);
-        ui.horizontal(|ui| {
-            let gap = 4.0;
-            ui.spacing_mut().item_spacing.x = gap;
-            let slot = (ui.available_width() - gap * 2.0).max(3.0);
-            for (tab, label) in [
-                (MobileMixerPage::Channels, "Channels"),
-                (MobileMixerPage::Effects, "FX"),
-                (MobileMixerPage::Master, "Master"),
-            ] {
-                if p_button(ui, label, page == tab, vec2(slot / 3.0, TOUCH)).clicked() {
-                    if page == MobileMixerPage::Master && tab == MobileMixerPage::Effects {
+        self.project.insert_fx.resize_with(NUM_INSERTS, Vec::new);
+        // the strip a track's channel shows on: its insert bus, or Master
+        let lit = match channel {
+            MobileMixerChannel::Track(lane) => self.project.arrangement.tracks[lane].output
+                .filter(|&insert| insert < NUM_INSERTS).map_or(MobileMixerChannel::Master, MobileMixerChannel::Insert),
+            other => other,
+        };
+        mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_mixer_strips").auto_shrink([false, true])
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    if self.m_mixer_strip(ui, MobileMixerChannel::Master, lit == MobileMixerChannel::Master) {
                         channel = MobileMixerChannel::Master;
                     }
-                    page = tab;
-                }
-            }
-        });
-        ui.separator();
-        mobile_scroll(egui::ScrollArea::vertical()).auto_shrink([false, false])
-            .id_salt(("m_mixer_body", page as u8)).show(ui, |ui| {
-                match page {
-                    MobileMixerPage::Channels => self.m_mixer_channels(ui, &mut channel, &mut page),
-                    MobileMixerPage::Effects => self.m_mixer_effects(ui, channel),
-                    MobileMixerPage::Master => self.m_mixer_master(ui),
-                }
+                    for insert in 0..NUM_INSERTS {
+                        let strip = MobileMixerChannel::Insert(insert);
+                        if self.m_mixer_strip(ui, strip, lit == strip) {
+                            channel = strip;
+                        }
+                    }
+                });
             });
-        ui.data_mut(|d| {
-            d.insert_temp(channel_id, channel);
-            d.insert_temp(page_id, page);
-        });
+        ui.add_space(4.0);
+        mobile_scroll(egui::ScrollArea::vertical()).auto_shrink([false, false]).id_salt("m_mixer_detail")
+            .show(ui, |ui| {
+                self.m_mixer_detail(ui, &mut channel);
+                ui.add_space(8.0);
+                heading(ui, "Effects");
+                self.m_mixer_effects(ui, channel);
+                if channel == MobileMixerChannel::Master {
+                    heading(ui, "Master EQ and compressor");
+                    self.m_mixer_master(ui);
+                }
+                ui.add_space(24.0);
+            });
+        ui.data_mut(|d| d.insert_temp(channel_id, channel));
     }
 
-    fn m_mixer_channels(&mut self, ui: &mut Ui, selected: &mut MobileMixerChannel, page: &mut MobileMixerPage) {
-        let controls = Rect::from_min_size(ui.cursor().min, vec2(1.0, 1.0));
-        let name = match *selected {
-            MobileMixerChannel::Track(lane) => {
-                let track = &mut self.project.arrangement.tracks[lane];
-                ui.label(RichText::new(&track.name).strong());
-                ui.add(egui::Slider::new(&mut track.volume, 0.0..=1.5).text("Volume"));
+    /// One mixer strip; returns true when it was tapped (selected).
+    fn m_mixer_strip(&mut self, ui: &mut Ui, strip: MobileMixerChannel, selected: bool) -> bool {
+        let width = 66.0;
+        let fader_h = 132.0;
+        let master = strip == MobileMixerChannel::Master;
+        let insert = match strip { MobileMixerChannel::Insert(insert) => Some(insert), _ => None };
+        let feeders: Vec<usize> = self.project.arrangement.tracks.iter().enumerate()
+            .filter(|(_, track)| track.output.filter(|&o| o < NUM_INSERTS) == insert)
+            .map(|(lane, _)| lane).collect();
+        let peak = self.shared.peak(insert.map_or(crate::mixer::NUM_STRIPS, |insert| NUM_CH + insert));
+        let mut tapped = false;
+        let frame = Frame::none().fill(if selected { selected_fill() } else { card_fill() }).rounding(12.0)
+            .stroke(Stroke::new(if selected { 2.0 } else { 1.0 }, if selected { p_accent() } else { outline() }))
+            .inner_margin(Margin::symmetric(4.0, 6.0));
+        let response = frame.show(ui, |ui| {
+            ui.set_width(width);
+            ui.vertical_centered(|ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
+                let name = match insert {
+                    Some(insert) => self.project.channels[NUM_CH + insert].name.clone(),
+                    None => "Master".to_owned(),
+                };
+                let title = ui.add_sized([width, 22.0], egui::Label::new(
+                    RichText::new(&name).size(12.0).strong().color(if master { p_accent() } else { ink() })).truncate()
+                    .sense(Sense::click()));
+                tapped |= title.clicked();
                 ui.horizontal(|ui| {
-                    ui.checkbox(&mut track.mute, "Mute");
-                    ui.checkbox(&mut track.solo, "Solo");
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    ui.add_space(6.0);
+                    widgets::meter(ui, vec2(10.0, fader_h), peak);
+                    let value = match insert {
+                        Some(insert) => &mut self.project.channels[NUM_CH + insert].volume,
+                        None => &mut self.project.master_volume,
+                    };
+                    let max = if master { 1.2 } else { 1.5 };
+                    ui.spacing_mut().slider_width = fader_h;
+                    let fader = ui.add(egui::Slider::new(value, 0.0..=max).vertical().show_value(false));
+                    tapped |= fader.drag_started() || fader.clicked();
                 });
-                ui.horizontal(|ui| {
-                    ui.label("Output");
-                    mixer_ui::output_picker_w(ui, ("mobile_mixer_track_output", lane), &mut track.output, 100.0);
-                });
-                track.name.as_str()
-            }
-            MobileMixerChannel::Insert(insert) => {
-                let channel = &mut self.project.channels[NUM_CH + insert];
-                ui.label(RichText::new(&channel.name).strong());
-                ui.add(egui::Slider::new(&mut channel.volume, 0.0..=1.5).text("Volume"));
-                ui.add(egui::Slider::new(&mut channel.pan, -1.0..=1.0).text("Pan"));
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut channel.mute, "Mute");
-                    ui.checkbox(&mut channel.solo, "Solo");
-                });
-                channel.name.as_str()
-            }
-            MobileMixerChannel::Master => "Master",
+                let level = match insert {
+                    Some(insert) => self.project.channels[NUM_CH + insert].volume,
+                    None => self.project.master_volume,
+                };
+                ui.label(RichText::new(format!("{:+.1}", widgets::db(level))).size(11.0).color(muted()));
+                if let Some(insert) = insert {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        let channel = &mut self.project.channels[NUM_CH + insert];
+                        if p_button(ui, "M", channel.mute, vec2(31.0, 28.0)).clicked() {
+                            channel.mute = !channel.mute;
+                            tapped = true;
+                        }
+                        if p_button(ui, "S", channel.solo, vec2(31.0, 28.0)).clicked() {
+                            channel.solo = !channel.solo;
+                            tapped = true;
+                        }
+                    });
+                } else {
+                    ui.add_space(32.0);
+                }
+                // which tracks feed this bus
+                let (dots, _) = ui.allocate_exact_size(vec2(width, 10.0), Sense::hover());
+                for (index, lane) in feeders.iter().take(7).enumerate() {
+                    ui.painter().circle_filled(pos2(dots.left() + 6.0 + index as f32 * 9.0, dots.center().y), 3.5, lane_col(*lane));
+                }
+            });
+        }).response;
+        tapped || response.interact(Sense::click()).clicked()
+    }
+
+    /// Everything about the selected strip (or track) below the strip row.
+    fn m_mixer_detail(&mut self, ui: &mut Ui, channel: &mut MobileMixerChannel) {
+        let insert = match *channel {
+            MobileMixerChannel::Insert(insert) => Some(insert),
+            MobileMixerChannel::Track(lane) => self.project.arrangement.tracks[lane].output.filter(|&o| o < NUM_INSERTS),
+            MobileMixerChannel::Master => None,
         };
-        if ui.add_sized([ui.available_width(), TOUCH],
-            egui::Button::new(format!("Effects for {name}")).truncate()).clicked()
-        {
-            *page = MobileMixerPage::Effects;
+        Frame::none().fill(card_fill()).rounding(12.0).inner_margin(10.0).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            match *channel {
+                MobileMixerChannel::Master => {
+                    ui.label(RichText::new("Master").size(17.0).strong());
+                    ui.label(RichText::new("Everything you hear ends here. Tracks without a bus go straight to Master.")
+                        .size(11.0).color(muted()));
+                }
+                MobileMixerChannel::Insert(insert) => {
+                    let ch = &mut self.project.channels[NUM_CH + insert];
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("Insert {}", insert + 1)).size(11.0).color(muted()));
+                        ui.add(egui::TextEdit::singleline(&mut ch.name).desired_width(160.0));
+                    });
+                    ui.spacing_mut().slider_width = (ui.available_width() - 110.0).max(80.0);
+                    ui.add(egui::Slider::new(&mut ch.pan, -1.0..=1.0).text("Pan"));
+                    ui.label(RichText::new("A bus: route tracks here to mix and process them together, like FL inserts.")
+                        .size(11.0).color(muted()));
+                }
+                MobileMixerChannel::Track(lane) => {
+                    let track = &self.project.arrangement.tracks[lane];
+                    ui.label(RichText::new(&track.name).size(17.0).strong());
+                    ui.label(RichText::new(format!("Track → {}", crate::mixer::output_label(track.output))).size(11.0).color(muted()));
+                }
+            }
+        });
+        heading(ui, if insert.is_none() { "Tracks into Master" } else { "Tracks into this bus" });
+        let mut any = false;
+        let mut select = None;
+        for lane in 0..self.project.arrangement.tracks.len() {
+            let track = &mut self.project.arrangement.tracks[lane];
+            if track.output.filter(|&o| o < NUM_INSERTS) != insert {
+                continue;
+            }
+            any = true;
+            ui.push_id(("m_mixer_feeder", lane), |ui| {
+                Frame::none().fill(if *channel == MobileMixerChannel::Track(lane) { selected_fill() } else { Color32::TRANSPARENT })
+                    .rounding(8.0).inner_margin(Margin::symmetric(6.0, 2.0)).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let (dot, _) = ui.allocate_exact_size(vec2(10.0, 24.0), Sense::hover());
+                            ui.painter().circle_filled(dot.center(), 4.0, lane_col(lane));
+                            if ui.add_sized([90.0, 28.0], egui::Button::new(RichText::new(&track.name).size(12.0)).frame(false).truncate()).clicked() {
+                                select = Some(lane);
+                            }
+                            ui.spacing_mut().slider_width = (ui.available_width() - 150.0).max(60.0);
+                            ui.add(egui::Slider::new(&mut track.volume, 0.0..=1.5).show_value(false));
+                            if p_button(ui, "M", track.mute, vec2(30.0, 28.0)).clicked() {
+                                track.mute = !track.mute;
+                            }
+                            mixer_ui::output_picker_w(ui, ("m_mixer_route", lane), &mut track.output, 64.0);
+                        });
+                    });
+            });
         }
-        heading(ui, "Tracks");
-        for (lane, track) in self.project.arrangement.tracks.iter().enumerate() {
-            let target = MobileMixerChannel::Track(lane);
-            let kind = if track.kind == crate::arrangement::TrackKind::Audio { "Audio" } else { "MIDI" };
-            if ui.add_sized([ui.available_width(), TOUCH],
-                egui::Button::new(format!("{} · {kind}", track.name)).selected(*selected == target).truncate()
-            ).clicked() {
-                *selected = target;
-                ui.scroll_to_rect(controls, Some(egui::Align::Min));
+        if !any {
+            ui.label(RichText::new("No tracks here yet. Pick a bus for a track with its routing button.").size(11.0).color(muted()));
+        }
+        if let Some(target) = insert {
+            let others: Vec<(usize, String)> = self.project.arrangement.tracks.iter().enumerate()
+                .filter(|(_, track)| track.output != Some(target)).map(|(lane, track)| (lane, track.name.clone())).collect();
+            if !others.is_empty() {
+                ui.menu_button("+ Route a track here", |ui| {
+                    for (lane, name) in others {
+                        if ui.button(name).clicked() {
+                            self.project.arrangement.tracks[lane].output = Some(target);
+                            ui.close_menu();
+                        }
+                    }
+                });
             }
         }
-        heading(ui, "Mixer inserts");
-        for insert in 0..NUM_INSERTS {
-            let target = MobileMixerChannel::Insert(insert);
-            let name = &self.project.channels[NUM_CH + insert].name;
-            if ui.add_sized([ui.available_width(), TOUCH], egui::Button::new(name).selected(*selected == target).truncate()).clicked() {
-                *selected = target;
-                ui.scroll_to_rect(controls, Some(egui::Align::Min));
-            }
-        }
-        if ui.add_sized([ui.available_width(), TOUCH], egui::Button::new("Master")).clicked() {
-            *selected = MobileMixerChannel::Master;
-            *page = MobileMixerPage::Master;
+        if let Some(lane) = select {
+            *channel = MobileMixerChannel::Track(lane);
+            self.arr.sel_lane = lane;
         }
     }
 

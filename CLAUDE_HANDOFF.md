@@ -522,3 +522,9 @@ Browser открывается слева рядом с Playlist в обеих �
 
 - Fix (portrait Piano Roll): the toolbar sat in the middle of the screen and the note grid was gone. Since the landscape Piano Roll work the portrait toolbar used a `left_to_right(Center)` layout, which in egui takes the whole remaining height. Portrait now uses wrapping rows at the top again (`piano_toolbar_row`), and Tools is one horizontally scrolling row as before. Landscape keeps the right-hand column.
 - Checked visually on a 400×860 virtual screen with the desktop build in mobile mode: Piano Roll (closed and open Tools), Steps, Session, Mixer, Tracks, nav drawer and the track settings sheet in portrait.
+
+### Android 1.0.89
+
+- Mobile Mixer redone FL-style, one page instead of Channels/FX/Master tabs: a horizontally scrolling row of strips (Master first, then Insert 1–8) with a vertical fader, a level meter, dB, Mute/Solo and coloured dots for the tracks routed into each bus. Tap a strip to select it.
+- Below the strips, everything about the selected strip: name and pan (inserts), the tracks feeding it with their volume, mute and routing picker, "+ Route a track here", the effects chain, and for Master the EQ and compressor.
+- Checked on the desktop build in mobile mode at 400×860 and 860×400: routing MIDI 1 to Insert 1 moves its dot to that strip and lists it under the bus.
