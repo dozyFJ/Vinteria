@@ -528,3 +528,7 @@ Browser открывается слева рядом с Playlist в обеих �
 - Mobile Mixer redone FL-style, one page instead of Channels/FX/Master tabs: a horizontally scrolling row of strips (Master first, then Insert 1–8) with a vertical fader, a level meter, dB, Mute/Solo and coloured dots for the tracks routed into each bus. Tap a strip to select it.
 - Below the strips, everything about the selected strip: name and pan (inserts), the tracks feeding it with their volume, mute and routing picker, "+ Route a track here", the effects chain, and for Master the EQ and compressor.
 - Checked on the desktop build in mobile mode at 400×860 and 860×400: routing MIDI 1 to Insert 1 moves its dot to that strip and lists it under the bus.
+
+### Android 1.0.90
+
+- Tapping the Master card in the Playlist (title or meter) opens the full Mixer page, the same one as in the main menu, with Master selected. Before, the meter half only took drags and the title opened the old side sheet. Dragging the meter still sets the Master volume.

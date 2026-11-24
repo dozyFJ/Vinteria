@@ -3934,6 +3934,7 @@ impl VinteriaApp {
         let mut remove_fx_automation = None;
         let clip_menu_id = egui::Id::new("m_playlist_clip_actions");
         let mut select_master = false;
+        let mut open_mixer = false;
         let mut dropped_item = None;
         let mut dropped_effect = None;
         let scroll = mobile_scroll(egui::ScrollArea::both()).id_salt("m_playlist")
@@ -4675,8 +4676,9 @@ impl VinteriaApp {
                     let slider = master.intersect(clip).intersect(Rect::from_min_max(
                         pos2(master.left(), meter.top() - 5.0), master.right_bottom()));
                     if !automation && slider.is_positive() {
-                        let gain = ui.interact(slider, panel_id.with("master_gain"), Sense::drag())
-                            .on_hover_text("Drag to adjust Master volume");
+                        let gain = ui.interact(slider, panel_id.with("master_gain"), Sense::click_and_drag())
+                            .on_hover_text("Drag to adjust Master volume, tap to open the Mixer");
+                        open_mixer |= gain.clicked() && !automation;
                         if gain.drag_started() {
                             self.m_playlist_undo_step();
                         }
@@ -4692,16 +4694,18 @@ impl VinteriaApp {
                     self.arr.auto_master = !editing;
                     select_master = !editing;
                 } else if resp.clicked() {
-                    ui.data_mut(|d| {
-                        d.insert_temp(egui::Id::new(MIXER_CHANNEL), MobileMixerChannel::Master);
-                        d.insert_temp(egui::Id::new(MIXER_PAGE), MobileMixerPage::Master);
-                        d.insert_temp(egui::Id::new(MIXER_SHEET), true);
-                    });
+                    open_mixer = true;
                 }
             }
             if let Some(kind) = add {
                 self.project.arrangement.add_track(kind);
                 self.arr.sel_lane = self.project.arrangement.tracks.len() - 1;
+            }
+            if open_mixer {
+                // the Master card opens the full Mixer page (the one in the main menu) with Master selected
+                ui.data_mut(|d| d.insert_temp(egui::Id::new(MIXER_CHANNEL), MobileMixerChannel::Master));
+                let ctx = ui.ctx().clone();
+                self.m_select_studio_section(&ctx, 4);
             }
         }
         if !portrait {
