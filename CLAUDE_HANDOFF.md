@@ -499,3 +499,8 @@ Browser открывается слева рядом с Playlist в обеих �
 
 - The Playlist clip action menu is no longer a radial wheel: tapping a clip shows one row of icons (Open, Extend, Shorten, Clone, Delete, Close) just above the tap point, or below it when there is no room. The screen is no longer dimmed; tapping outside still closes it.
 - Native Android touch testing is pending.
+
+### Android 1.0.85
+
+- Landscape Playlist: the right-hand studio controls drawer and its chevron are gone. Its controls (Return to start, Play/Pause, Stop, Record, Tempo, Automation pencil, Render, Export and the section buttons) now sit in the bottom dock after Select, Clone, Undo and Redo. The dock scrolls horizontally on narrow screens. Other landscape sections keep the drawer.
+- Native Android touch testing is pending.

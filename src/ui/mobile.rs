@@ -906,29 +906,25 @@ impl VinteriaApp {
         ui.data_mut(|d| d.insert_temp(select_id, select_mode));
     }
 
-    /// Landscape Playlist: one bottom bar with the edit tools on the left and the studio controls chevron on the right.
+    /// Landscape Playlist: one bottom bar with the edit tools and every studio control (transport, tempo,
+    /// automation, render, export, sections), so the Playlist needs no right-hand drawer.
     fn m_landscape_playlist_dock(&mut self, ctx: &egui::Context) {
-        let drawer = egui::Id::new(CONTROLS_DRAWER);
-        let open = ctx.data(|d| d.get_temp::<bool>(drawer)).unwrap_or(false);
-        let response = egui::TopBottomPanel::bottom("m_playlist_dock").show_separator_line(false).exact_height(52.0)
+        egui::TopBottomPanel::bottom("m_playlist_dock").show_separator_line(false).exact_height(52.0)
             .frame(Frame::none().fill(bar_fill()).stroke(Stroke::new(1.0, outline()))
-                .inner_margin(Margin { left: 6.0, right: 10.0, top: 4.0, bottom: 4.0 }))
+                .inner_margin(Margin { left: 6.0, right: 6.0, top: 4.0, bottom: 4.0 }))
             .show(ctx, |ui| {
                 mobile_visuals(ui);
-                ui.horizontal(|ui| {
-                    self.m_playlist_tool_buttons(ui);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if drawer_chevron(ui, 48.0, open).clicked() {
-                            ctx.data_mut(|d| d.insert_temp(drawer, !open));
-                        }
+                mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_playlist_dock_scroll")
+                    .auto_shrink([false, true]).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            self.m_playlist_tool_buttons(ui);
+                            ui.separator();
+                            self.m_studio_controls(ui, ctx, 44.0);
+                        });
                     });
-                });
-            }).response;
+            });
         let pass = ctx.cumulative_pass_nr();
-        ctx.data_mut(|d| {
-            d.insert_temp(egui::Id::new(PLAYLIST_DOCK_PASS), pass);
-            d.insert_temp(egui::Id::new("m_playlist_dock_top"), response.rect.top());
-        });
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new(PLAYLIST_DOCK_PASS), pass));
     }
 
     fn m_landscape_controls_drawer(&mut self, ctx: &egui::Context) {
@@ -936,24 +932,15 @@ impl VinteriaApp {
         let open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
         let width = 48.0;
         let screen = ctx.screen_rect();
-        // with the Playlist dock the chevron sits in the dock, so the drawer only shows its controls above it
-        let docked = ctx.data(|d| d.get_temp::<u64>(egui::Id::new(PLAYLIST_DOCK_PASS))) == Some(ctx.cumulative_pass_nr());
-        if docked && !open {
+        // the landscape Playlist shows all of these controls in its bottom dock instead
+        if ctx.data(|d| d.get_temp::<u64>(egui::Id::new(PLAYLIST_DOCK_PASS))) == Some(ctx.cumulative_pass_nr()) {
             return;
         }
-        let bottom = if docked {
-            ctx.data(|d| d.get_temp::<f32>(egui::Id::new("m_playlist_dock_top"))).unwrap_or(screen.bottom() - 52.0) - 6.0
-        } else {
-            screen.bottom() - 6.0
-        };
-        let height = if docked {
-            (bottom - screen.top() - 18.0).min(420.0).max(1.0)
-        } else {
-            (screen.height() - 68.0).min(420.0).max(1.0)
-        };
-        let drawer_height = if docked { height + 8.0 } else { 54.0 + if open { height + 2.0 } else { 0.0 } };
+        let bottom = screen.bottom() - 6.0;
+        let height = (screen.height() - 68.0).min(420.0).max(1.0);
+        let drawer_height = 54.0 + if open { height + 2.0 } else { 0.0 };
         let position = pos2(screen.right() - width - 10.0, bottom - drawer_height);
-        let rounding = if docked { egui::Rounding::same(18.0) } else { egui::Rounding { nw: 18.0, sw: 18.0, ne: 0.0, se: 0.0 } };
+        let rounding = egui::Rounding { nw: 18.0, sw: 18.0, ne: 0.0, se: 0.0 };
         egui::Area::new(id.with("area")).order(egui::Order::Foreground)
             .fixed_pos(position).movable(false)
             .show(ctx, |ui| {
@@ -967,7 +954,7 @@ impl VinteriaApp {
                                 .id_salt("m_studio_controls").auto_shrink([true, false])
                                 .show(ui, |ui| self.m_studio_controls(ui, ctx, width));
                         }
-                        if !docked && drawer_chevron(ui, width, open).clicked() {
+                        if drawer_chevron(ui, width, open).clicked() {
                             ctx.data_mut(|d| d.insert_temp(id, !open));
                         }
                     });
