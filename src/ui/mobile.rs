@@ -2245,6 +2245,10 @@ impl VinteriaApp {
         let range_id = egui::Id::new(("m_piano_loop_range", editor));
         let length_error_id = egui::Id::new(("m_piano_length_error", editor));
         let mut loop_range = ui.data(|d| d.get_temp::<(u32, u32)>(range_id));
+        let copy_id = egui::Id::new(("m_piano_beat_selection", editor));
+        let mut selecting = ui.data(|d| d.get_temp::<bool>(copy_id)).unwrap_or(false);
+        let mut selection = ui.data(|d| d.get_temp::<(u32, u32)>(copy_id.with("range")));
+        let mut copy = false;
         let mut extend = false;
         let mut history_changed = false;
         // part 0 = the transport (Done, Play, Stop, Full view, Tools), 1 = the rest, 2 = both
@@ -2292,6 +2296,14 @@ impl VinteriaApp {
                 if p_button(ui, "Tools", tools_open, vec2(62.0, 44.0)).clicked() {
                     tools_open = !tools_open;
                     ui.data_mut(|d| d.insert_temp(tools_id, tools_open));
+                }
+                if p_button(ui, "Select", selecting, vec2(64.0, 44.0))
+                    .on_hover_text("Switch ruler mode").clicked()
+                {
+                    selecting = !selecting;
+                }
+                if selecting && selection.is_some() {
+                    copy = p_button(ui, "Copy →", true, vec2(72.0, 44.0)).clicked();
                 }
             }); }
             if part == 0 {
@@ -2378,12 +2390,7 @@ impl VinteriaApp {
                             }
                         });
                 };
-                if portrait {
-                    mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_piano_tools_scroll")
-                        .auto_shrink([false, true]).show(ui, tools);
-                } else {
-                    tools(ui);
-                }
+                tools(ui);
             }
             if valid_pattern {
                 piano_toolbar_row(ui, portrait, |ui| {
@@ -2402,7 +2409,10 @@ impl VinteriaApp {
         };
         let mut grid_ui;
         let ui = if portrait {
-            toolbar(ui, 2);
+            mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_piano_toolbar_scroll")
+                .auto_shrink([false, true]).show(ui, |ui| {
+                    ui.horizontal(|ui| toolbar(ui, 2));
+                });
             ui
         } else {
             let area = ui.available_rect_before_wrap();
@@ -2438,13 +2448,27 @@ impl VinteriaApp {
             d.insert_temp(velocity_id, show_velocity);
             d.insert_temp(slide_id, slide_mode);
         });
+        ui.data_mut(|d| d.insert_temp(copy_id, selecting));
+        if let Some(range) = selection.filter(|_| copy) {
+            match self.m_copy_piano_beats(pi, clip_index, range) {
+                Ok(next) => {
+                    ui.data_mut(|d| {
+                        d.insert_temp(copy_id.with("range"), next);
+                        d.remove::<String>(length_error_id);
+                    });
+                    ui.ctx().request_repaint();
+                    return close;
+                }
+                Err(error) => ui.data_mut(|d| d.insert_temp(length_error_id, error.to_owned())),
+            }
+        }
         let mut pi = pi;
         if history_changed {
             ui.data_mut(|d| d.remove::<String>(length_error_id));
             ui.ctx().request_repaint();
             return close;
         }
-        ui.label(RichText::new(if slide_mode { "Tap a note to toggle slide" } else { "Drag the ruler to loop · Double-tap a note to delete" })
+        ui.label(RichText::new(if selecting { "Tap or drag the ruler to select beats · Copy →" } else if slide_mode { "Tap a note to toggle slide" } else { "Drag the ruler to loop · Double-tap a note to delete" })
             .size(11.0).color(muted()));
         if extend {
             match self.m_extend_piano(pi, clip_index) {
@@ -2605,6 +2629,13 @@ impl VinteriaApp {
                 p.line_segment([lane.left_bottom(), lane.right_bottom()], Stroke::new(0.7, edge));
             }
             let pixels_per_tick = step_w / TICKS_PER_STEP as f32;
+            if let Some((start, end)) = selection.filter(|_| selecting) {
+                let x = |tick: u32| rect.left() + tick.saturating_sub(clip_start) as f32 * pixels_per_tick;
+                let band = Rect::from_min_max(pos2(x(start), rect.top()), pos2(x(end), rect.bottom())).intersect(rect);
+                if band.is_positive() {
+                    p.rect_filled(band, 0.0, piano_note_fill().gamma_multiply(0.16));
+                }
+            }
             let division = visible_grid_step(snap, pixels_per_tick);
             let first_tick = ((p.clip_rect().left() - rect.left()).max(0.0) / pixels_per_tick) as u32;
             let last_tick = (((p.clip_rect().right() - rect.left()).max(0.0) / pixels_per_tick).ceil() as u32)
@@ -2879,13 +2910,33 @@ impl VinteriaApp {
         painter.rect_filled(timeline, 3.0, bar_fill());
         let beat = TICKS_PER_BAR / 4;
         let ruler_hit = ui.interact(timeline, range_id.with("ruler"), Sense::click_and_drag())
-            .on_hover_text("Tap to seek · Drag to loop");
+            .on_hover_text(if selecting { "Tap or drag to select beats" } else { "Tap to seek · Drag to loop" });
         let tick_at = |x: f32| {
             let x = x.clamp(timeline.left(), timeline.right());
             let ticks = ((x - out.inner.x).max(0.0) / step_w * TICKS_PER_STEP as f32) as u32;
             clip_start + ticks.min(duration - 1)
         };
-        if !pinching && ruler_hit.dragged() {
+        if selecting {
+            if !pinching && (ruler_hit.secondary_clicked() || ruler_hit.long_touched()) {
+                selection = None;
+            } else if !pinching && (ruler_hit.clicked() || ruler_hit.dragged()) {
+                if let Some(point) = ruler_hit.interact_pointer_pos() {
+                    let origin = if ruler_hit.clicked() { point } else {
+                        ui.input(|input| input.pointer.press_origin()).unwrap_or(point)
+                    };
+                    let beat_at = |x| clip_start + (tick_at(x) - clip_start) / beat * beat;
+                    let (a, b) = (beat_at(origin.x), beat_at(point.x));
+                    selection = Some((a.min(b), (a.max(b) + beat).min(pattern_end)));
+                }
+            }
+            ui.data_mut(|d| {
+                if let Some(range) = selection {
+                    d.insert_temp(copy_id.with("range"), range);
+                } else {
+                    d.remove::<(u32, u32)>(copy_id.with("range"));
+                }
+            });
+        } else if !pinching && ruler_hit.dragged() {
             if let Some((origin, point)) = ui.input(|input| input.pointer.press_origin()).zip(ruler_hit.interact_pointer_pos()) {
                 let a = clip_start + (tick_at(origin.x) - clip_start) / beat * beat;
                 let b = clip_start + (tick_at(point.x) - clip_start) / beat * beat;
@@ -2916,12 +2967,14 @@ impl VinteriaApp {
                 self.shared.send(Cmd::Seek(tick));
             }
         }
-        if let Some((start, end)) = loop_range {
+        let ruler_range = if selecting { selection } else { loop_range };
+        if let Some((start, end)) = ruler_range {
             let x = |tick: u32| out.inner.x + tick.saturating_sub(clip_start) as f32 / TICKS_PER_STEP as f32 * step_w;
             let mark = Rect::from_min_max(pos2(x(start), timeline.top()), pos2(x(end), timeline.bottom())).intersect(timeline);
             if mark.is_positive() {
-                painter.rect_filled(mark, 3.0, p_accent().gamma_multiply(0.32));
-                painter.line_segment([mark.left_bottom(), mark.right_bottom()], Stroke::new(2.0, p_accent()));
+                let color = if selecting { piano_note_fill() } else { p_accent() };
+                painter.rect_filled(mark, 3.0, color.gamma_multiply(0.32));
+                painter.line_segment([mark.left_bottom(), mark.right_bottom()], Stroke::new(2.0, color));
             }
         }
         ui.data_mut(|d| {
@@ -3107,11 +3160,8 @@ impl VinteriaApp {
         }
     }
 
-    fn m_extend_piano(&mut self, pattern: usize, clip_index: Option<usize>) -> Result<(), &'static str> {
-        let source = &self.project.patterns[pattern];
-        let clip = clip_index.map(|index| self.project.arrangement.clips[index]);
+    fn m_piano_length_limit(&self, clip: Option<crate::arrangement::Clip>) -> u32 {
         let offset = clip.map_or(0, |clip| clip.offset);
-        let current = clip.map_or(source.len_ticks(), |clip| clip.len);
         let max_ticks = crate::sequencer::MAX_STEPS as u32 * TICKS_PER_STEP;
         let mut limit = max_ticks.saturating_sub(offset);
         if let Some(clip) = clip {
@@ -3122,6 +3172,74 @@ impl VinteriaApp {
                 limit = limit.min(next - clip.start);
             }
         }
+        limit
+    }
+
+    fn m_piano_pattern_shared(&self, pattern: usize, index: usize) -> bool {
+        !self.project.patterns[pattern].clip_only || self.project.arrangement.clips.iter().enumerate()
+            .any(|(other, clip)| other != index && !clip.audio && clip.pattern == pattern)
+            || self.project.scenes.iter().enumerate().any(|(scene, entry)| {
+                scene != self.project.active_scene && entry.arrangement.clips.iter()
+                    .any(|clip| !clip.audio && clip.pattern == pattern)
+            })
+    }
+
+    fn m_copy_piano_beats(
+        &mut self, pattern: usize, clip_index: Option<usize>, range: (u32, u32),
+    ) -> Result<(u32, u32), &'static str> {
+        let source = &self.project.patterns[pattern];
+        let clip = clip_index.map(|index| self.project.arrangement.clips[index]);
+        let offset = clip.map_or(0, |clip| clip.offset);
+        let duration = clip.map_or(source.len_ticks(), |clip| clip.len);
+        let (start, end) = range;
+        if start < offset || start >= end || end > offset.saturating_add(duration) {
+            return Err("Select beats inside the current clip.");
+        }
+
+        let beat = TICKS_PER_BAR / 4;
+        let shift = (end - start).div_ceil(beat) * beat;
+        let mut notes = Vec::new();
+        for note in source.notes.iter().filter(|note| (start..end).contains(&note.start)) {
+            let target = note.start + shift;
+            // Keep a note within the audible portion of a trimmed source clip.
+            let len = note.len.min(offset.saturating_add(duration) - note.start);
+            notes.push(crate::piano_roll::Note { start: target, len, ..*note });
+        }
+        let copy_end = notes.iter().map(|note| note.start + note.len).max()
+            .ok_or("No notes in the selected beats.")?;
+        let next_end = (end + shift).max(copy_end);
+        if next_end - offset > self.m_piano_length_limit(clip) {
+            return Err("No room to copy here. Move the next clip first.");
+        }
+
+        let edit_pattern = if let Some(index) = clip_index.filter(|&index| self.m_piano_pattern_shared(pattern, index)) {
+            let mut copy = source.clone();
+            copy.clip_only = true;
+            let next = self.project.patterns.len();
+            self.project.patterns.push(copy);
+            self.project.arrangement.clips[index].pattern = next;
+            next
+        } else {
+            pattern
+        };
+        let edited = &mut self.project.patterns[edit_pattern];
+        edited.notes.extend(notes);
+        edited.length_steps = edited.length_steps.max(next_end.div_ceil(TICKS_PER_STEP));
+        if let Some(index) = clip_index {
+            let clip = &mut self.project.arrangement.clips[index];
+            clip.len = clip.len.max(next_end - offset);
+        }
+        self.project.current_pattern = edit_pattern;
+        self.m_playlist_undo_step();
+        Ok((start + shift, end + shift))
+    }
+
+    fn m_extend_piano(&mut self, pattern: usize, clip_index: Option<usize>) -> Result<(), &'static str> {
+        let source = &self.project.patterns[pattern];
+        let clip = clip_index.map(|index| self.project.arrangement.clips[index]);
+        let offset = clip.map_or(0, |clip| clip.offset);
+        let current = clip.map_or(source.len_ticks(), |clip| clip.len);
+        let limit = self.m_piano_length_limit(clip);
         let next = current.saturating_add(TICKS_PER_BAR / 4).min(limit);
         if next <= current {
             return Err("No room to extend here. Move the next clip or shorten this one.");
@@ -3129,13 +3247,7 @@ impl VinteriaApp {
         let needed = offset.saturating_add(next).div_ceil(TICKS_PER_STEP);
         let mut edit_pattern = pattern;
         if let Some(index) = clip_index {
-            let shared = !source.clip_only || self.project.arrangement.clips.iter().enumerate()
-                .any(|(other, clip)| other != index && !clip.audio && clip.pattern == pattern)
-                || self.project.scenes.iter().enumerate().any(|(scene, entry)| {
-                    scene != self.project.active_scene && entry.arrangement.clips.iter()
-                        .any(|clip| !clip.audio && clip.pattern == pattern)
-                });
-            if shared && needed > source.length_steps {
+            if self.m_piano_pattern_shared(pattern, index) && needed > source.length_steps {
                 let mut copy = source.clone();
                 copy.clip_only = true;
                 edit_pattern = self.project.patterns.len();
@@ -6649,7 +6761,7 @@ fn piano_slide_mark(painter: &egui::Painter, note: Rect) {
 /// screen and leave the buttons floating in the middle.)
 fn piano_toolbar_row(ui: &mut Ui, portrait: bool, add: impl FnOnce(&mut Ui)) {
     if portrait {
-        ui.horizontal_wrapped(add);
+        ui.horizontal(add);
     } else {
         ui.with_layout(egui::Layout::top_down(egui::Align::Center), add);
     }

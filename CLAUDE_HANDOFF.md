@@ -614,3 +614,9 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 - Group mobile clip settings into source, playback and actions. Audio settings show a playable waveform, and MIDI settings open from the Playlist clip action bar alongside Piano Roll.
 - Browser effects, including signature plugins, can be dropped directly on Audio and MIDI track headers, as well as on their Playlist rows. Instruments can be dropped on MIDI headers and MIDI rows.
 - Native Android interaction testing is pending.
+
+### Android 1.0.105
+
+- Piano Roll has a Select mode on the ruler. Tap a beat or drag over multiple beats, then Copy → duplicates their notes into the next beat range. Copy can extend the clip when space permits, and forks shared patterns before editing.
+- Portrait Piano Roll puts transport and tools in one horizontally scrolling toolbar. Loop selection remains available when Select is off.
+- Android touch verification is pending.
