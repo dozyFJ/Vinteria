@@ -56,6 +56,97 @@ impl Inst {
     }
 }
 
+/// Phone layout flag, set by `show_mobile` while the engine panels draw.
+fn is_mobile(ui: &Ui) -> bool {
+    ui.data(|d| d.get_temp::<bool>(egui::Id::new("inst_mobile_layout"))).unwrap_or(false)
+}
+
+/// A row of controls: wraps onto the next line on a phone.
+fn row<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
+    if is_mobile(ui) { ui.horizontal_wrapped(add) } else { ui.horizontal(add) }
+}
+
+/// A row of boxes aligned at the top; on a phone the boxes stack one under another.
+fn row_top<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
+    if is_mobile(ui) {
+        // boxes stack: frames take the rest of a row, so they would squeeze instead of wrapping
+        ui.vertical(add)
+    } else {
+        ui.horizontal_top(add)
+    }
+}
+
+/// A fixed panel width, no wider than the screen on a phone.
+fn fit_w(ui: &Ui, w: f32) -> f32 {
+    if is_mobile(ui) { w.min(ui.available_width().max(120.0)) } else { w }
+}
+
+/// The instrument editor on a phone: "Sounds" (the preset library) and "Edit" (the engine), one at a time.
+pub fn show_mobile(ui: &mut Ui, project: &mut Project, inst: &mut Inst, lane: usize) -> Option<Track> {
+    let tab_id = egui::Id::new("inst_mobile_tab");
+    let mut tab = ui.data(|d| d.get_temp::<u8>(tab_id)).unwrap_or(1);
+    ui.horizontal(|ui| {
+        let w = (ui.available_width() - 4.0) * 0.5;
+        for (i, label) in [(0u8, "Sounds"), (1u8, "Edit")] {
+            if ui.add_sized([w, 40.0], egui::SelectableLabel::new(tab == i, egui::RichText::new(label).size(15.0))).clicked() {
+                tab = i;
+            }
+        }
+    });
+    ui.data_mut(|d| d.insert_temp(tab_id, tab));
+    ui.add_space(6.0);
+    swap_lane_params(project, lane);
+    let mut picked = None;
+    if tab == 0 {
+        let cat_id = egui::Id::new("preset_cat");
+        let cur_id = egui::Id::new("preset_current");
+        let mut cat: usize = ui.data(|d| d.get_temp::<usize>(cat_id)).unwrap_or(0);
+        let current: String = ui.data(|d| d.get_temp::<String>(cur_id)).unwrap_or_default();
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+            for (i, c) in CATS.iter().enumerate() {
+                if ui.add(egui::SelectableLabel::new(cat == i, egui::RichText::new(*c).size(13.0))).clicked() {
+                    cat = i;
+                }
+            }
+        });
+        ui.add_space(6.0);
+        egui::ScrollArea::vertical().id_salt("preset_list_mobile").auto_shrink([false, false]).show(ui, |ui| {
+            for p in PRESETS.iter().filter(|p| cat == 0 || p.cat == CATS[cat]) {
+                let on = current == p.name;
+                let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
+                let pt = ui.painter();
+                pt.rect_filled(rect.shrink2(vec2(0.0, 2.0)), 8.0, if on { TEAL().linear_multiply(0.35) } else { PANEL3() });
+                if on { pt.rect_stroke(rect.shrink2(vec2(0.0, 2.0)), 8.0, Stroke::new(1.0, TEAL())); }
+                pt.text(rect.left_center() + vec2(12.0, 0.0), egui::Align2::LEFT_CENTER, p.name, egui::FontId::proportional(15.0), TEXT());
+                pt.text(rect.right_center() - vec2(12.0, 0.0), egui::Align2::RIGHT_CENTER, format!("{} · {}", p.cat, p.engine.name()), egui::FontId::proportional(11.0), DIM());
+                if resp.clicked() {
+                    apply_preset(project, p);
+                    *inst = Inst::from_track(p.engine);
+                    picked = Some(p.engine);
+                    ui.data_mut(|d| d.insert_temp(cur_id, p.name.to_string()));
+                }
+            }
+        });
+        ui.data_mut(|d| d.insert_temp(cat_id, cat));
+    } else {
+        ui.data_mut(|d| d.insert_temp(egui::Id::new("inst_mobile_layout"), true));
+        egui::ScrollArea::vertical().id_salt("inst_scroll_mobile").auto_shrink([false, false]).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            match *inst {
+                Inst::Poly => synth_panel(ui, project),
+                Inst::Bass => bass_panel(ui, project),
+                Inst::Wavetable => wavetable_panel(ui, project),
+                Inst::Analog => analog_panel(ui, project),
+                Inst::Sampler => sampler_panel(ui, project, lane),
+            }
+        });
+        ui.data_mut(|d| d.remove::<bool>(egui::Id::new("inst_mobile_layout")));
+    }
+    swap_lane_params(project, lane);
+    picked
+}
+
 fn frame() -> egui::Frame {
     egui::Frame::none().fill(PANEL2()).rounding(card()).inner_margin(14.0).stroke(Stroke::new(border_w(), border()))
 }
@@ -254,14 +345,14 @@ fn sampler_panel(ui: &mut Ui, project: &mut Project, lane: usize) {
     let p = if own { &mut project.arrangement.tracks[lane].sampler } else { &mut project.sampler };
     let mut chop = None;
     frame().show(ui, |ui| {
-        ui.set_width(640.0);
+        ui.set_width(fit_w(ui, 640.0));
         ui.vertical(|ui| {
             ui.label(egui::RichText::new("808 SAMPLER").color(TEAL()).strong().size(15.0));
             match &p.sample {
                 Some(s) => ui.label(format!("Sample: {}", s.name)),
                 None => ui.label("No sound yet: drop a WAV (a loop or a bounced track) from the Browser onto this track (or onto the Devices panel)."),
             };
-            ui.horizontal(|ui| {
+            row(ui, |ui| {
                 ui.label(if p.slice_mode { "First slice key" } else { "Root note" });
                 ui.add(egui::DragValue::new(&mut p.root).range(0..=127));
                 ui.label(crate::piano_roll::note_name(p.root));
@@ -284,9 +375,9 @@ fn sampler_panel(ui: &mut Ui, project: &mut Project, lane: usize) {
 fn synth_panel(ui: &mut Ui, project: &mut Project) {
     let p = &mut project.synth;
     frame().show(ui, |ui| {
-        ui.set_width(460.0);
+        ui.set_width(fit_w(ui, 460.0));
         ui.vertical(|ui| {
-            ui.horizontal(|ui| {
+            row(ui, |ui| {
                 ui.label(egui::RichText::new("POLY SYNTH").color(TEAL()).strong().size(15.0));
                 ui.label(egui::RichText::new("16 voices").color(DIM()));
                 for name in ["Init", "Pluck", "Pad", "Lead", "Bell"] {
@@ -296,12 +387,12 @@ fn synth_panel(ui: &mut Ui, project: &mut Project) {
                 }
             });
             section_label(ui, "OSCILLATOR");
-            ui.horizontal(|ui| {
+            row(ui, |ui| {
                 for (w, n) in [(Wave::Saw, "Saw"), (Wave::Square, "Square"), (Wave::Sine, "Sine"), (Wave::Triangle, "Triangle")] {
                     ui.selectable_value(&mut p.wave, w, n);
                 }
             });
-            ui.horizontal(|ui| {
+            row(ui, |ui| {
                 lin_knob(ui, "Semitone", &mut p.semitones, -24.0, 24.0, "");
                 lin_knob(ui, "Fine", &mut p.fine, -100.0, 100.0, "c");
                 lin_knob(ui, "Osc2 detune", &mut p.osc2_detune, 0.0, 1200.0, "c");
@@ -309,20 +400,20 @@ fn synth_panel(ui: &mut Ui, project: &mut Project) {
                 lin_knob(ui, "Volume", &mut p.volume, 0.0, 1.5, "");
             });
             section_label(ui, "AMP ENVELOPE (ADSR)");
-            ui.horizontal(|ui| {
+            row(ui, |ui| {
                 time_knob(ui, "Attack", &mut p.attack, 0.001, 4.0);
                 time_knob(ui, "Decay", &mut p.decay, 0.005, 4.0);
                 lin_knob(ui, "Sustain", &mut p.sustain, 0.0, 1.0, "");
                 time_knob(ui, "Release", &mut p.release, 0.005, 6.0);
             });
             section_label(ui, "FILTERS");
-            ui.horizontal(|ui| {
+            row(ui, |ui| {
                 log_knob(ui, "LP cutoff", &mut p.lp_cutoff, 40.0, 18000.0);
                 lin_knob(ui, "Resonance", &mut p.lp_res, 0.0, 0.95, "");
                 log_knob(ui, "HP cutoff", &mut p.hp_cutoff, 20.0, 5000.0);
             });
             section_label(ui, "LFO");
-            ui.horizontal(|ui| {
+            row(ui, |ui| {
                 lin_knob(ui, "Rate", &mut p.lfo_rate, 0.05, 20.0, "Hz");
                 lin_knob(ui, "Depth", &mut p.lfo_depth, 0.0, 1.0, "");
                 ui.vertical(|ui| {
@@ -339,9 +430,9 @@ fn synth_panel(ui: &mut Ui, project: &mut Project) {
 fn bass_panel(ui: &mut Ui, project: &mut Project) {
     let p = &mut project.bass;
     frame().show(ui, |ui| {
-        ui.set_width(400.0);
+        ui.set_width(fit_w(ui, 400.0));
         ui.vertical(|ui| {
-            ui.horizontal(|ui| {
+            row(ui, |ui| {
                 ui.label(egui::RichText::new("808 BASS").color(TEAL()).strong().size(15.0));
                 ui.label(egui::RichText::new("mono - glide - saturation").color(DIM()));
                 if ui.small_button("Reset").clicked() {
@@ -349,20 +440,20 @@ fn bass_panel(ui: &mut Ui, project: &mut Project) {
                 }
             });
             section_label(ui, "ENVELOPE");
-            ui.horizontal(|ui| {
+            row(ui, |ui| {
                 time_knob(ui, "Attack", &mut p.attack, 0.001, 0.5);
                 time_knob(ui, "Decay", &mut p.decay, 0.02, 4.0);
                 lin_knob(ui, "Sustain", &mut p.sustain, 0.0, 1.0, "");
                 time_knob(ui, "Release", &mut p.release, 0.01, 3.0);
             });
             section_label(ui, "PITCH");
-            ui.horizontal(|ui| {
+            row(ui, |ui| {
                 knob(ui, "Glide", &mut p.glide_ms, 1.0, 600.0, true, |x| format!("{x:.0}ms"));
                 lin_knob(ui, "Pitch drop", &mut p.pitch_drop, 0.0, 36.0, "st");
                 knob(ui, "Drop time", &mut p.pitch_time_ms, 5.0, 400.0, true, |x| format!("{x:.0}ms"));
             });
             section_label(ui, "TONE");
-            ui.horizontal(|ui| {
+            row(ui, |ui| {
                 lin_knob(ui, "Saturation", &mut p.drive, 1.0, 20.0, "x");
                 log_knob(ui, "Tone LP", &mut p.tone, 120.0, 12000.0);
                 lin_knob(ui, "Volume", &mut p.volume, 0.0, 1.5, "");
@@ -447,7 +538,7 @@ fn osc_block(ui: &mut Ui, title: &str, id: &str, table: &mut usize, pos: &mut f3
             }
         });
         wave_view(ui, *table, *pos, vec2(200.0, 70.0));
-        ui.horizontal(|ui| {
+        row(ui, |ui| {
             lin_knob(ui, "WT pos", pos, 0.0, 1.0, "");
             lin_knob(ui, "Pitch", oct, -24.0, 24.0, "st");
             lin_knob(ui, "Level", level, 0.0, 1.0, "");
@@ -476,14 +567,16 @@ fn wavetable_panel(ui: &mut Ui, project: &mut Project) {
     let p = &mut project.wt;
     egui::Frame::none().fill(PANEL2()).rounding(card()).inner_margin(12.0).stroke(Stroke::new(border_w(), border())).show(ui, |ui| {
         // the synth fills the window: the middle grows, the right column keeps its width and sits flush right
-        let total_w = ui.available_width().max(640.0);
-        ui.set_width(total_w);
-        let center_w = (total_w - 24.0 - 150.0 - 24.0 - 16.0).max(300.0);
+        let mobile = is_mobile(ui);
+        let total_w = if mobile { ui.available_width() } else { ui.available_width().max(640.0) };
+        ui.set_width(fit_w(ui, total_w));
+        // on a phone the display takes the full width and the side boxes wrap under it
+        let center_w = if mobile { total_w - 16.0 } else { (total_w - 24.0 - 150.0 - 24.0 - 16.0).max(300.0) };
         ui.vertical(|ui| {
             // ---- top bar: program, logo, master envelope, master
-            ui.horizontal_top(|ui| {
+            row_top(ui, |ui| {
                 mbox(ui, "PROGRAM NAME", |ui| {
-                    ui.horizontal(|ui| {
+                    row(ui, |ui| {
                         ui.label(egui::RichText::new(prog.clone()).strong().size(13.0));
                         ui.menu_button("OPTIONS", |ui| {
                             for name in ["Init", "Growl Bass", "Vowel Pad", "Metal Pluck", "Super Saw"] {
@@ -495,7 +588,7 @@ fn wavetable_panel(ui: &mut Ui, project: &mut Project) {
                             }
                         });
                     });
-                    ui.horizontal(|ui| {
+                    row(ui, |ui| {
                         let mut u = p.unison as f32;
                         if knob(ui, "POLY", &mut u, 1.0, 7.0, false, |x| format!("{}", x.round() as i32)) {
                             p.unison = u.round().clamp(1.0, 7.0) as u8;
@@ -506,7 +599,7 @@ fn wavetable_panel(ui: &mut Ui, project: &mut Project) {
                 ui.add_space(8.0);
                 ui.vertical(|ui| {
                     // a fixed-width logo block: the name must not push the master boxes out of the panel
-                    ui.set_width(150.0);
+                    ui.set_width(fit_w(ui, 150.0));
                     ui.add_space(10.0);
                     ui.label(egui::RichText::new("Winteria DAW").size(24.0).strong().color(TEAL()));
                     ui.label(egui::RichText::new("WINTERIA WAVETABLE").size(10.0).color(DIM()));
@@ -514,7 +607,7 @@ fn wavetable_panel(ui: &mut Ui, project: &mut Project) {
                 ui.add_space(8.0);
                 mbox(ui, "MASTER ENVELOPE", |ui| {
                     env_shape(ui, p.attack, p.decay, p.sustain, p.release, 280.0);
-                    ui.horizontal(|ui| {
+                    row(ui, |ui| {
                         time_knob(ui, "ATTACK", &mut p.attack, 0.001, 4.0);
                         time_knob(ui, "DECAY", &mut p.decay, 0.005, 4.0);
                         lin_knob(ui, "SUSTAIN", &mut p.sustain, 0.0, 1.0, "");
@@ -527,10 +620,10 @@ fn wavetable_panel(ui: &mut Ui, project: &mut Project) {
             });
             ui.add_space(6.0);
             // ---- page buttons | display | filter and unison
-            ui.horizontal_top(|ui| {
+            row_top(ui, |ui| {
                 ui.add_space(8.0);
                 ui.vertical(|ui| {
-                    ui.set_width(center_w);
+                    ui.set_width(fit_w(ui, center_w));
                     match tab {
                         2 | 3 => {
                             let (table, pos, oct, level, id, title) = if tab == 2 {
@@ -546,7 +639,7 @@ fn wavetable_panel(ui: &mut Ui, project: &mut Project) {
                                     }
                                 });
                                 wave_view(ui, *table, *pos, vec2(center_w - 20.0, 150.0));
-                                ui.horizontal(|ui| {
+                                row(ui, |ui| {
                                     lin_knob(ui, "WT POS", pos, 0.0, 1.0, "");
                                     lin_knob(ui, "PITCH", oct, -24.0, 24.0, "st");
                                     lin_knob(ui, "LEVEL", level, 0.0, 1.0, "");
@@ -555,7 +648,7 @@ fn wavetable_panel(ui: &mut Ui, project: &mut Project) {
                         }
                         1 => {
                             mbox(ui, "MORPH / MIX", |ui| {
-                                ui.horizontal(|ui| {
+                                row(ui, |ui| {
                                     ui.vertical(|ui| {
                                         ui.label(egui::RichText::new("A").size(10.0).color(DIM()));
                                         wave_view(ui, p.table_a, p.pos_a, vec2((center_w - 40.0) / 2.0, 90.0));
@@ -565,7 +658,7 @@ fn wavetable_panel(ui: &mut Ui, project: &mut Project) {
                                         wave_view(ui, p.table_b, p.pos_b, vec2((center_w - 40.0) / 2.0, 90.0));
                                     });
                                 });
-                                ui.horizontal(|ui| {
+                                row(ui, |ui| {
                                     lin_knob(ui, "A LEVEL", &mut p.level_a, 0.0, 1.0, "");
                                     lin_knob(ui, "B LEVEL", &mut p.level_b, 0.0, 1.0, "");
                                     lin_knob(ui, "SUB", &mut p.sub, 0.0, 1.0, "");
@@ -576,7 +669,7 @@ fn wavetable_panel(ui: &mut Ui, project: &mut Project) {
                         }
                         _ => {
                             mbox(ui, "MODULATION ENVELOPE", |ui| {
-                                ui.horizontal(|ui| {
+                                row(ui, |ui| {
                                     time_knob(ui, "ATTACK", &mut p.f_attack, 0.001, 4.0);
                                     time_knob(ui, "DECAY", &mut p.f_decay, 0.005, 4.0);
                                     lin_knob(ui, "SUSTAIN", &mut p.f_sustain, 0.0, 1.0, "");
@@ -585,7 +678,7 @@ fn wavetable_panel(ui: &mut Ui, project: &mut Project) {
                             });
                             ui.add_space(4.0);
                             mbox(ui, "LFO", |ui| {
-                                ui.horizontal(|ui| {
+                                row(ui, |ui| {
                                     lin_knob(ui, "RATE", &mut p.lfo_rate, 0.05, 20.0, "Hz");
                                     lin_knob(ui, "DEPTH", &mut p.lfo_depth, 0.0, 1.0, "");
                                     ui.vertical(|ui| {
@@ -600,9 +693,9 @@ fn wavetable_panel(ui: &mut Ui, project: &mut Project) {
                 });
                 ui.add_space(8.0);
                 ui.vertical(|ui| {
-                    ui.set_width(150.0);
+                    ui.set_width(fit_w(ui, 150.0));
                     mbox(ui, "UNISON", |ui| {
-                        ui.horizontal(|ui| {
+                        row(ui, |ui| {
                             let mut u = p.unison as f32;
                             if knob(ui, "VOICES", &mut u, 1.0, 7.0, false, |x| format!("{}", x.round() as i32)) {
                                 p.unison = u.round().clamp(1.0, 7.0) as u8;
@@ -612,12 +705,12 @@ fn wavetable_panel(ui: &mut Ui, project: &mut Project) {
                     });
                     ui.add_space(4.0);
                     mbox(ui, "FILTER", |ui| {
-                        ui.horizontal(|ui| {
+                        row(ui, |ui| {
                             for (t, n) in [(FilterType::Lp, "LP"), (FilterType::Hp, "HP"), (FilterType::Bp, "BP")] {
                                 ui.selectable_value(&mut p.filter, t, n);
                             }
                         });
-                        ui.horizontal(|ui| {
+                        row(ui, |ui| {
                             log_knob(ui, "CUTOFF", &mut p.cutoff, 40.0, 18000.0);
                             lin_knob(ui, "RES", &mut p.res, 0.0, 0.95, "");
                         });
@@ -628,7 +721,7 @@ fn wavetable_panel(ui: &mut Ui, project: &mut Project) {
             });
             ui.add_space(6.0);
             // pages of the synth: a bar of buttons along the bottom
-            ui.horizontal(|ui| {
+            row(ui, |ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 for (i, n) in ["MODULATION", "MORPH / MIX", "GENERATOR A", "GENERATOR B"].into_iter().enumerate() {
                     let on = tab == i;
@@ -658,13 +751,13 @@ fn wave_pick(ui: &mut Ui, title: &str, w: &mut AnalogWave) {
 fn analog_panel(ui: &mut Ui, project: &mut Project) {
     let p = &mut project.analog;
     frame().show(ui, |ui| {
-        ui.set_width(760.0);
+        ui.set_width(fit_w(ui, 760.0));
         ui.vertical(|ui| {
-            ui.horizontal(|ui| {
+            row(ui, |ui| {
                 ui.label(egui::RichText::new("ANALOG").color(TEAL()).strong().size(15.0));
                 ui.label(egui::RichText::new("Diva-style: 2 VCOs with PWM / sync / drift, 24 dB ladder filter").color(DIM()));
             });
-            ui.horizontal(|ui| {
+            row(ui, |ui| {
                 ui.label("Presets:");
                 for name in ["Init", "Moog Bass", "PWM Strings", "Sync Lead", "Soft Keys"] {
                     if ui.small_button(name).clicked() {
@@ -673,7 +766,7 @@ fn analog_panel(ui: &mut Ui, project: &mut Project) {
                 }
             });
             section_label(ui, "OSCILLATORS");
-            ui.horizontal_top(|ui| {
+            row_top(ui, |ui| {
                 wave_pick(ui, "VCO 1", &mut p.wave1);
                 lin_knob(ui, "Semi", &mut p.semi1, -24.0, 24.0, "");
                 ui.add_space(10.0);
@@ -691,17 +784,17 @@ fn analog_panel(ui: &mut Ui, project: &mut Project) {
                 lin_knob(ui, "Noise", &mut p.noise, 0.0, 1.0, "");
             });
             section_label(ui, "FILTER (LADDER 24 dB)");
-            ui.horizontal(|ui| {
+            row(ui, |ui| {
                 log_knob(ui, "Cutoff", &mut p.cutoff, 40.0, 16000.0);
                 lin_knob(ui, "Res", &mut p.res, 0.0, 1.0, "");
                 lin_knob(ui, "Drive", &mut p.drive, 1.0, 8.0, "x");
                 lin_knob(ui, "Env amt", &mut p.env_amt, -4.0, 4.0, "oct");
                 lin_knob(ui, "Key track", &mut p.keytrack, 0.0, 1.0, "");
             });
-            ui.horizontal_top(|ui| {
+            row_top(ui, |ui| {
                 ui.vertical(|ui| {
                     section_label(ui, "AMP ENV");
-                    ui.horizontal(|ui| {
+                    row(ui, |ui| {
                         time_knob(ui, "A", &mut p.attack, 0.001, 4.0);
                         time_knob(ui, "D", &mut p.decay, 0.005, 4.0);
                         lin_knob(ui, "S", &mut p.sustain, 0.0, 1.0, "");
@@ -711,7 +804,7 @@ fn analog_panel(ui: &mut Ui, project: &mut Project) {
                 ui.add_space(14.0);
                 ui.vertical(|ui| {
                     section_label(ui, "FILTER ENV");
-                    ui.horizontal(|ui| {
+                    row(ui, |ui| {
                         time_knob(ui, "A", &mut p.f_attack, 0.001, 4.0);
                         time_knob(ui, "D", &mut p.f_decay, 0.005, 4.0);
                         lin_knob(ui, "S", &mut p.f_sustain, 0.0, 1.0, "");
@@ -720,7 +813,7 @@ fn analog_panel(ui: &mut Ui, project: &mut Project) {
                 });
             });
             section_label(ui, "LFO / ANALOG");
-            ui.horizontal_top(|ui| {
+            row_top(ui, |ui| {
                 lin_knob(ui, "Rate", &mut p.lfo_rate, 0.05, 20.0, "Hz");
                 lin_knob(ui, "Depth", &mut p.lfo_depth, 0.0, 1.0, "");
                 ui.vertical(|ui| {

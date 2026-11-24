@@ -2981,10 +2981,7 @@ impl VinteriaApp {
                     ui.add(egui::Label::new(RichText::new(format!("{name} · {}", self.inst.title())).size(16.0).strong()).truncate());
                 });
                 child.add_space(6.0);
-                mobile_scroll(egui::ScrollArea::both()).id_salt("m_instrument_editor_scroll").auto_shrink([false, false])
-                    .show(&mut child, |ui| {
-                        picked = instruments_ui::show(ui, &mut self.project, &mut self.inst, lane);
-                    });
+                picked = instruments_ui::show_mobile(&mut child, &mut self.project, &mut self.inst, lane);
             });
         if let Some(pt) = picked {
             // a preset can live on another engine: the track follows it

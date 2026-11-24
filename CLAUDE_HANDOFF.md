@@ -550,3 +550,8 @@ Browser открывается слева рядом с Playlist в обеих �
 - Track settings → Instrument on the phone: instead of small menus, four big actions with a line on what each does: Choose instrument, Load WAV, Presets, Open editor. The first three open a left side panel: instruments with what each is for (✓ on the current one), samples with search and the preview triangle (the pick becomes a Sampler), presets (stay open to compare; the last one is highlighted). Tapping outside or × closes it; it always sits above the sheet.
 - Open editor now works on the phone: the PC plugin window (preset library + engine knobs) full screen with Done. Before, it set a flag only the PC drew.
 - Checked on the desktop build in mobile mode at 400×860: Poly Synth chosen, Soft Pad applied (Tone 5000 → 1800), Factory Hi-Hat loaded as 808 Sampler, editor opened and closed.
+
+### Android 1.0.94
+
+- Phone instrument editor (`instruments_ui::show_mobile`): two tabs, Sounds (the preset library with category chips and 44 px rows showing category · engine) and Edit (the engine). In Edit the engine panels use a phone layout: knob rows wrap (`row`), fixed panel widths shrink to the screen (`fit_w`), and Wavetable's side-by-side boxes stack (`row_top`). The PC editor is unchanged (the helpers only switch while `inst_mobile_layout` is set).
+- Checked on the desktop build in mobile mode at 400×860: Poly Synth, Wavetable, Analog, 808 Bass and 808 Sampler editors fit the width; the Sounds list applies presets.
