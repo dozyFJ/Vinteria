@@ -2185,8 +2185,9 @@ impl VinteriaApp {
         let mut loop_range = ui.data(|d| d.get_temp::<(u32, u32)>(range_id));
         let mut extend = false;
         let mut history_changed = false;
-        let mut toolbar = |ui: &mut Ui| {
-            piano_toolbar_row(ui, portrait, |ui| {
+        // part 0 = the transport (Done, Play, Stop, Full view, Tools), 1 = the rest, 2 = both
+        let mut toolbar = |ui: &mut Ui, part: u8| {
+            if part != 1 { piano_toolbar_row(ui, portrait, |ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 if drawer.is_some() {
                     close = p_button(ui, "Done", true, vec2(60.0, 44.0)).clicked();
@@ -2230,7 +2231,10 @@ impl VinteriaApp {
                     tools_open = !tools_open;
                     ui.data_mut(|d| d.insert_temp(tools_id, tools_open));
                 }
-            });
+            }); }
+            if part == 0 {
+                return;
+            }
             if valid_pattern && tools_open {
                 let mut tools = |ui: &mut Ui| {
                         let row = |ui: &mut Ui, add: &mut dyn FnMut(&mut Ui)| if portrait {
@@ -2344,7 +2348,7 @@ impl VinteriaApp {
         };
         let mut grid_ui;
         let ui = if portrait {
-            toolbar(ui);
+            toolbar(ui, 2);
             ui
         } else {
             let area = ui.available_rect_before_wrap();
@@ -2353,9 +2357,12 @@ impl VinteriaApp {
             let mut side = ui.new_child(egui::UiBuilder::new().id_salt("piano_toolbar").max_rect(sidebar.shrink(2.0)));
             side.set_clip_rect(sidebar.intersect(ui.clip_rect()));
             side.set_width(sidebar.width() - 4.0);
+            // the transport stays put at the top; only the tools below it scroll
+            toolbar(&mut side, 0);
+            side.add_space(4.0);
             let side_height = side.available_height();
             mobile_scroll(egui::ScrollArea::vertical()).max_height(side_height)
-                .auto_shrink([false, false]).show(&mut side, toolbar);
+                .auto_shrink([false, false]).show(&mut side, |ui| toolbar(ui, 1));
             let content = Rect::from_min_max(area.min, pos2(sidebar.left() - 8.0, area.bottom()));
             grid_ui = ui.new_child(egui::UiBuilder::new().id_salt("piano_content").max_rect(content));
             grid_ui.set_clip_rect(content.intersect(ui.clip_rect()));
@@ -2416,7 +2423,12 @@ impl VinteriaApp {
         let rows = usize::from(high_pitch) + 1;
         let row_id = zoom_id.with("row_height");
         let mut row_h = ui.data(|d| d.get_temp::<f32>(row_id)).unwrap_or(24.0);
-        let velocity_h = if show_velocity { (ui.available_height() * 0.22).clamp(54.0, 105.0) } else { 0.0 };
+        // event editor height: dragged with the splitter above it, like FL's
+        let event_h_id = egui::Id::new(("m_piano_event_h", portrait));
+        let velocity_h = if show_velocity {
+            ui.data(|d| d.get_temp::<f32>(event_h_id)).unwrap_or((ui.available_height() * 0.22).clamp(54.0, 105.0))
+                .clamp(44.0, (ui.available_height() * 0.6).max(44.0))
+        } else { 0.0 };
         let track = self.project.arrangement.tracks.get(self.arr.sel_lane).and_then(|track| track.instrument)
             .or_else(|| self.project.patterns[pi].notes.first().map(|note| note.track)).unwrap_or(Track::Synth);
         let held_id = egui::Id::new("m_piano_held");
@@ -2426,12 +2438,60 @@ impl VinteriaApp {
         let play_step = (pos.saturating_sub(clip_start).min(duration - 1) / TICKS_PER_STEP) as usize;
         let cursor = if playing { Some(play_step) } else { record_step.map(|step| step % steps) };
         let timeline_height = 23.0;
+        // FL-style zoom bar over the ruler: drag the middle to scroll, an end to zoom in time
+        let (zoom_bar, _) = ui.allocate_exact_size(vec2(ui.available_width(), 16.0), Sense::hover());
+        let mut bar_offset: Option<f32> = None;
+        let mut bar_step: Option<f32> = None;
+        {
+            let track = Rect::from_min_max(pos2(zoom_bar.left() + ruler_width, zoom_bar.top() + 2.0), zoom_bar.max - vec2(0.0, 2.0));
+            let content_w = (steps as f32 * step_w).max(1.0);
+            let grid_w = track.width().max(1.0);
+            let offset = ui.data(|d| d.get_temp::<egui::Vec2>(zoom_id.with("scroll_offset"))).unwrap_or_default().x;
+            let frac = (grid_w / content_w).min(1.0);
+            let thumb_w = (track.width() * frac).max(24.0);
+            let thumb_x = track.left() + (offset / content_w) * track.width();
+            let thumb = Rect::from_min_size(pos2(thumb_x, track.top()), vec2(thumb_w, track.height()));
+            let p = ui.painter();
+            p.rect_filled(track, 6.0, bar_fill());
+            p.rect_filled(thumb, 6.0, muted().gamma_multiply(0.6));
+            for edge in [thumb.left() + 5.0, thumb.right() - 5.0] {
+                p.line_segment([pos2(edge, thumb.top() + 3.0), pos2(edge, thumb.bottom() - 3.0)], Stroke::new(1.5, ink()));
+            }
+            let id = ui.id().with(("m_piano_zoom_bar", editor));
+            let left = ui.interact(Rect::from_min_max(thumb.min - vec2(6.0, 0.0), pos2(thumb.left() + 10.0, thumb.bottom())), id.with("l"), Sense::drag());
+            let right = ui.interact(Rect::from_min_max(pos2(thumb.right() - 10.0, thumb.top()), thumb.max + vec2(6.0, 0.0)), id.with("r"), Sense::drag());
+            let body = ui.interact(thumb.shrink2(vec2(10.0, 0.0)), id.with("b"), Sense::drag());
+            let px_to_content = content_w / track.width();
+            if body.dragged() {
+                bar_offset = Some((offset + body.drag_delta().x * px_to_content).clamp(0.0, (content_w - grid_w).max(0.0)));
+            } else if right.dragged() || left.dragged() {
+                let dx = if right.dragged() { right.drag_delta().x } else { -left.drag_delta().x };
+                let new_w = (thumb_w + dx).clamp(24.0, track.width());
+                let new_step = (grid_w / (new_w / track.width() * steps as f32)).clamp(8.0, 72.0);
+                bar_step = Some(new_step);
+                // keep the opposite end where it is
+                let new_content = steps as f32 * new_step;
+                bar_offset = Some(if left.dragged() {
+                    let right_px = thumb.right() - track.left();
+                    ((right_px - new_w) / track.width() * new_content).max(0.0)
+                } else {
+                    (offset / content_w * new_content).max(0.0)
+                });
+            }
+        }
         let view_h = (ui.available_height() - velocity_h - if show_velocity { 12.0 } else { 4.0 }).max(timeline_height + 1.0);
         let (viewport, _) = ui.allocate_exact_size(vec2(ui.available_width(), view_h), Sense::hover());
         let grid = Rect::from_min_max(viewport.min + vec2(ruler_width, timeline_height), viewport.max);
         let (pinching, zoom) = grid_pinch(ui, zoom_id.with("pinch"), grid);
         let offset_id = zoom_id.with("scroll_offset");
         let mut zoom_offset = None;
+        if let Some(width) = bar_step {
+            step_w = width;
+            ui.data_mut(|d| d.insert_temp(zoom_id, step_w));
+        }
+        if let Some(offset) = bar_offset {
+            zoom_offset = Some((0usize, offset));
+        }
         if let Some((axis, factor, center)) = zoom {
             let previous = vec2(step_w, row_h);
             step_w = if axis == 0 { (step_w * factor).clamp(8.0, 72.0) } else { step_w };
@@ -2511,6 +2571,31 @@ impl VinteriaApp {
             let mut toggle_slide = None;
             let mut audition = None;
             let mut edit = None;
+            // ghost notes: the other MIDI clips that sound at the same time (any track), faded and not editable
+            if let Some(this) = clip {
+                for (other_index, other) in self.project.arrangement.clips.iter().enumerate() {
+                    if Some(other_index) == clip_index || other.audio || other.pattern == pi {
+                        continue;
+                    }
+                    let Some(pattern) = self.project.patterns.get(other.pattern) else { continue };
+                    for ghost in &pattern.notes {
+                        if ghost.start < other.offset || ghost.start >= other.offset.saturating_add(other.len) || ghost.pitch > high_pitch {
+                            continue;
+                        }
+                        let song = other.start + (ghost.start - other.offset);
+                        if song < this.start || song >= this.start.saturating_add(this.len) {
+                            continue;
+                        }
+                        let local = song - this.start;
+                        let x = rect.left() + local as f32 / TICKS_PER_STEP as f32 * step_w;
+                        let y = rect.top() + (high_pitch - ghost.pitch) as f32 * row_h;
+                        let w = (ghost.len.min(this.len - local) as f32 / TICKS_PER_STEP as f32 * step_w).max(4.0);
+                        let r = Rect::from_min_size(pos2(x + 1.0, y + 2.0), vec2(w - 2.0, row_h - 4.0));
+                        p.rect_filled(r, 4.0, muted().gamma_multiply(0.28));
+                        p.rect_stroke(r, 4.0, Stroke::new(1.0, lane_col(other.lane).gamma_multiply(0.35)));
+                    }
+                }
+            }
             for (index, note) in self.project.patterns[pi].notes.iter().enumerate() {
                 if note.pitch > high_pitch || note.start >= editable_end || note.start.saturating_add(note.len) <= clip_start {
                     continue;
@@ -2584,11 +2669,12 @@ impl VinteriaApp {
                 if note.slide { piano_slide_mark(&p, visual); }
                 let grip = Rect::from_center_size(visual.right_center() - vec2(3.0, 0.0), vec2(2.0, 10.0));
                 p.rect_filled(grip, 1.0, Color32::WHITE.linear_multiply(0.8));
-                if visual.width() >= 24.0 {
+                if visual.width() >= 16.0 && visual.height() >= 10.0 {
+                    let size = (visual.height() * 0.55).clamp(9.0, 13.0);
                     p.with_clip_rect(visual.intersect(ui.clip_rect())).text(
                         visual.left_center() + vec2(3.0, 0.0), Align2::LEFT_CENTER,
                         format!("{}{}", names[usize::from(pitch % 12)], i16::from(pitch) / 12 - 1),
-                        FontId::proportional(10.0), Color32::from_gray(18));
+                        FontId::proportional(size), Color32::from_gray(18));
                 }
                 if !pinching && (note_response.secondary_clicked() || handle.secondary_clicked()) {
                     remove = Some(index);
@@ -2789,8 +2875,15 @@ impl VinteriaApp {
                 if step % 16 == 0 { ink() } else { muted() });
         }
         if show_velocity {
-            ui.add_space(4.0);
-            self.m_piano_velocity(ui, pi, out.inner.x, grid.left(), step_w, velocity_h, clip_start..pattern_end);
+            // splitter handle: drag up / down to resize the event editor
+            let (bar, split) = ui.allocate_exact_size(vec2(ui.available_width(), 12.0), Sense::drag());
+            ui.painter().rect_filled(Rect::from_center_size(bar.center(), vec2(44.0, 4.0)), 2.0,
+                if split.dragged() { p_accent() } else { muted() });
+            if split.dragged() {
+                let h = (velocity_h - split.drag_delta().y).clamp(44.0, 320.0);
+                ui.data_mut(|d| d.insert_temp(event_h_id, h));
+            }
+            self.m_piano_velocity(ui, pi, out.inner.x, grid.left(), step_w, velocity_h - 8.0, clip_start..pattern_end);
         }
         let pressed = side_pressed.map(|pitch| (track, pitch));
         if pressed != held {
@@ -2833,22 +2926,36 @@ impl VinteriaApp {
         close
     }
 
+    /// FL-style event editor under the Piano Roll: one bar per note for the chosen target (tap the label on the left
+    /// to switch Velocity → Pan → Chance). Pan is drawn from the middle line.
     fn m_piano_velocity(&mut self, ui: &mut Ui, pattern: usize, origin_x: f32, grid_left: f32, step_w: f32, height: f32, ticks: std::ops::Range<u32>) {
+        let target_id = egui::Id::new("m_piano_event_target");
+        let mut target = ui.data(|d| d.get_temp::<u8>(target_id)).unwrap_or(0) % 3;
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
         let ruler = Rect::from_min_max(rect.min, pos2(grid_left, rect.bottom()));
         let painter = ui.painter_at(ruler);
         painter.rect_filled(ruler, 3.0, bar_fill());
-        painter.text(ruler.center(), Align2::CENTER_CENTER, "Vel", FontId::proportional(12.0), ink());
-
+        let name = ["Vel", "Pan", "Chance"][target as usize];
+        painter.text(ruler.center() - vec2(0.0, 8.0), Align2::CENTER_CENTER, name, FontId::proportional(12.0), ink());
+        painter.text(ruler.center() + vec2(0.0, 9.0), Align2::CENTER_CENTER, "›", FontId::proportional(14.0), muted());
+        if ui.interact(ruler, ui.id().with("piano_event_target"), Sense::click()).on_hover_text("Switch: Velocity / Pan / Chance").clicked() {
+            target = (target + 1) % 3;
+            ui.data_mut(|d| d.insert_temp(target_id, target));
+        }
         let plot = Rect::from_min_max(pos2(grid_left, rect.top()), rect.max);
         let painter = ui.painter_at(plot);
         painter.rect_filled(plot, 3.0, p_bg());
         let range = plot.shrink2(vec2(0.0, 4.0));
-        for velocity in [32, 64, 96] {
-            let y = range.bottom() - f32::from(velocity as u8) / 127.0 * range.height();
-            painter.hline(plot.x_range(), y, Stroke::new(0.5, grid_line()));
+        for t in [0.25f32, 0.5, 0.75] {
+            let y = range.bottom() - t * range.height();
+            painter.hline(plot.x_range(), y, Stroke::new(if target == 1 && t == 0.5 { 1.0 } else { 0.5 }, grid_line()));
         }
-
+        // note value <-> 0..1
+        let get = |note: &crate::piano_roll::Note| match target {
+            0 => f32::from(note.vel) / 127.0,
+            1 => (f32::from(note.pan) + 100.0) / 200.0,
+            _ => f32::from(note.chance) / 100.0,
+        };
         let notes = &mut self.project.patterns[pattern].notes;
         let mut edited = false;
         let mut columns = std::collections::BTreeMap::<u32, Vec<usize>>::new();
@@ -2870,23 +2977,36 @@ impl VinteriaApp {
                 if !hit.is_positive() {
                     continue;
                 }
-                let response = ui.interact(hit, ui.id().with(("piano_velocity", pattern, index)), Sense::click_and_drag())
+                let response = ui.interact(hit, ui.id().with(("piano_event", pattern, index)), Sense::click_and_drag())
                     .on_hover_cursor(egui::CursorIcon::ResizeVertical);
-                let mut velocity = note.vel;
+                let mut value = get(note);
                 if response.dragged() || response.drag_stopped() || response.clicked() {
                     if let Some(point) = response.interact_pointer_pos() {
-                        velocity = ((range.bottom() - point.y) / range.height() * 127.0).round().clamp(1.0, 127.0) as u8;
+                        value = ((range.bottom() - point.y) / range.height()).clamp(0.0, 1.0);
                         if response.drag_stopped() || response.clicked() {
-                            edited |= note.vel != velocity;
-                            note.vel = velocity;
+                            let before = (note.vel, note.pan, note.chance);
+                            match target {
+                                0 => note.vel = (value * 127.0).round().clamp(1.0, 127.0) as u8,
+                                1 => note.pan = (value * 200.0 - 100.0).round().clamp(-100.0, 100.0) as i8,
+                                _ => note.chance = (value * 100.0).round().clamp(1.0, 100.0) as u8,
+                            }
+                            edited |= before != (note.vel, note.pan, note.chance);
                         }
                     }
                 }
-                let top = range.bottom() - f32::from(velocity) / 127.0 * range.height();
+                if response.double_clicked() {
+                    match target { 0 => note.vel = 100, 1 => note.pan = 0, _ => note.chance = 100 }
+                    edited = true;
+                }
+                let y = range.bottom() - value * range.height();
+                let base = if target == 1 { range.center().y } else { range.bottom() };
                 let inset = (width * 0.16).min(2.0);
-                let bar = Rect::from_min_max(pos2(x + inset, top), pos2(x + width - inset, range.bottom()));
-                painter.rect_filled(bar, 2.0, if response.hovered() || response.dragged() { p_accent() } else { lane_col(3) });
-                response.on_hover_text(format!("Velocity {velocity}"));
+                let bar = Rect::from_min_max(pos2(x + inset, y.min(base)), pos2(x + width - inset, y.max(base) + 1.0));
+                let color = if response.hovered() || response.dragged() { p_accent() } else { lane_col(3) };
+                painter.rect_filled(bar, 2.0, color);
+                painter.circle_filled(pos2(x + width * 0.5, y), 3.0, color);
+                let label = match target { 0 => format!("Velocity {}", note.vel), 1 => format!("Pan {}", note.pan), _ => format!("Chance {}%", note.chance) };
+                response.on_hover_text(label);
             }
         }
         if edited {

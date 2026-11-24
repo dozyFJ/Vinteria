@@ -577,3 +577,13 @@ Browser открывается слева рядом с Playlist в обеих �
 
 - Steps laid out like FL Studio Mobile's step sequencer: one row per drum with the name block on the left (selected one in the drum's colour, the loaded sample's name under it; tap selects and previews, hold opens the sound sheet), the steps in a line on the right in groups of four, a sideways swipe scrolls them (own scrolling: taps land exactly on the cell). Top: pattern, a SWING knob (drag, double-tap resets), tabs Steps / Mixer / Sample. Mixer shows Level and Pan knobs and M per row; Sample shows REV, Start and Fade (the processed copy is rebuilt from the original like the PC sample window). Under the rows a graph editor (collapsible) edits Velocity / Pan / Pitch / Chance per step of the selected row (double-tap resets). Hold a step for the Smart Step sheet as before.
 - Checked on the desktop build in mobile mode at 400×860: steps toggle on the tapped cell, swipe scrolls, velocity bar edit, Mixer and Sample tabs.
+
+### Android 1.0.99
+
+Piano Roll, ideas from FL Studio's PC Piano Roll:
+- Note names on the notes also on short ones (from 16 px wide, size follows the row height).
+- Event editor under the grid: tap the label on the left to switch Velocity → Pan → Chance (pan bars from the middle line, double-tap resets); a splitter handle above it resizes it (44–320 px, per orientation).
+- Ghost notes: the notes of other MIDI clips that sound at the same time (any track) are drawn faded, outlined in their track colour, not editable.
+- Landscape: Done / Play / Stop / Full view / Tools stay at the top of the side column; only the tools under them scroll.
+- Zoom bar over the ruler like FL's: drag the middle to scroll, drag an end to zoom in time (the other end stays put).
+- Checked on the desktop build in mobile mode (portrait and landscape). Note: a mouse that jumps between clicks drags the grid's ScrollArea (desktop/mouse only); with touch input every tap lands on its row (headless check).
