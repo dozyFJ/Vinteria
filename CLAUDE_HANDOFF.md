@@ -592,3 +592,8 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 
 - Refine the existing Pulse mobile style in both themes: lightly translucent transport, clip actions and landscape Piano Roll toolbar, softer Playlist clips and matching lavender notes and event bars.
 - UI geometry and editing gestures are preserved. Visual verification on Android is pending.
+
+### Android 1.0.101
+
+- Bring Material 3-inspired controls into the Pulse mobile interface. Hub navigation uses icons, captions and a tonal pill for the selected destination. Shared mobile buttons have rounded outlines and hover, focus and pressed states.
+- Transport and editor gestures are unchanged. Native Android visual testing is pending.

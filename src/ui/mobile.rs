@@ -355,24 +355,32 @@ fn list_row(ui: &mut Ui, badge: Color32, letter: &str, title: &str, sub: &str, n
     resp
 }
 
-/// Pulse button: accent pill (primary) or neutral pill.
+fn control_state(p: &Painter, rect: Rect, radius: f32, response: &Response, foreground: Color32) {
+    let opacity = if response.is_pointer_button_down_on() {
+        0.14
+    } else if response.hovered() || response.has_focus() {
+        0.08
+    } else {
+        0.0
+    };
+    if opacity > 0.0 {
+        p.rect_filled(rect, radius, foreground.gamma_multiply(opacity));
+    }
+}
+
+/// Filled primary action or outlined tonal button.
 fn p_button(ui: &mut Ui, text: &str, primary: bool, size: egui::Vec2) -> Response {
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let p = ui.painter();
-    let radius = (rect.height() * 0.3).min(14.0);
-    let pressed = resp.is_pointer_button_down_on();
-    let fill = if primary {
-        if pressed { p_accent().gamma_multiply(0.85) } else { p_accent() }
-    } else if pressed || resp.hovered() {
-        selected_fill()
-    } else {
-        card_fill()
-    };
-    p.rect_filled(rect, radius, fill);
+    let radius = rect.height() * 0.5;
+    let foreground = if primary { on_accent() } else { ink() };
+    p.rect_filled(rect, radius, if primary { p_accent() } else { card_fill() });
+    control_state(p, rect, radius, &resp, foreground);
     if !primary || resp.has_focus() {
-        p.rect_stroke(rect.shrink(0.5), radius, Stroke::new(1.0, if resp.has_focus() { p_accent() } else { grid_line() }));
+        let edge = if resp.has_focus() { p_accent() } else { outline() };
+        p.rect_stroke(rect.shrink(0.5), radius, Stroke::new(1.0, edge));
     }
-    p.text(rect.center(), Align2::CENTER_CENTER, text, FontId::proportional(14.0), if primary { on_accent() } else { ink() });
+    p.text(rect.center(), Align2::CENTER_CENTER, text, FontId::proportional(14.0), foreground);
     resp
 }
 
@@ -983,8 +991,25 @@ impl VinteriaApp {
                 ui.horizontal(|ui| {
                     let width = (ui.available_width() - 2.0 * ui.spacing().item_spacing.x) / 3.0;
                     let current = if matches!(self.m_tab, 0 | 5) { self.m_tab } else { 4 };
-                    for (tab, title) in [(4, "Home"), (0, "Projects"), (5, "Plugin Store")] {
-                        if p_button(ui, title, current == tab, vec2(width, TOUCH)).clicked() {
+                    let destinations = [
+                        (4, "Home", Icon::Layout),
+                        (0, "Projects", Icon::Folder),
+                        (5, "Plugin Store", Icon::Plug),
+                    ];
+                    for (tab, title, symbol) in destinations {
+                        let (rect, response) = ui.allocate_exact_size(vec2(width, 56.0), Sense::click());
+                        let selected = current == tab;
+                        let icon_center = pos2(rect.center().x, rect.top() + 17.0);
+                        let indicator = Rect::from_center_size(icon_center, vec2(width.min(60.0), 30.0));
+                        let p = ui.painter();
+                        if selected {
+                            pill(p, indicator, selected_fill());
+                        }
+                        control_state(p, indicator, 15.0, &response, ink());
+                        icon(p, symbol, icon_center, if selected { ink() } else { muted() });
+                        p.text(rect.center_bottom() - vec2(0.0, 10.0), Align2::CENTER_CENTER,
+                            title, FontId::proportional(12.0), if selected { ink() } else { muted() });
+                        if response.on_hover_text(title).clicked() {
                             self.m_tab = tab;
                             self.m_sec = 0;
                         }
@@ -6586,12 +6611,13 @@ fn drawer_chevron(ui: &mut Ui, width: f32, open: bool) -> Response {
 
 fn studio_icon(ui: &mut Ui, width: f32, symbol: Icon, active: bool, label: &str) -> Response {
     let (rect, response) = ui.allocate_exact_size(vec2(width, 44.0), Sense::click());
+    let p = ui.painter();
+    let foreground = if active { on_accent() } else { ink() };
     if active {
-        pill(ui.painter(), rect, p_accent());
-    } else if response.hovered() {
-        panel(ui.painter(), rect, 9.0);
+        pill(p, rect, p_accent());
     }
-    icon(ui.painter(), symbol, rect.center(), if active { on_accent() } else { ink() });
+    control_state(p, rect, rect.height() * 0.5, &response, foreground);
+    icon(p, symbol, rect.center(), foreground);
     response.on_hover_text(label)
 }
 
