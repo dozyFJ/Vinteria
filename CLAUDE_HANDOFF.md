@@ -532,3 +532,9 @@ Browser открывается слева рядом с Playlist в обеих �
 ### Android 1.0.90
 
 - Tapping the Master card in the Playlist (title or meter) opens the full Mixer page, the same one as in the main menu, with Master selected. Before, the meter half only took drags and the title opened the old side sheet. Dragging the meter still sets the Master volume.
+
+### Android 1.0.91
+
+- Mobile Mixer laid out like FL Studio's mixer: a header (Mixer · selected channel, FX / Route / EQ), the channel strips on the left (Master + Insert 1–8: number box, vertical name, green LED mute, pan knob, stereo meter, square fader, coloured dots for the tracks feeding it; double-tap pan or fader resets) and the dock of the selected strip on the right.
+- Dock FX: ten FL-style slots (name, wet knob, on/off LED); an empty slot opens the effect list, a filled one expands Remove, Automate (for a track's own insert) and the effect controls. Route: the tracks playing through the strip with routing picker, volume and mute, "+ Route a track here", and the bus name. EQ (Master): the master EQ and compressor.
+- Checked on the desktop build in mobile mode at 400×860 and 860×400.

@@ -5289,160 +5289,291 @@ impl VinteriaApp {
         });
     }
 
-    /// FL-style mixer: a row of strips (Master first, then the insert buses) with faders and meters on top, and
-    /// everything about the selected strip below it: level, pan, which tracks feed it, its effects.
+    /// FL-style mixer. Header with options; left: the channel strips (Master + insert buses) with LED mute, pan knob,
+    /// meter and fader; right: the dock of the selected strip (effect slots, routing, Master EQ).
     fn m_mixer(&mut self, ui: &mut Ui) {
         let channel_id = egui::Id::new(MIXER_CHANNEL);
+        let dock_id = egui::Id::new("m_mixer_dock");
         let mut channel = ui.data(|d| d.get_temp::<MobileMixerChannel>(channel_id)).unwrap_or(MobileMixerChannel::Master);
-        match channel {
-            MobileMixerChannel::Track(lane) if lane >= self.project.arrangement.tracks.len() => channel = MobileMixerChannel::Master,
-            MobileMixerChannel::Insert(insert) if insert >= NUM_INSERTS => channel = MobileMixerChannel::Master,
-            _ => {}
-        }
-        self.project.insert_fx.resize_with(NUM_INSERTS, Vec::new);
-        // the strip a track's channel shows on: its insert bus, or Master
-        let lit = match channel {
-            MobileMixerChannel::Track(lane) => self.project.arrangement.tracks[lane].output
+        // a track opens the bus it plays through
+        channel = match channel {
+            MobileMixerChannel::Track(lane) => self.project.arrangement.tracks.get(lane).and_then(|track| track.output)
                 .filter(|&insert| insert < NUM_INSERTS).map_or(MobileMixerChannel::Master, MobileMixerChannel::Insert),
+            MobileMixerChannel::Insert(insert) if insert >= NUM_INSERTS => MobileMixerChannel::Master,
             other => other,
         };
-        mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_mixer_strips").auto_shrink([false, true])
-            .show(ui, |ui| {
+        let mut dock = ui.data(|d| d.get_temp::<u8>(dock_id)).unwrap_or(0);
+        if dock == 2 && channel != MobileMixerChannel::Master {
+            dock = 0;
+        }
+        self.project.insert_fx.resize_with(NUM_INSERTS, Vec::new);
+        let name = self.m_mixer_name(channel);
+        // header: what is selected and which dock page shows
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.label(RichText::new("Mixer").size(16.0).strong());
+            ui.add(egui::Label::new(RichText::new(format!("· {name}")).size(13.0).color(p_accent())).truncate());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 3.0;
+                if channel == MobileMixerChannel::Master && p_button(ui, "EQ", dock == 2, vec2(44.0, 34.0)).clicked() {
+                    dock = 2;
+                }
+                if p_button(ui, "Route", dock == 1, vec2(60.0, 34.0)).clicked() {
+                    dock = 1;
+                }
+                if p_button(ui, "FX", dock == 0, vec2(44.0, 34.0)).clicked() {
+                    dock = 0;
+                }
+            });
+        });
+        ui.add_space(4.0);
+        let body = ui.available_rect_before_wrap();
+        let split = (body.width() * 0.5).clamp(150.0, 420.0);
+        let left = Rect::from_min_max(body.min, pos2(body.left() + split, body.bottom()));
+        let right = Rect::from_min_max(pos2(left.right() + 6.0, body.top()), body.max);
+        ui.allocate_rect(body, Sense::hover());
+        let mut strips = ui.new_child(egui::UiBuilder::new().id_salt("m_mixer_strips").max_rect(left));
+        strips.set_clip_rect(left.intersect(ui.clip_rect()));
+        mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_mixer_strip_scroll").auto_shrink([false, false])
+            .show(&mut strips, |ui| {
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
-                    if self.m_mixer_strip(ui, MobileMixerChannel::Master, lit == MobileMixerChannel::Master) {
-                        channel = MobileMixerChannel::Master;
-                    }
-                    for insert in 0..NUM_INSERTS {
-                        let strip = MobileMixerChannel::Insert(insert);
-                        if self.m_mixer_strip(ui, strip, lit == strip) {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    let height = left.height() - 4.0;
+                    for strip in std::iter::once(MobileMixerChannel::Master).chain((0..NUM_INSERTS).map(MobileMixerChannel::Insert)) {
+                        if self.m_mixer_strip(ui, strip, channel == strip, height) {
                             channel = strip;
                         }
                     }
                 });
             });
-        ui.add_space(4.0);
-        mobile_scroll(egui::ScrollArea::vertical()).auto_shrink([false, false]).id_salt("m_mixer_detail")
-            .show(ui, |ui| {
-                self.m_mixer_detail(ui, &mut channel);
-                ui.add_space(8.0);
-                heading(ui, "Effects");
-                self.m_mixer_effects(ui, channel);
-                if channel == MobileMixerChannel::Master {
-                    heading(ui, "Master EQ and compressor");
-                    self.m_mixer_master(ui);
+        ui.painter().rect_filled(right, 10.0, card_fill());
+        let mut panel = ui.new_child(egui::UiBuilder::new().id_salt("m_mixer_dock_ui").max_rect(right.shrink(6.0)));
+        panel.set_clip_rect(right.intersect(ui.clip_rect()));
+        mobile_scroll(egui::ScrollArea::vertical()).id_salt(("m_mixer_dock_scroll", dock)).auto_shrink([false, false])
+            .show(&mut panel, |ui| {
+                match dock {
+                    1 => self.m_mixer_routing(ui, channel),
+                    2 => self.m_mixer_master(ui),
+                    _ => self.m_mixer_slots(ui, channel),
                 }
-                ui.add_space(24.0);
+                ui.add_space(16.0);
             });
-        ui.data_mut(|d| d.insert_temp(channel_id, channel));
-    }
-
-    /// One mixer strip; returns true when it was tapped (selected).
-    fn m_mixer_strip(&mut self, ui: &mut Ui, strip: MobileMixerChannel, selected: bool) -> bool {
-        let width = 66.0;
-        let fader_h = 132.0;
-        let master = strip == MobileMixerChannel::Master;
-        let insert = match strip { MobileMixerChannel::Insert(insert) => Some(insert), _ => None };
-        let feeders: Vec<usize> = self.project.arrangement.tracks.iter().enumerate()
-            .filter(|(_, track)| track.output.filter(|&o| o < NUM_INSERTS) == insert)
-            .map(|(lane, _)| lane).collect();
-        let peak = self.shared.peak(insert.map_or(crate::mixer::NUM_STRIPS, |insert| NUM_CH + insert));
-        let mut tapped = false;
-        let frame = Frame::none().fill(if selected { selected_fill() } else { card_fill() }).rounding(12.0)
-            .stroke(Stroke::new(if selected { 2.0 } else { 1.0 }, if selected { p_accent() } else { outline() }))
-            .inner_margin(Margin::symmetric(4.0, 6.0));
-        let response = frame.show(ui, |ui| {
-            ui.set_width(width);
-            ui.vertical_centered(|ui| {
-                ui.spacing_mut().item_spacing.y = 4.0;
-                let name = match insert {
-                    Some(insert) => self.project.channels[NUM_CH + insert].name.clone(),
-                    None => "Master".to_owned(),
-                };
-                let title = ui.add_sized([width, 22.0], egui::Label::new(
-                    RichText::new(&name).size(12.0).strong().color(if master { p_accent() } else { ink() })).truncate()
-                    .sense(Sense::click()));
-                tapped |= title.clicked();
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    ui.add_space(6.0);
-                    widgets::meter(ui, vec2(10.0, fader_h), peak);
-                    let value = match insert {
-                        Some(insert) => &mut self.project.channels[NUM_CH + insert].volume,
-                        None => &mut self.project.master_volume,
-                    };
-                    let max = if master { 1.2 } else { 1.5 };
-                    ui.spacing_mut().slider_width = fader_h;
-                    let fader = ui.add(egui::Slider::new(value, 0.0..=max).vertical().show_value(false));
-                    tapped |= fader.drag_started() || fader.clicked();
-                });
-                let level = match insert {
-                    Some(insert) => self.project.channels[NUM_CH + insert].volume,
-                    None => self.project.master_volume,
-                };
-                ui.label(RichText::new(format!("{:+.1}", widgets::db(level))).size(11.0).color(muted()));
-                if let Some(insert) = insert {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 2.0;
-                        let channel = &mut self.project.channels[NUM_CH + insert];
-                        if p_button(ui, "M", channel.mute, vec2(31.0, 28.0)).clicked() {
-                            channel.mute = !channel.mute;
-                            tapped = true;
-                        }
-                        if p_button(ui, "S", channel.solo, vec2(31.0, 28.0)).clicked() {
-                            channel.solo = !channel.solo;
-                            tapped = true;
-                        }
-                    });
-                } else {
-                    ui.add_space(32.0);
-                }
-                // which tracks feed this bus
-                let (dots, _) = ui.allocate_exact_size(vec2(width, 10.0), Sense::hover());
-                for (index, lane) in feeders.iter().take(7).enumerate() {
-                    ui.painter().circle_filled(pos2(dots.left() + 6.0 + index as f32 * 9.0, dots.center().y), 3.5, lane_col(*lane));
-                }
-            });
-        }).response;
-        tapped || response.interact(Sense::click()).clicked()
-    }
-
-    /// Everything about the selected strip (or track) below the strip row.
-    fn m_mixer_detail(&mut self, ui: &mut Ui, channel: &mut MobileMixerChannel) {
-        let insert = match *channel {
-            MobileMixerChannel::Insert(insert) => Some(insert),
-            MobileMixerChannel::Track(lane) => self.project.arrangement.tracks[lane].output.filter(|&o| o < NUM_INSERTS),
-            MobileMixerChannel::Master => None,
-        };
-        Frame::none().fill(card_fill()).rounding(12.0).inner_margin(10.0).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            match *channel {
-                MobileMixerChannel::Master => {
-                    ui.label(RichText::new("Master").size(17.0).strong());
-                    ui.label(RichText::new("Everything you hear ends here. Tracks without a bus go straight to Master.")
-                        .size(11.0).color(muted()));
-                }
-                MobileMixerChannel::Insert(insert) => {
-                    let ch = &mut self.project.channels[NUM_CH + insert];
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(format!("Insert {}", insert + 1)).size(11.0).color(muted()));
-                        ui.add(egui::TextEdit::singleline(&mut ch.name).desired_width(160.0));
-                    });
-                    ui.spacing_mut().slider_width = (ui.available_width() - 110.0).max(80.0);
-                    ui.add(egui::Slider::new(&mut ch.pan, -1.0..=1.0).text("Pan"));
-                    ui.label(RichText::new("A bus: route tracks here to mix and process them together, like FL inserts.")
-                        .size(11.0).color(muted()));
-                }
-                MobileMixerChannel::Track(lane) => {
-                    let track = &self.project.arrangement.tracks[lane];
-                    ui.label(RichText::new(&track.name).size(17.0).strong());
-                    ui.label(RichText::new(format!("Track → {}", crate::mixer::output_label(track.output))).size(11.0).color(muted()));
-                }
-            }
+        ui.data_mut(|d| {
+            d.insert_temp(channel_id, channel);
+            d.insert_temp(dock_id, dock);
         });
-        heading(ui, if insert.is_none() { "Tracks into Master" } else { "Tracks into this bus" });
+    }
+
+    fn m_mixer_name(&self, channel: MobileMixerChannel) -> String {
+        match channel {
+            MobileMixerChannel::Insert(insert) => self.project.channels[NUM_CH + insert].name.clone(),
+            _ => "Master".to_owned(),
+        }
+    }
+
+    /// One FL-style strip; returns true when it was tapped.
+    fn m_mixer_strip(&mut self, ui: &mut Ui, strip: MobileMixerChannel, selected: bool, height: f32) -> bool {
+        let width = 40.0;
+        let (rect, response) = ui.allocate_exact_size(vec2(width, height.max(160.0)), Sense::click());
+        let id = ui.id().with(("m_mixer_strip", strip));
+        let insert = match strip { MobileMixerChannel::Insert(insert) => Some(insert), _ => None };
+        let p = ui.painter().clone();
+        p.rect_filled(rect, 6.0, if selected { selected_fill() } else { card_fill().gamma_multiply(0.8) });
+        if selected {
+            p.rect_stroke(rect, 6.0, Stroke::new(1.5, p_accent()));
+        }
+        let mut tapped = response.clicked();
+        // number box
+        let number = Rect::from_min_size(rect.min + vec2(3.0, 3.0), vec2(width - 6.0, 18.0));
+        p.rect_filled(number, 4.0, if insert.is_none() { p_accent().gamma_multiply(0.55) } else { bar_fill() });
+        p.text(number.center(), Align2::CENTER_CENTER, insert.map_or("M".to_owned(), |i| (i + 1).to_string()),
+            FontId::proportional(11.0), ink());
+        // vertical name
+        let name_h = (rect.height() * 0.2).clamp(40.0, 90.0);
+        let name_rect = Rect::from_min_size(pos2(rect.left(), number.bottom() + 4.0), vec2(width, name_h));
+        let mut job = egui::text::LayoutJob::single_section(self.m_mixer_name(strip),
+            egui::TextFormat::simple(FontId::proportional(11.0), if selected { ink() } else { muted() }));
+        job.wrap = egui::text::TextWrapping::truncate_at_width(name_h - 4.0);
+        let galley = p.layout_job(job);
+        let at = pos2(name_rect.center().x - galley.size().y * 0.5, name_rect.bottom() - 2.0);
+        p.add(egui::epaint::TextShape::new(at, galley, ink()).with_angle(-std::f32::consts::FRAC_PI_2));
+        // LED mute (green = playing)
+        let mut y = name_rect.bottom() + 4.0;
+        let led = Rect::from_center_size(pos2(rect.center().x, y + 9.0), vec2(22.0, 18.0));
+        let muted_now = insert.is_some_and(|insert| self.project.channels[NUM_CH + insert].mute);
+        p.circle_filled(led.center(), 5.0, if muted_now { argb(0xFF2A3440) } else { argb(0xFF5BE37A) });
+        p.circle_stroke(led.center(), 5.0, Stroke::new(1.0, outline()));
+        if let Some(insert) = insert {
+            if ui.interact(led, id.with("led"), Sense::click()).on_hover_text("Mute").clicked() {
+                let ch = &mut self.project.channels[NUM_CH + insert];
+                ch.mute = !ch.mute;
+                tapped = true;
+            }
+        }
+        y = led.bottom() + 4.0;
+        // pan knob (inserts)
+        let knob = Rect::from_center_size(pos2(rect.center().x, y + 13.0), vec2(26.0, 26.0));
+        if let Some(insert) = insert {
+            let hit = ui.interact(knob, id.with("pan"), Sense::click_and_drag()).on_hover_text("Pan (double-tap: centre)");
+            let pan = &mut self.project.channels[NUM_CH + insert].pan;
+            if hit.dragged() {
+                *pan = (*pan - hit.drag_delta().y * 0.01 + hit.drag_delta().x * 0.01).clamp(-1.0, 1.0);
+                tapped = true;
+            }
+            if hit.double_clicked() {
+                *pan = 0.0;
+            }
+            fl_knob(&p, knob, *pan * 0.5 + 0.5, true);
+        }
+        y = knob.bottom() + 6.0;
+        // meter + fader
+        let bottom_pad = 22.0;
+        let lane = Rect::from_min_max(pos2(rect.left() + 3.0, y), pos2(rect.right() - 3.0, rect.bottom() - bottom_pad));
+        if lane.height() > 30.0 {
+            let peak = self.shared.peak(insert.map_or(crate::mixer::NUM_STRIPS, |insert| NUM_CH + insert));
+            for (index, level) in peak.iter().enumerate() {
+                let bar = Rect::from_min_size(pos2(lane.left() + index as f32 * 4.0, lane.top()), vec2(3.0, lane.height()));
+                p.rect_filled(bar, 1.0, argb(0xFF10151C));
+                let h = (level.clamp(0.0, 1.2) / 1.2) * bar.height();
+                let fill = Rect::from_min_max(pos2(bar.left(), bar.bottom() - h), bar.max);
+                p.rect_filled(fill, 1.0, if *level > 0.9 { argb(0xFFF2C14E) } else { argb(0xFF5BE37A) });
+            }
+            let track = Rect::from_min_max(pos2(lane.left() + 10.0, lane.top()), lane.max);
+            let max = if insert.is_none() { 1.2 } else { 1.5 };
+            let value = match insert {
+                Some(insert) => &mut self.project.channels[NUM_CH + insert].volume,
+                None => &mut self.project.master_volume,
+            };
+            let hit = ui.interact(track, id.with("fader"), Sense::click_and_drag()).on_hover_text("Volume");
+            let travel = (track.height() - 14.0).max(1.0);
+            if hit.dragged() || hit.clicked() {
+                if let Some(pointer) = hit.interact_pointer_pos() {
+                    *value = (((track.bottom() - 7.0 - pointer.y) / travel).clamp(0.0, 1.0)) * max;
+                }
+                tapped = true;
+            }
+            if hit.double_clicked() {
+                *value = if insert.is_none() { 0.8 } else { 1.0 };
+            }
+            let t = (*value / max).clamp(0.0, 1.0);
+            let cx = track.center().x;
+            p.line_segment([pos2(cx, track.top() + 4.0), pos2(cx, track.bottom() - 4.0)], Stroke::new(2.0, argb(0xFF10151C)));
+            let handle = Rect::from_center_size(pos2(cx, track.bottom() - 7.0 - t * travel), vec2(track.width() - 2.0, 12.0));
+            p.rect_filled(handle, 2.0, if selected { p_accent() } else { argb(0xFFB9C2CF) });
+            p.line_segment([handle.left_center(), handle.right_center()], Stroke::new(1.0, argb(0xFF2A3440)));
+        }
+        // dots: tracks feeding this strip
+        let dots = Rect::from_min_max(pos2(rect.left(), rect.bottom() - bottom_pad), rect.max);
+        let feeders: Vec<usize> = self.project.arrangement.tracks.iter().enumerate()
+            .filter(|(_, track)| track.output.filter(|&o| o < NUM_INSERTS) == insert).map(|(lane, _)| lane).collect();
+        for (index, lane) in feeders.iter().take(6).enumerate() {
+            let at = pos2(dots.left() + 9.0 + (index % 3) as f32 * 11.0, dots.top() + 6.0 + (index / 3) as f32 * 9.0);
+            p.circle_filled(at, 3.2, lane_col(*lane));
+        }
+        tapped
+    }
+
+    /// Right dock: the effect slots of the selected strip, FL style (name, wet knob, on/off LED).
+    fn m_mixer_slots(&mut self, ui: &mut Ui, channel: MobileMixerChannel) {
+        let insert = match channel { MobileMixerChannel::Insert(insert) => insert, _ => NUM_INSERTS };
+        let open_id = egui::Id::new(("m_mixer_slot_open", insert));
+        let mut open = ui.data(|d| d.get_temp::<usize>(open_id));
+        let automation_lane = (insert < NUM_INSERTS).then(|| (0..self.project.arrangement.tracks.len()).find(|&lane|
+            self.project.track_automation_insert(lane) == Some(insert) && !self.project.arrangement.tracks[lane].playlist_locked))
+            .flatten();
+        let mut create = None;
+        let chain = if insert == NUM_INSERTS { &mut self.project.master_chain } else { &mut self.project.insert_fx[insert] };
+        if chain.len() < plugins_ui::MAX_SLOTS {
+            chain.resize_with(plugins_ui::MAX_SLOTS, crate::fx::FxSlot::empty);
+        }
+        for index in 0..plugins_ui::MAX_SLOTS {
+            ui.push_id(("m_mixer_slot", insert, index), |ui| {
+                let slot = &mut chain[index];
+                let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::hover());
+                let p = ui.painter();
+                p.rect_filled(row.shrink2(vec2(0.0, 1.0)), 6.0, if open == Some(index) { selected_fill() } else { bar_fill() });
+                let led = Rect::from_center_size(pos2(row.right() - 12.0, row.center().y), vec2(24.0, 30.0));
+                let knob = Rect::from_center_size(pos2(row.right() - 40.0, row.center().y), vec2(26.0, 26.0));
+                let label = Rect::from_min_max(row.min + vec2(8.0, 0.0), pos2(knob.left() - 4.0, row.bottom()));
+                if slot.empty {
+                    playlist_label(p, label, row.center().y, &format!("Slot {}", index + 1), muted());
+                    let pick = ui.interact(label, ui.id().with("pick"), Sense::click());
+                    egui::popup::popup_below_widget(ui, ui.id().with("menu"), &pick, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+                        ui.set_min_width(160.0);
+                        mobile_scroll(egui::ScrollArea::vertical()).max_height(280.0).show(ui, |ui| {
+                            for kind in crate::fx::ALL {
+                                if ui.button(kind.name()).clicked() {
+                                    *slot = crate::fx::FxSlot::new(kind);
+                                    open = Some(index);
+                                }
+                            }
+                        });
+                    });
+                    if pick.clicked() {
+                        ui.memory_mut(|m| m.toggle_popup(ui.id().with("menu")));
+                    }
+                    return;
+                }
+                playlist_label(p, label, row.center().y, slot.kind.name(), ink());
+                if ui.interact(label, ui.id().with("open"), Sense::click()).clicked() {
+                    open = if open == Some(index) { None } else { Some(index) };
+                }
+                let wet = ui.interact(knob, ui.id().with("wet"), Sense::click_and_drag()).on_hover_text("Wet mix");
+                if wet.dragged() {
+                    slot.wet = (slot.wet - wet.drag_delta().y * 0.01 + wet.drag_delta().x * 0.01).clamp(0.0, 1.0);
+                }
+                if wet.double_clicked() {
+                    slot.wet = 1.0;
+                }
+                fl_knob(ui.painter(), knob, slot.wet, false);
+                if ui.interact(led, ui.id().with("on"), Sense::click()).on_hover_text("Enable effect").clicked() {
+                    slot.on = !slot.on;
+                }
+                ui.painter().circle_filled(led.center(), 5.0, if slot.on { argb(0xFF5BE37A) } else { argb(0xFF2A3440) });
+                ui.painter().circle_stroke(led.center(), 5.0, Stroke::new(1.0, outline()));
+                if open == Some(index) {
+                    Frame::none().inner_margin(Margin::symmetric(4.0, 4.0)).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            if ui.button("Remove").clicked() {
+                                *slot = crate::fx::FxSlot::empty();
+                                open = None;
+                            }
+                            if automation_lane.is_some() {
+                                ui.menu_button("Automate", |ui| {
+                                    for (param, (name, min, max, _)) in slot.kind.specs_full().into_iter().enumerate() {
+                                        if (name == "Mix" || name.starts_with("Cutoff") || name == "Feedback") && ui.button(name).clicked() {
+                                            create = Some((index, param, name, min, max));
+                                            ui.close_menu();
+                                        }
+                                    }
+                                });
+                            }
+                        });
+                        if !slot.empty {
+                            plugin_ui::plugin_grid(ui, slot);
+                        }
+                    });
+                }
+            });
+        }
+        // trailing empty slots are not saved
+        while chain.last().is_some_and(|slot| slot.empty) {
+            chain.pop();
+        }
+        ui.data_mut(|d| match open {
+            Some(index) => d.insert_temp(open_id, index),
+            None => d.remove::<usize>(open_id),
+        });
+        if let Some((lane, (index, param, name, min, max))) = automation_lane.zip(create) {
+            self.m_create_fx_automation(ui.ctx(), lane, insert, index, param, name, min, max);
+        }
+    }
+
+    /// Right dock, Route page: which tracks play through the selected strip, and moving tracks onto it.
+    fn m_mixer_routing(&mut self, ui: &mut Ui, channel: MobileMixerChannel) {
+        let insert = match channel { MobileMixerChannel::Insert(insert) => Some(insert), _ => None };
+        heading(ui, "Tracks into this channel");
         let mut any = false;
-        let mut select = None;
         for lane in 0..self.project.arrangement.tracks.len() {
             let track = &mut self.project.arrangement.tracks[lane];
             if track.output.filter(|&o| o < NUM_INSERTS) != insert {
@@ -5450,26 +5581,25 @@ impl VinteriaApp {
             }
             any = true;
             ui.push_id(("m_mixer_feeder", lane), |ui| {
-                Frame::none().fill(if *channel == MobileMixerChannel::Track(lane) { selected_fill() } else { Color32::TRANSPARENT })
-                    .rounding(8.0).inner_margin(Margin::symmetric(6.0, 2.0)).show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            let (dot, _) = ui.allocate_exact_size(vec2(10.0, 24.0), Sense::hover());
-                            ui.painter().circle_filled(dot.center(), 4.0, lane_col(lane));
-                            if ui.add_sized([90.0, 28.0], egui::Button::new(RichText::new(&track.name).size(12.0)).frame(false).truncate()).clicked() {
-                                select = Some(lane);
-                            }
-                            ui.spacing_mut().slider_width = (ui.available_width() - 150.0).max(60.0);
-                            ui.add(egui::Slider::new(&mut track.volume, 0.0..=1.5).show_value(false));
-                            if p_button(ui, "M", track.mute, vec2(30.0, 28.0)).clicked() {
-                                track.mute = !track.mute;
-                            }
-                            mixer_ui::output_picker_w(ui, ("m_mixer_route", lane), &mut track.output, 64.0);
-                        });
-                    });
+                ui.horizontal(|ui| {
+                    let (dot, _) = ui.allocate_exact_size(vec2(10.0, 24.0), Sense::hover());
+                    ui.painter().circle_filled(dot.center(), 4.0, lane_col(lane));
+                    ui.add_sized([(ui.available_width() - 70.0).max(40.0), 24.0],
+                        egui::Label::new(RichText::new(&track.name).size(12.0)).truncate());
+                    mixer_ui::output_picker_w(ui, ("m_mixer_route", lane), &mut track.output, 64.0);
+                });
+                ui.horizontal(|ui| {
+                    ui.add_space(14.0);
+                    ui.spacing_mut().slider_width = (ui.available_width() - 44.0).max(40.0);
+                    ui.add(egui::Slider::new(&mut track.volume, 0.0..=1.5).show_value(false));
+                    if p_button(ui, "M", track.mute, vec2(30.0, 26.0)).clicked() {
+                        track.mute = !track.mute;
+                    }
+                });
             });
         }
         if !any {
-            ui.label(RichText::new("No tracks here yet. Pick a bus for a track with its routing button.").size(11.0).color(muted()));
+            ui.label(RichText::new("No tracks play through here yet.").size(11.0).color(muted()));
         }
         if let Some(target) = insert {
             let others: Vec<(usize, String)> = self.project.arrangement.tracks.iter().enumerate()
@@ -5484,105 +5614,10 @@ impl VinteriaApp {
                     }
                 });
             }
-        }
-        if let Some(lane) = select {
-            *channel = MobileMixerChannel::Track(lane);
-            self.arr.sel_lane = lane;
-        }
-    }
-
-    fn m_mixer_effects(&mut self, ui: &mut Ui, channel: MobileMixerChannel) {
-        let error_id = egui::Id::new(("m_mixer_effect_error", channel));
-        let insert = match channel {
-            MobileMixerChannel::Master => {
-                ui.label(RichText::new("Master").strong());
-                Some(NUM_INSERTS)
-            }
-            MobileMixerChannel::Insert(insert) => {
-                ui.label(RichText::new(&self.project.channels[NUM_CH + insert].name).strong());
-                Some(insert)
-            }
-            MobileMixerChannel::Track(lane) => {
-                let track = &self.project.arrangement.tracks[lane];
-                ui.label(RichText::new(&track.name).strong());
-                let output = track.output.filter(|&insert| insert < NUM_INSERTS);
-                if let Some(insert) = output {
-                    ui.label(RichText::new(format!("Insert {} · {}", insert + 1, self.project.channels[NUM_CH + insert].name))
-                        .size(11.0).color(muted()));
-                }
-                output
-            }
-        };
-        if let Some(text) = ui.data(|d| d.get_temp::<String>(error_id)) {
-            ui.colored_label(RED, text);
-        }
-        let Some(insert) = insert else {
-            if let MobileMixerChannel::Track(lane) = channel {
-                if let Some(kind) = Self::m_mixer_effect_picker(ui, "Add first effect") {
-                    let result = plugins_ui::add_to_track(&mut self.project, lane, &crate::fx::FxSlot::new(kind));
-                    ui.ctx().request_repaint();
-                    ui.data_mut(|d| {
-                        d.remove::<String>(error_id);
-                        if let Err(error) = result {
-                            d.insert_temp(error_id, error.to_owned());
-                        }
-                    });
-                }
-            }
-            return;
-        };
-        let automation_lane = match channel {
-            MobileMixerChannel::Track(lane) if !self.project.arrangement.tracks[lane].playlist_locked => Some(lane),
-            _ => None,
-        };
-        let mut create = None;
-        let chain = if insert == NUM_INSERTS {
-            &mut self.project.master_chain
-        } else {
-            self.project.insert_fx.resize_with(NUM_INSERTS, Vec::new);
-            &mut self.project.insert_fx[insert]
-        };
-        for index in 0..plugins_ui::MAX_SLOTS {
-            ui.push_id((insert, index), |ui| {
-                if let Some(slot) = chain.get_mut(index).filter(|slot| !slot.empty) {
-                    egui::CollapsingHeader::new(format!("{:02}  {}", index + 1, slot.kind.name()))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.checkbox(&mut slot.on, "Enabled");
-                                if ui.button("Remove").clicked() {
-                                    *slot = crate::fx::FxSlot::empty();
-                                }
-                            });
-                            if !slot.empty {
-                                plugin_ui::plugin_grid(ui, slot);
-                                if automation_lane.is_some() {
-                                    ui.menu_button("Create automation clip", |ui| {
-                                        for (param, (name, min, max, _)) in slot.kind.specs_full().into_iter().enumerate() {
-                                            if (name == "Mix" || name.starts_with("Cutoff") || name == "Feedback")
-                                                && ui.button(name).clicked()
-                                            {
-                                                create = Some((index, param, name, min, max));
-                                                ui.close_menu();
-                                            }
-                                        }
-                                    });
-                                }
-                            }
-                        });
-                } else if let Some(kind) = Self::m_mixer_effect_picker(ui, &format!("{:02}  + Add effect", index + 1)) {
-                    if chain.len() <= index {
-                        chain.resize_with(index + 1, crate::fx::FxSlot::empty);
-                    }
-                    chain[index] = crate::fx::FxSlot::new(kind);
-                }
-            });
-        }
-        if let Some((lane, (index, param, name, min, max))) = automation_lane.zip(create) {
-            if self.project.track_automation_insert(lane) != Some(insert) {
-                ui.data_mut(|d| d.insert_temp(error_id, "Assign this track a dedicated mixer insert first.".to_owned()));
-            } else {
-                self.m_create_fx_automation(ui.ctx(), lane, insert, index, param, name, min, max);
-            }
+            ui.add_space(8.0);
+            let ch = &mut self.project.channels[NUM_CH + target];
+            ui.label(RichText::new("Name").size(11.0).color(muted()));
+            ui.add(egui::TextEdit::singleline(&mut ch.name).desired_width(ui.available_width()));
         }
     }
 
@@ -5873,6 +5908,24 @@ fn piano_toolbar_row(ui: &mut Ui, portrait: bool, add: impl FnOnce(&mut Ui)) {
     } else {
         ui.with_layout(egui::Layout::top_down(egui::Align::Center), add);
     }
+}
+
+/// FL-style knob: dark disc with an indicator; `t` in 0..1 (pan: 0.5 is centre, drawn from the top).
+fn fl_knob(p: &Painter, rect: Rect, t: f32, bipolar: bool) {
+    let c = rect.center();
+    let r = rect.width().min(rect.height()) * 0.5 - 2.0;
+    p.circle_filled(c, r, argb(0xFF2A3440));
+    p.circle_stroke(c, r, Stroke::new(1.0, outline()));
+    let angle = |t: f32| std::f32::consts::PI * (0.75 + 1.5 * t.clamp(0.0, 1.0));
+    let from = if bipolar { 0.5 } else { 0.0 };
+    let steps = 16;
+    let arc: Vec<Pos2> = (0..=steps).map(|i| {
+        let a = angle(from + (t - from) * i as f32 / steps as f32);
+        c + vec2(a.cos(), a.sin()) * (r + 1.0)
+    }).collect();
+    p.add(Shape::line(arc, Stroke::new(2.0, p_accent())));
+    let a = angle(t);
+    p.line_segment([c, c + vec2(a.cos(), a.sin()) * (r - 2.0)], Stroke::new(2.0, ink()));
 }
 
 /// The chevron that opens (points up) or closes (points down) the landscape studio controls.
