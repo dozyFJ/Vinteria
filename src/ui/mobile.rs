@@ -513,6 +513,9 @@ const STUDIO_SECTIONS: [(&str, Icon); 6] = [
 ];
 const SEC_PLAYLIST: usize = 0;
 const DRAWER_OPEN: &str = "m_nav_drawer_open";
+const CONTROLS_DRAWER: &str = "m_landscape_controls_drawer";
+/// pass number of the frame in which the landscape Playlist dock was drawn
+const PLAYLIST_DOCK_PASS: &str = "m_playlist_dock_pass";
 const MIXER_SHEET: &str = "m_mixer_sheet_open";
 
 /// one line of the navigation drawer: icon + label, the active one on a filled pill
@@ -694,6 +697,9 @@ impl VinteriaApp {
                 self.m_nav_drawer(ctx);
             } else if self.m_sec != SEC_PIANO {
                 self.m_studio_sidebar(ctx);
+                if self.m_sec == SEC_PLAYLIST {
+                    self.m_landscape_playlist_dock(ctx);
+                }
                 if self.m_tab == 1 {
                     self.m_landscape_controls_drawer(ctx);
                 }
@@ -866,20 +872,93 @@ impl VinteriaApp {
             });
     }
 
+    /// Select / Clone / Undo / Redo for the Playlist: a floating pill in portrait, the bottom dock in landscape.
+    fn m_playlist_tool_buttons(&mut self, ui: &mut Ui) {
+        let select_id = egui::Id::new("m_playlist_select");
+        let mut select_mode = ui.data(|d| d.get_temp::<bool>(select_id)).unwrap_or(false) && !self.arr.auto_edit;
+        ui.spacing_mut().item_spacing.x = 2.0;
+        if studio_icon(ui, 44.0, Icon::SelectBox, select_mode, "Select clips").clicked() {
+            select_mode = !select_mode;
+            self.arr.auto_edit = false;
+            self.arr.sel_clip = None;
+            self.arr.sel.clear();
+        }
+        let selection = self.arr.selection();
+        let can_clone = !selection.is_empty() && selection.iter().all(|&index| {
+            self.project.arrangement.clips.get(index).is_some_and(|clip|
+                self.project.arrangement.tracks.get(clip.lane).is_some_and(|track| !track.playlist_locked))
+        });
+        ui.add_enabled_ui(can_clone, |ui| {
+            if studio_icon(ui, 44.0, Icon::CloneClips, false, "Clone clips").clicked() {
+                self.m_playlist_undo_step();
+                self.arr.msg.clear();
+                arrangement_ui::duplicate_selection(&mut self.project, &mut self.arr);
+                if let Some(clip) = self.arr.sel_clip.and_then(|index| self.project.arrangement.clips.get(index)) {
+                    ui.data_mut(|d| d.insert_temp(egui::Id::new("m_playlist_reveal_tick"), clip.start));
+                }
+            }
+        });
+        if self.m_studio_undo_redo(ui, 44.0) {
+            self.arr.sel_clip = None;
+            self.arr.sel.clear();
+            self.arr.msg.clear();
+        }
+        ui.data_mut(|d| d.insert_temp(select_id, select_mode));
+    }
+
+    /// Landscape Playlist: one bottom bar with the edit tools on the left and the studio controls chevron on the right.
+    fn m_landscape_playlist_dock(&mut self, ctx: &egui::Context) {
+        let drawer = egui::Id::new(CONTROLS_DRAWER);
+        let open = ctx.data(|d| d.get_temp::<bool>(drawer)).unwrap_or(false);
+        let response = egui::TopBottomPanel::bottom("m_playlist_dock").show_separator_line(false).exact_height(52.0)
+            .frame(Frame::none().fill(bar_fill()).stroke(Stroke::new(1.0, outline()))
+                .inner_margin(Margin { left: 6.0, right: 10.0, top: 4.0, bottom: 4.0 }))
+            .show(ctx, |ui| {
+                mobile_visuals(ui);
+                ui.horizontal(|ui| {
+                    self.m_playlist_tool_buttons(ui);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if drawer_chevron(ui, 48.0, open).clicked() {
+                            ctx.data_mut(|d| d.insert_temp(drawer, !open));
+                        }
+                    });
+                });
+            }).response;
+        let pass = ctx.cumulative_pass_nr();
+        ctx.data_mut(|d| {
+            d.insert_temp(egui::Id::new(PLAYLIST_DOCK_PASS), pass);
+            d.insert_temp(egui::Id::new("m_playlist_dock_top"), response.rect.top());
+        });
+    }
+
     fn m_landscape_controls_drawer(&mut self, ctx: &egui::Context) {
-        let id = egui::Id::new("m_landscape_controls_drawer");
+        let id = egui::Id::new(CONTROLS_DRAWER);
         let open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
         let width = 48.0;
         let screen = ctx.screen_rect();
-        let height = (screen.height() - 68.0).min(420.0).max(1.0);
-        let drawer_height = 54.0 + if open { height + 2.0 } else { 0.0 };
-        let position = pos2(screen.right() - width - 10.0, screen.bottom() - drawer_height - 6.0);
+        // with the Playlist dock the chevron sits in the dock, so the drawer only shows its controls above it
+        let docked = ctx.data(|d| d.get_temp::<u64>(egui::Id::new(PLAYLIST_DOCK_PASS))) == Some(ctx.cumulative_pass_nr());
+        if docked && !open {
+            return;
+        }
+        let bottom = if docked {
+            ctx.data(|d| d.get_temp::<f32>(egui::Id::new("m_playlist_dock_top"))).unwrap_or(screen.bottom() - 52.0) - 6.0
+        } else {
+            screen.bottom() - 6.0
+        };
+        let height = if docked {
+            (bottom - screen.top() - 18.0).min(420.0).max(1.0)
+        } else {
+            (screen.height() - 68.0).min(420.0).max(1.0)
+        };
+        let drawer_height = if docked { height + 8.0 } else { 54.0 + if open { height + 2.0 } else { 0.0 } };
+        let position = pos2(screen.right() - width - 10.0, bottom - drawer_height);
+        let rounding = if docked { egui::Rounding::same(18.0) } else { egui::Rounding { nw: 18.0, sw: 18.0, ne: 0.0, se: 0.0 } };
         egui::Area::new(id.with("area")).order(egui::Order::Foreground)
             .fixed_pos(position).movable(false)
             .show(ctx, |ui| {
                 mobile_visuals(ui);
-                Frame::none().fill(bar_fill())
-                    .rounding(egui::Rounding { nw: 18.0, sw: 18.0, ne: 0.0, se: 0.0 })
+                Frame::none().fill(bar_fill()).rounding(rounding)
                     .stroke(Stroke::new(1.0, outline())).inner_margin(4.0)
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 2.0;
@@ -888,17 +967,7 @@ impl VinteriaApp {
                                 .id_salt("m_studio_controls").auto_shrink([true, false])
                                 .show(ui, |ui| self.m_studio_controls(ui, ctx, width));
                         }
-                        let (rect, response) = ui.allocate_exact_size(vec2(width, 44.0), Sense::click());
-                        let center = rect.center();
-                        let direction = if open { 1.0 } else { -1.0 };
-                        ui.painter().add(Shape::line(
-                            vec![center + vec2(-7.0, -direction * 4.0),
-                                 center + vec2(0.0, direction * 3.0),
-                                 center + vec2(7.0, -direction * 4.0)],
-                            Stroke::new(2.0, ink()),
-                        ));
-                        let label = if open { "Hide studio controls" } else { "Show studio controls" };
-                        if response.on_hover_text(label).clicked() {
+                        if !docked && drawer_chevron(ui, width, open).clicked() {
                             ctx.data_mut(|d| d.insert_temp(id, !open));
                         }
                     });
@@ -3747,51 +3816,26 @@ impl VinteriaApp {
         if !self.arr.msg.is_empty() {
             ui.colored_label(RED, &self.arr.msg);
         }
+        // in landscape the edit tools live in the bottom dock next to the studio controls chevron
+        let docked = ui.data(|d| d.get_temp::<u64>(egui::Id::new(PLAYLIST_DOCK_PASS)))
+            == Some(ui.ctx().cumulative_pass_nr());
+        if !docked {
+            let viewport = ui.available_rect_before_wrap();
+            egui::Area::new(egui::Id::new("m_playlist_floating_tools"))
+                .order(egui::Order::Foreground).movable(false)
+                .fixed_pos(pos2(viewport.left() + 8.0, (viewport.bottom() - 58.0).max(viewport.top())))
+                .show(ui.ctx(), |ui| {
+                    mobile_visuals(ui);
+                    Frame::none().fill(bar_fill()).stroke(Stroke::new(1.0, outline()))
+                        .rounding(14.0).inner_margin(Margin::symmetric(5.0, 3.0)).show(ui, |ui| {
+                            ui.horizontal(|ui| self.m_playlist_tool_buttons(ui));
+                        });
+                });
+        }
         let select_id = egui::Id::new("m_playlist_select");
         let mut select_mode = ui.data(|d| d.get_temp::<bool>(select_id)).unwrap_or(false);
         if self.arr.auto_edit {
             select_mode = false;
-        }
-        let mut history_changed = false;
-        let viewport = ui.available_rect_before_wrap();
-        egui::Area::new(egui::Id::new("m_playlist_floating_tools"))
-            .order(egui::Order::Foreground).movable(false)
-            .fixed_pos(pos2(viewport.left() + 8.0, (viewport.bottom() - 58.0).max(viewport.top())))
-            .show(ui.ctx(), |ui| {
-                mobile_visuals(ui);
-                Frame::none().fill(bar_fill()).stroke(Stroke::new(1.0, outline()))
-                    .rounding(14.0).inner_margin(Margin::symmetric(5.0, 3.0)).show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 2.0;
-                            if studio_icon(ui, 44.0, Icon::SelectBox, select_mode, "Select clips").clicked() {
-                                select_mode = !select_mode;
-                                self.arr.auto_edit = false;
-                                self.arr.sel_clip = None;
-                                self.arr.sel.clear();
-                            }
-                            let selection = self.arr.selection();
-                            let can_clone = !selection.is_empty() && selection.iter().all(|&index| {
-                                self.project.arrangement.clips.get(index).is_some_and(|clip|
-                                    self.project.arrangement.tracks.get(clip.lane).is_some_and(|track| !track.playlist_locked))
-                            });
-                            ui.add_enabled_ui(can_clone, |ui| {
-                                if studio_icon(ui, 44.0, Icon::CloneClips, false, "Clone clips").clicked() {
-                                    self.m_playlist_undo_step();
-                                    self.arr.msg.clear();
-                                    arrangement_ui::duplicate_selection(&mut self.project, &mut self.arr);
-                                    if let Some(clip) = self.arr.sel_clip.and_then(|index| self.project.arrangement.clips.get(index)) {
-                                        ui.data_mut(|d| d.insert_temp(egui::Id::new("m_playlist_reveal_tick"), clip.start));
-                                    }
-                                }
-                            });
-                            history_changed = self.m_studio_undo_redo(ui, 44.0);
-                        });
-                    });
-            });
-        if history_changed {
-            self.arr.sel_clip = None;
-            self.arr.sel.clear();
-            self.arr.msg.clear();
         }
         ui.data_mut(|d| d.insert_temp(select_id, select_mode));
         let ruler = TOUCH;
@@ -5722,6 +5766,18 @@ fn piano_slide_mark(painter: &egui::Painter, note: Rect) {
             Color32::from_gray(24), Stroke::NONE,
         ));
     }
+}
+
+/// The chevron that opens (points up) or closes (points down) the landscape studio controls.
+fn drawer_chevron(ui: &mut Ui, width: f32, open: bool) -> Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 44.0), Sense::click());
+    let center = rect.center();
+    let direction = if open { 1.0 } else { -1.0 };
+    ui.painter().add(Shape::line(
+        vec![center + vec2(-7.0, -direction * 4.0), center + vec2(0.0, direction * 3.0), center + vec2(7.0, -direction * 4.0)],
+        Stroke::new(2.0, ink()),
+    ));
+    response.on_hover_text(if open { "Hide studio controls" } else { "Show studio controls" })
 }
 
 fn studio_icon(ui: &mut Ui, width: f32, symbol: Icon, active: bool, label: &str) -> Response {

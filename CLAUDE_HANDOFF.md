@@ -489,3 +489,8 @@ Browser открывается слева рядом с Playlist в обеих �
 
 - A single tap on an Audio or MIDI clip in Playlist opens its radial action menu in normal editing mode. Long-press still opens MIDI directly in Piano Roll, and Select mode still toggles selection.
 - Native Android touch testing is pending.
+
+### Android 1.0.83
+
+- Landscape Playlist: Select, Clone, Undo and Redo moved from the floating pill into one bottom dock bar. The studio controls chevron sits at the right end of the same bar and opens the controls column above it. Portrait and full view keep the floating pill; other landscape sections keep the old drawer chevron.
+- Native Android touch testing is pending.
