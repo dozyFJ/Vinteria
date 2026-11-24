@@ -303,6 +303,11 @@ mod io {
         fn new(shared: Arc<Shared>, sr: f32) -> Self {
             let mut engine = Engine::new(sr);
             engine.live_loop = true;
+            #[cfg(target_os = "android")]
+            {
+                // +3 dB on Android playback, before the master limiter.
+                engine.output_gain = 1.412_537_6;
+            }
             let p = shared.project.load_full();
             let old = engine.set_project(p);
             drop(old); // initial placeholder, still on the UI thread

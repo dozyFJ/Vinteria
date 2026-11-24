@@ -438,3 +438,8 @@ Browser открывается слева рядом с Playlist в обеих �
 
 - Piano Roll uses its ruler to select a beat-aligned playback loop. Tap seeks, hold or Clear loop clears the range. The older note Select and Clone controls were removed.
 - Playlist track actions open Effects. On a dedicated track insert, supported Mix, Cutoff and Feedback parameters offer Create automation clip. The automation row supports drawing, dragging, resizing, cloning and deletion. The engine restores the configured effect parameter outside the clip.
+
+### Android 1.0.74
+
+- Android live playback gets 3 dB of output gain ahead of the existing master limiter. Project levels and offline WAV renders use unity output gain.
+- Playback level and limiter behavior still need an on-device listening check.

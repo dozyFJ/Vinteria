@@ -277,6 +277,7 @@ pub struct Engine {
     click_hz: f32,
     delay: Delay,
     limiter: Limiter,
+    pub(super) output_gain: f32,
     comp: Compressor,
     eq_lo: [Biquad; 2],
     eq_hi: [Biquad; 2],
@@ -325,6 +326,7 @@ impl Engine {
             click_hz: 1000.0,
             delay: Delay::new(sr),
             limiter: Limiter::new(),
+            output_gain: 1.0,
             comp: Compressor::new(),
             eq_lo: [Biquad::default(); 2],
             eq_hi: [Biquad::default(); 2],
@@ -1089,7 +1091,7 @@ impl Engine {
                 self.gr_db = self.gr_db.max(gr);
             }
             let (l, r) = if proj.master_chain.is_empty() { (l, r) } else { self.master_run.process(&proj.master_chain, l, r, bpm, sr) };
-            let (l, r) = self.limiter.process(l, r, sr);
+            let (l, r) = self.limiter.process(l * self.output_gain, r * self.output_gain, sr);
             let l = if l.is_finite() { l } else { 0.0 };
             let r = if r.is_finite() { r } else { 0.0 };
             self.peaks[NUM_STRIPS][0] = self.peaks[NUM_STRIPS][0].max(l.abs());
