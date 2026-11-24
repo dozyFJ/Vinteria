@@ -2080,7 +2080,7 @@ impl VinteriaApp {
             ui
         } else {
             let area = ui.available_rect_before_wrap();
-            let sidebar = Rect::from_min_size(area.min, vec2(toolbar_width, area.height()));
+            let sidebar = Rect::from_min_max(pos2(area.right() - toolbar_width, area.top()), area.max);
             ui.painter().rect_filled(sidebar, 10.0, bar_fill());
             let mut side = ui.new_child(egui::UiBuilder::new().id_salt("piano_toolbar").max_rect(sidebar.shrink(2.0)));
             side.set_clip_rect(sidebar.intersect(ui.clip_rect()));
@@ -2088,7 +2088,7 @@ impl VinteriaApp {
             let side_height = side.available_height();
             mobile_scroll(egui::ScrollArea::vertical()).max_height(side_height)
                 .auto_shrink([false, false]).show(&mut side, toolbar);
-            let content = Rect::from_min_max(pos2(sidebar.right() + 8.0, area.top()), area.max);
+            let content = Rect::from_min_max(area.min, pos2(sidebar.left() - 8.0, area.bottom()));
             grid_ui = ui.new_child(egui::UiBuilder::new().id_salt("piano_content").max_rect(content));
             grid_ui.set_clip_rect(content.intersect(ui.clip_rect()));
             &mut grid_ui
