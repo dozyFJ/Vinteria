@@ -778,7 +778,7 @@ impl VinteriaApp {
     #[cfg(target_os = "android")]
     fn splash_ui(&mut self, ctx: &egui::Context) -> bool {
         let elapsed = self.splash.get_or_insert_with(web_time::Instant::now).elapsed().as_secs_f32();
-        if elapsed >= 0.78 {
+        if elapsed >= 0.86 {
             return false;
         }
 
@@ -789,21 +789,40 @@ impl VinteriaApp {
         ));
         painter.rect_filled(screen, 0.0, egui::Color32::from_rgb(14, 16, 23));
 
-        let size = (screen.width().min(screen.height()) * 0.24).clamp(32.0, 92.0);
-        let t = (elapsed / 0.56).clamp(0.0, 1.0);
-        let gap = (1.0 - t).powi(3) * size * 0.38;
         let center = screen.center();
-        let color = egui::Color32::from_rgb(231, 236, 255);
-        let stroke = egui::Stroke::new(size * 0.09, color);
+        let radius = (screen.width().min(screen.height()) * 0.13).clamp(20.0, 56.0);
+        let ring_width = radius * 0.065;
+        let accent = egui::Color32::from_rgb(167, 156, 255);
+        painter.circle_stroke(
+            center,
+            radius,
+            egui::Stroke::new(ring_width, egui::Color32::from_rgb(43, 46, 63)),
+        );
 
-        for (side, points) in [
-            (-1.0, [(-0.50, -0.26), (-0.28, 0.28), (0.0, -0.18)]),
-            (1.0, [(0.0, -0.18), (0.28, 0.28), (0.50, -0.26)]),
-        ] {
-            let points = points.into_iter().map(|(x, y)| {
-                center + egui::vec2(x * size + side * gap, y * size)
-            }).collect();
-            painter.add(egui::Shape::line(points, stroke));
+        let progress = (elapsed / 0.48).clamp(0.0, 1.0);
+        if progress >= 1.0 {
+            painter.circle_stroke(center, radius, egui::Stroke::new(ring_width, accent));
+        } else if progress > 0.0 {
+            let segments = (64.0 * progress).ceil() as usize;
+            let points = (0..=segments)
+                .map(|i| {
+                    let angle = std::f32::consts::TAU * progress * i as f32 / segments as f32
+                        - std::f32::consts::FRAC_PI_2;
+                    center + egui::vec2(angle.cos(), angle.sin()) * radius
+                })
+                .collect();
+            painter.add(egui::Shape::line(points, egui::Stroke::new(ring_width, accent)));
+        }
+
+        let reveal = ((elapsed - 0.48) / 0.18).clamp(0.0, 1.0);
+        if reveal > 0.0 {
+            let alpha = (255.0 * reveal * reveal * (3.0 - 2.0 * reveal)).round() as u8;
+            let points = [(-0.54, -0.25), (-0.30, 0.28), (0.0, -0.17), (0.30, 0.28), (0.54, -0.25)]
+                .into_iter()
+                .map(|(x, y)| center + egui::vec2(x, y) * radius)
+                .collect();
+            let color = egui::Color32::from_rgba_unmultiplied(231, 236, 255, alpha);
+            painter.add(egui::Shape::line(points, egui::Stroke::new(radius * 0.10, color)));
         }
 
         ctx.request_repaint();
