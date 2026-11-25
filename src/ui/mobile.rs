@@ -6356,7 +6356,10 @@ impl VinteriaApp {
                     p.rect_filled(Rect::from_center_size(pos2(rect.center().x, rect.bottom() - 3.0), vec2(16.0, 2.0)),
                         1.0, Color32::from_black_alpha(125));
                 }
-                if locked || pinching { continue; }
+                if locked || pinching {
+                    ui.data_mut(|d| d.remove::<(Pos2, Pos2, bool)>(clip_id.with("drag")));
+                    continue;
+                }
                 if select {
                     if hit.clicked() { picked_clip = Some(index); }
                     continue;
@@ -6372,7 +6375,11 @@ impl VinteriaApp {
                 let drag_id = clip_id.with("drag");
                 if hit.drag_started() {
                     if let Some(origin) = ui.input(|i| i.pointer.press_origin()) {
-                        let resize = origin.y >= bounds_at.bottom() - bounds_at.height().min(18.0) * 0.55;
+                        let delta = hit.interact_pointer_pos().unwrap_or(origin) - origin;
+                        let grip_height = (bounds_at.height() * 0.30).min(14.0);
+                        let resize = bounds_at.height() > 10.0
+                            && origin.y >= bounds_at.bottom() - grip_height
+                            && delta.y.abs() >= delta.x.abs();
                         ui.data_mut(|d| d.insert_temp(drag_id, (origin, origin, resize)));
                     }
                 }
@@ -6390,7 +6397,8 @@ impl VinteriaApp {
                             candidate.lane = lane_at(point.x).unwrap_or(clip.lane);
                             candidate.start = snap_tick(clip.start as f32 + delta);
                         }
-                        let valid = visible.contains(point) && !self.project.arrangement.tracks[candidate.lane].playlist_locked
+                        let valid = visible.contains(point) && (resize || lane_at(point.x).is_some())
+                            && !self.project.arrangement.tracks[candidate.lane].playlist_locked
                             && self.project.arrangement.kind(candidate.lane) == self.project.arrangement.kind(clip.lane)
                             && self.project.arrangement.can_place(&candidate, Some(index));
                         if let Some(target) = columns[candidate.lane] {

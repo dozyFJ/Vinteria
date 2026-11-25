@@ -291,7 +291,8 @@ pub struct VinteriaApp {
     saved: Arc<Project>,
     last_autosave: web_time::Instant,
     /// start of the logo splash shown when the program opens
-    splash: web_time::Instant,
+    #[cfg(target_os = "android")]
+    splash: Option<web_time::Instant>,
     /// phone layout: dock tab (0 Projects, 1 Studio, 2 Settings, 3 Profile) and the section picked in the icon rail
     m_tab: usize,
     m_sec: usize,
@@ -410,7 +411,8 @@ impl VinteriaApp {
             recent: std::fs::read_to_string("recent_projects.txt").map(|t| t.lines().map(PathBuf::from).filter(|p| p.exists()).collect()).unwrap_or_default(),
             show_projects: false,
             hub_open: false,
-            splash: web_time::Instant::now(),
+            #[cfg(target_os = "android")]
+            splash: None,
             m_tab: 4,
             m_sec: 0,
             m_export: Default::default(),
@@ -773,8 +775,40 @@ impl VinteriaApp {
         self.status = format!("Template: {name} - press Play (Pattern mode loops the selected pattern, Song mode plays the playlist)");
     }
 
-    /// Logo screen over the program for the first moments, fading out (like the splash of FL Studio / Ableton).
-    fn splash_ui(&self, _ctx: &egui::Context) { }
+    #[cfg(target_os = "android")]
+    fn splash_ui(&mut self, ctx: &egui::Context) -> bool {
+        let elapsed = self.splash.get_or_insert_with(web_time::Instant::now).elapsed().as_secs_f32();
+        if elapsed >= 0.78 {
+            return false;
+        }
+
+        let screen = ctx.screen_rect();
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("startup_splash"),
+        ));
+        painter.rect_filled(screen, 0.0, egui::Color32::from_rgb(14, 16, 23));
+
+        let size = (screen.width().min(screen.height()) * 0.24).clamp(32.0, 92.0);
+        let t = (elapsed / 0.56).clamp(0.0, 1.0);
+        let gap = (1.0 - t).powi(3) * size * 0.38;
+        let center = screen.center();
+        let color = egui::Color32::from_rgb(231, 236, 255);
+        let stroke = egui::Stroke::new(size * 0.09, color);
+
+        for (side, points) in [
+            (-1.0, [(-0.50, -0.26), (-0.28, 0.28), (0.0, -0.18)]),
+            (1.0, [(0.0, -0.18), (0.28, 0.28), (0.50, -0.26)]),
+        ] {
+            let points = points.into_iter().map(|(x, y)| {
+                center + egui::vec2(x * size + side * gap, y * size)
+            }).collect();
+            painter.add(egui::Shape::line(points, stroke));
+        }
+
+        ctx.request_repaint();
+        true
+    }
 
     /// Action history: every undo step as a row; a click returns the project to that moment (the later steps stay redoable).
     fn history_ui(&mut self, ui: &mut egui::Ui) {
@@ -2247,12 +2281,15 @@ impl eframe::App for VinteriaApp {
         } else if frame_no == 4 {
             crate::boot_done();
         }
+        #[cfg(target_os = "android")]
+        if self.splash_ui(ctx) {
+            return;
+        }
         paint_glass_background(ctx);
         self.audio.keep_alive();
         crate::silence_system_beeps();
         self.check_update(ctx);
         self.toasts_ui(ctx);
-        self.splash_ui(ctx);
         #[cfg(not(target_arch = "wasm32"))]
         if self.render_overlay(ctx) {
             return;
