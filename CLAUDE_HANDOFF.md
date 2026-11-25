@@ -741,3 +741,11 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 - Portrait vertical Playlist and Drum Rack look: column headers tinted with the track colour (stronger when selected) with a 2–3 px underline; clips get a soft sheen (light top → darker bottom) and a track-colour edge on the left (`clip_shine`); lit Drum Rack steps glow in their drum's colour.
 - Clip contents: MIDI clips show their real notes (time runs down the clip, length = note length, spread over the clip's pitch range); drum clips show their lit steps as short bars per drum row; audio clips show a mini waveform down the clip (respects offset, warp tempo and reverse).
 - Checked on the desktop build in mobile mode (400×860) with the Trap Beat (808 Mafia) template: drum, 808 bass, wavetable and analog clips.
+
+### Android 1.0.149
+
+- Home: Library above Recent. The bento tiles and recent-project carousel retain their layout.
+- Mobile theme: translucent grey chrome, with a soft highlight on the header, navigation, studio sidebars and transport docks.
+- Portrait Playlist: audio clip settings open from the left with a translucent grey finish, a fixed header and scrollable controls.
+- Playlist: MIDI clips now honor Clip gain (up to +6 dB) and Poly Synth defaults to a 3.1 dB higher output. Engine measurements confirmed that the WAV level is unchanged.
+- Android handset verification pending.

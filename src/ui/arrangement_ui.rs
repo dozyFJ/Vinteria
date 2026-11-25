@@ -615,11 +615,11 @@ pub fn clip_options(ui: &mut Ui, project: &mut Project, st: &mut ArrState, lib: 
                 if mobile {
                     ui.heading("Playback");
                 }
+                let mut gain = c.gain;
+                if ui.add(egui::Slider::new(&mut gain, 0.0..=2.0).text("Clip gain")).changed() {
+                    project.arrangement.clips[i].gain = gain;
+                }
                 if c.audio {
-                    let mut g = c.gain;
-                    if ui.add(egui::Slider::new(&mut g, 0.0..=2.0).text("Volume")).changed() {
-                        project.arrangement.clips[i].gain = g;
-                    }
                     ui.horizontal(|ui| {
                         let mut rev = c.reverse;
                         if ui.checkbox(&mut rev, "Reverse").on_hover_text("Play the clip backwards").changed() {

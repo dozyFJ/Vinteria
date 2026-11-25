@@ -267,8 +267,8 @@ pub struct Engine {
     pub live_loop: bool,
     pattern_loop: bool,
     pattern_range: Option<(usize, u32, u32)>,
-    /// velocity multiplier of the MIDI clip being fired (its fade in / out)
-    clip_fade: f32,
+    /// MIDI clip gain and fade at the note or step being fired.
+    clip_level: f32,
     fx_run: Vec<crate::fx::FxChain>,
     master_run: crate::fx::FxChain,
     /// metronome click: envelope, oscillator phase and pitch
@@ -318,7 +318,7 @@ impl Engine {
             live_loop: false,
             pattern_loop: true,
             pattern_range: None,
-            clip_fade: 1.0,
+            clip_level: 1.0,
             fx_run: (0..NUM_INSERTS).map(|_| crate::fx::FxChain::new()).collect(),
             master_run: crate::fx::FxChain::new(),
             click_env: 0.0,
@@ -681,9 +681,9 @@ impl Engine {
                         if clip.fade_out > 0 {
                             fade = fade.min(((clip.len as f32 - pos) / clip.fade_out as f32).clamp(0.0, 1.0));
                         }
-                        self.clip_fade = fade.max(0.05);
+                        self.clip_level = fade.max(0.05) * clip.gain.clamp(0.0, 2.0);
                         self.fire(Self::bank_of(&proj, clip.lane), Some(clip.lane), pat, local, abs, remaining, swing, proj.arrangement.tracks.get(clip.lane).and_then(|t| t.instrument), proj.arrangement.tracks.get(clip.lane).map_or(0, |t| t.transpose) + clip.pitch as i32);
-                        self.clip_fade = 1.0;
+                        self.clip_level = 1.0;
                     }
                 }
             }
@@ -769,20 +769,21 @@ impl Engine {
     }
 
     fn fire(&mut self, bank: usize, lane: Option<usize>, pat: &Pattern, local: u32, abs: u64, limit: u64, swing: u32, inst: Option<Track>, transpose: i32) {
+        let lane_vol = self.clip_level
+            * lane.and_then(|l| self.project.arrangement.tracks.get(l)).map_or(1.0, |t| t.volume)
+            * lane.map_or(1.0, |l| self.lane_auto.get(l).copied().unwrap_or(1.0));
         if let Some(step) = step_at(local, swing) {
             if step < pat.length_steps as usize {
                 for lane in 0..NUM_DRUMS {
                     let s = pat.drums[lane][step];
                     if s.on && crate::sequencer::step_passes(s.prob, abs / pat.len_ticks().max(1) as u64, step, lane) {
-                        self.banks[bank].drums[lane].trigger_ex(s.vel as f32 / 127.0, s.pitch as i32, s.slide);
+                        self.banks[bank].drums[lane].trigger_ex(s.vel as f32 / 127.0 * lane_vol, s.pitch as i32, s.slide);
                         self.step_pan[lane] = s.pan as f32 / 100.0;
                     }
                 }
             }
         }
         let pat_remaining = u64::from(pat.len_ticks().max(1).saturating_sub(local));
-        // the level of the Playlist track this pattern is played on
-        let lane_vol = self.clip_fade * lane.and_then(|l| self.project.arrangement.tracks.get(l)).map_or(1.0, |t| t.volume) * lane.map_or(1.0, |l| self.lane_auto.get(l).copied().unwrap_or(1.0));
         for n in pat.notes.iter().filter(|n| n.start == local && !n.mute) {
             if lane.and_then(|l| self.project.arrangement.tracks.get(l)).map_or(false, |t| t.sidechain_src) {
                 self.duck_env = 1.0;
@@ -818,10 +819,10 @@ impl Engine {
             // a slide note glides the sounding voice over its own length (seconds, sample rate)
             let slide = if n.slide { Some((len as f32 / PPQ as f32 * 60.0 / self.project.bpm.max(20.0), self.sr)) } else { None };
             if let Some(l) = lane.filter(|&l| self.lane_own(l, t)) {
-                self.lane_syn[l].note_on(t, pitch, (n.vel as f32 / 127.0 * lane_vol).min(1.0), slide, abs + len);
+                self.lane_syn[l].note_on(t, pitch, n.vel as f32 / 127.0 * lane_vol, slide, abs + len);
                 continue;
             }
-            self.banks[bank].note_on(t, pitch, (n.vel as f32 / 127.0 * lane_vol).min(1.0), slide, abs + len);
+            self.banks[bank].note_on(t, pitch, n.vel as f32 / 127.0 * lane_vol, slide, abs + len);
         }
     }
 

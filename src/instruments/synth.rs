@@ -169,7 +169,7 @@ impl Synth {
                 v.active = false;
             }
         }
-        out * p.volume * 0.35
+        out * p.volume * 0.50
     }
 }
 

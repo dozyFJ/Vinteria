@@ -208,7 +208,7 @@ pub struct Clip {
     /// semitones: audio clips are resampled (pitch and speed move together, like FL), MIDI clips transpose their notes
     #[serde(default)]
     pub pitch: i8,
-    /// audio clips: volume of this clip
+    /// Volume multiplier for MIDI and audio clips.
     #[serde(default = "unit_gain")]
     pub gain: f32,
     /// audio clips: the project tempo the clip was laid out at; a different tempo now speeds the sound up or slows it down
