@@ -738,6 +738,7 @@ impl VinteriaApp {
                 if self.m_tab == 1 {
                     self.m_studio_transport_dock(ctx);
                     self.m_mixer_sheet(ctx);
+                    self.m_studio_project_drawer(ctx);
                 }
             } else if self.m_sec != SEC_PIANO {
                 self.m_studio_sidebar(ctx);
@@ -1503,43 +1504,89 @@ impl VinteriaApp {
     }
 
     fn m_studio_portrait_top_bar(&mut self, ctx: &egui::Context) {
+        let drawer = egui::Id::new("m_studio_project_drawer");
         egui::TopBottomPanel::top("m_studio_portrait_top_bar").show_separator_line(false)
             .frame(Frame::none().fill(glass_fill()).stroke(Stroke::new(1.0, glass_edge()))
                 .inner_margin(Margin::symmetric(6.0, 3.0)))
             .show(ctx, |ui| {
                 mobile_visuals(ui);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 3.0;
-                    dock_menu(ui, Icon::Menu, "Project actions", false, |ui| {
-                        self.m_studio_project_actions(ui, ctx);
-                    });
-                    if self.m_sec == SEC_PLAYLIST {
-                        self.m_studio_browser_button(ui, ctx, TOUCH);
-                    } else if dock_icon(ui, Icon::Folder, false, "Browser").clicked() {
-                        self.m_select_studio_section(ctx, SEC_PLAYLIST);
-                        ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_browser_open"), true));
+                    let open = ctx.data(|d| d.get_temp::<bool>(drawer)).unwrap_or(false);
+                    if dock_icon(ui, Icon::Menu, open, "Project actions").clicked() {
+                        ctx.data_mut(|d| {
+                            d.insert_temp(drawer, !open);
+                            d.remove::<bool>(egui::Id::new("m_browser_open"));
+                        });
                     }
-                    let width = ui.available_width().max(1.0);
-                    ui.allocate_ui_with_layout(vec2(width, TOUCH), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_studio_top_controls")
-                            .max_width(width).auto_shrink([false, true]).show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 2.0;
-                                    self.m_studio_quick_controls(ui, ctx, 38.0);
-                                    #[cfg(not(target_arch = "wasm32"))]
-                                    self.m_render_track_button(ui, ctx, 38.0);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if self.m_sec == SEC_PLAYLIST {
+                            self.m_studio_browser_button(ui, ctx, TOUCH);
+                        } else if dock_icon(ui, Icon::Folder, false, "Browser").clicked() {
+                            self.m_select_studio_section(ctx, SEC_PLAYLIST);
+                            ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_browser_open"), true));
+                        }
+                        let width = ui.available_width().max(1.0);
+                        ui.allocate_ui_with_layout(vec2(width, TOUCH), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_studio_top_controls")
+                                .max_width(width).auto_shrink([false, true]).show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 2.0;
+                                        self.m_studio_quick_controls(ui, ctx, 38.0);
+                                        #[cfg(not(target_arch = "wasm32"))]
+                                        self.m_render_track_button(ui, ctx, 38.0);
+                                    });
                                 });
-                            });
+                        });
                     });
                 });
             });
     }
 
-    fn m_studio_project_actions(&mut self, ui: &mut Ui, ctx: &egui::Context) {
-        ui.set_min_width(194.0);
-        ui.add(egui::Label::new(RichText::new(&self.project.name).strong()).truncate());
-        ui.separator();
-        mobile_scroll(egui::ScrollArea::vertical()).max_height(ctx.screen_rect().height() * 0.68)
+    fn m_studio_project_drawer(&mut self, ctx: &egui::Context) {
+        let id = egui::Id::new("m_studio_project_drawer");
+        let open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+        let shown = ctx.animate_bool_with_time(id.with("slide"), open, 0.16);
+        if shown <= 0.0 {
+            return;
+        }
+        let screen = ctx.screen_rect();
+        let width = (screen.width() * 0.80).min(320.0);
+        let mut close = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+        egui::Area::new(id.with("scrim")).order(egui::Order::Middle).fixed_pos(screen.min).movable(false)
+            .show(ctx, |ui| {
+                let (rect, hit) = ui.allocate_exact_size(screen.size(), Sense::click());
+                ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha((145.0 * shown) as u8));
+                close |= hit.clicked();
+            });
+        egui::Area::new(id.with("area")).order(egui::Order::Foreground).movable(false).constrain(false)
+            .fixed_pos(pos2(screen.left() - (1.0 - shown) * width, screen.top()))
+            .show(ctx, |ui| {
+                let corners = egui::Rounding { ne: 18.0, se: 18.0, ..Default::default() };
+                Frame::none().fill(glass_fill()).stroke(Stroke::new(1.0, glass_edge()))
+                    .rounding(corners).inner_margin(Margin::symmetric(10.0, 10.0)).show(ui, |ui| {
+                        mobile_visuals(ui);
+                        let content_width = (width - 22.0).max(1.0);
+                        ui.set_width(content_width);
+                        ui.set_min_height((screen.height() - 22.0).max(1.0));
+                        ui.horizontal(|ui| {
+                            ui.add_sized([(content_width - 52.0).max(1.0), TOUCH],
+                                egui::Label::new(RichText::new(&self.project.name).size(19.0).strong()).truncate());
+                            close |= p_button(ui, "×", false, vec2(TOUCH, TOUCH)).clicked();
+                        });
+                        ui.separator();
+                        close |= self.m_studio_project_actions(ui, ctx);
+                    });
+            });
+        if close {
+            ctx.data_mut(|d| d.insert_temp(id, false));
+            ctx.request_repaint();
+        }
+    }
+
+    fn m_studio_project_actions(&mut self, ui: &mut Ui, ctx: &egui::Context) -> bool {
+        let mut close = false;
+        mobile_scroll(egui::ScrollArea::vertical()).max_height(ui.available_height().max(1.0))
             .auto_shrink([false, true]).show(ui, |ui| {
                 let rec = if self.record { "Disarm recording" } else { "Arm recording" };
                 let items = [
@@ -1575,11 +1622,12 @@ impl VinteriaApp {
                             }
                             _ => self.m_leave_studio(ctx),
                         }
-                        ui.close_menu();
+                        close = true;
                         break;
                     }
                 }
             });
+        close
     }
 
     #[allow(dead_code)]

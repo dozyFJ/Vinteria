@@ -693,3 +693,8 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 - Add a vertical Playlist for portrait: tracks are columns and bars run down the screen. The playhead is horizontal. Move clips across tracks or down the timeline, resize from the lower edge, and use the existing clip actions.
 - Playlist options can switch back to a horizontal timeline. Landscape and volume automation editing continue to use the horizontal view.
 - Native Android visual and gesture checks are pending.
+
+### Android 1.0.119
+
+- The portrait project actions open in an animated left drawer from the top-left button. Quick controls and Browser stay in the top bar, and sections remain in the dock.
+- Native Android visual and gesture verification is pending.
