@@ -1045,39 +1045,94 @@ impl VinteriaApp {
     }
 
     fn m_home(&mut self, ui: &mut Ui) {
-        mobile_scroll(egui::ScrollArea::vertical()).auto_shrink([false, false]).show(ui, |ui| {
-            let mut recent = None;
-            heading(ui, "Recent");
-            for path in self.recent.iter().take(3) {
-                let name = path.file_stem().and_then(|name| name.to_str()).unwrap_or("Project");
-                if ui.add_sized([ui.available_width(), TOUCH], egui::Button::new(name).truncate()).clicked() {
-                    recent = Some(path.clone());
+        mobile_scroll(egui::ScrollArea::vertical()).id_salt("m_home_scroll")
+            .auto_shrink([false, false]).show(ui, |ui| {
+                let mut recent = None;
+                ui.horizontal(|ui| {
+                    heading(ui, "Recent");
+                    if !self.recent.is_empty() {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button("See all").clicked() {
+                                self.m_tab = 0;
+                                self.m_sec = 1;
+                            }
+                        });
+                    }
+                });
+
+                if self.recent.is_empty() {
+                    ui.label(RichText::new("No recent projects.").color(muted()));
+                } else {
+                    let gap = ui.spacing().item_spacing.x;
+                    let tile_width = ((ui.available_width() - 2.0 * gap - 18.0) / 2.0).clamp(92.0, 188.0);
+                    mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_home_recent_tiles")
+                        .auto_shrink([false, true]).show(ui, |ui| {
+                            ui.horizontal_top(|ui| {
+                                for (column, paths) in self.recent.chunks(2).enumerate() {
+                                    ui.vertical(|ui| {
+                                        for (row, path) in paths.iter().enumerate() {
+                                            let name = path.file_stem().and_then(|name| name.to_str()).unwrap_or("Project");
+                                            if Self::m_home_tile(ui, vec2(tile_width, 68.0), Icon::Folder,
+                                                name, lane_col(column * 2 + row)).clicked()
+                                            {
+                                                recent = Some(path.clone());
+                                            }
+                                        }
+                                    });
+                                }
+                            });
+                        });
                 }
-            }
-            if self.recent.is_empty() {
-                ui.label(RichText::new("No recent projects.").color(muted()));
-            } else if ui.button("More recent projects").clicked() {
-                self.m_tab = 0;
-                self.m_sec = 1;
-            }
-            ui.add_space(12.0);
-            heading(ui, "Create");
-            if p_button(ui, "Templates", false, vec2(ui.available_width(), TOUCH)).clicked() {
-                self.m_tab = 0;
-                self.m_sec = 2;
-            }
-            ui.add_space(12.0);
-            heading(ui, "Library");
-            if p_button(ui, "Sounds", false, vec2(ui.available_width(), TOUCH)).clicked() {
-                self.m_tab = 0;
-                self.m_sec = 3;
-            }
-            if let Some(path) = recent {
-                if self.m_save_pending_project(ui.ctx()) && self.m_open_project_file(ui.ctx(), path, false) {
-                    self.m_open_studio(SEC_PLAYLIST);
+
+                ui.add_space(16.0);
+                heading(ui, "Library");
+                let gap = ui.spacing().item_spacing;
+                let width = (ui.available_width() - gap.x).max(2.0);
+                let sounds_width = (width * 0.55).floor();
+                let side_width = width - sounds_width;
+                ui.horizontal_top(|ui| {
+                    if Self::m_home_tile(ui, vec2(sounds_width, 128.0 + gap.y), Icon::Wave,
+                        "Sounds", p_accent()).clicked()
+                    {
+                        self.m_tab = 0;
+                        self.m_sec = 3;
+                    }
+                    ui.vertical(|ui| {
+                        if Self::m_home_tile(ui, vec2(side_width, 64.0), Icon::Layout,
+                            "Templates", lane_col(2)).clicked()
+                        {
+                            self.m_tab = 0;
+                            self.m_sec = 2;
+                        }
+                        if Self::m_home_tile(ui, vec2(side_width, 64.0), Icon::Plug,
+                            "Plugin Store", lane_col(3)).clicked()
+                        {
+                            self.m_tab = 5;
+                            self.m_sec = 0;
+                        }
+                    });
+                });
+
+                if let Some(path) = recent {
+                    if self.m_save_pending_project(ui.ctx()) && self.m_open_project_file(ui.ctx(), path, false) {
+                        self.m_open_studio(SEC_PLAYLIST);
+                    }
                 }
-            }
-        });
+            });
+    }
+
+    fn m_home_tile(ui: &mut Ui, size: Vec2, symbol: Icon, title: &str, accent: Color32) -> egui::Response {
+        let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 13.0, tint(card_fill(), accent, 0.12));
+        painter.rect_stroke(rect, 13.0, Stroke::new(1.0, tint(outline(), accent, 0.34)));
+        control_state(&painter, rect, 13.0, &response, ink());
+        let icon_center = rect.left_top() + vec2(23.0, 21.0);
+        painter.rect_filled(Rect::from_center_size(icon_center, vec2(30.0, 28.0)),
+            8.0, tint(card_fill(), accent, 0.25));
+        icon(&painter, symbol, icon_center, ink());
+        playlist_label(&painter, rect.shrink2(vec2(10.0, 0.0)), rect.bottom() - 15.0, title, ink());
+        response.on_hover_text(title)
     }
 
     fn m_plugin_store(&mut self, ui: &mut Ui) {
