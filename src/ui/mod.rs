@@ -853,6 +853,13 @@ impl VinteriaApp {
                 .collect();
             let color = egui::Color32::from_rgba_unmultiplied(231, 236, 255, alpha);
             painter.add(egui::Shape::line(points, egui::Stroke::new(radius * 0.10, color)));
+            painter.text(
+                center + egui::vec2(0.0, radius + 14.0),
+                egui::Align2::CENTER_TOP,
+                "Winteria DAW",
+                egui::FontId::proportional((radius * 0.48).clamp(17.0, 27.0)),
+                color,
+            );
         }
 
         ctx.request_repaint();
