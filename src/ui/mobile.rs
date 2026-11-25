@@ -937,13 +937,13 @@ impl VinteriaApp {
                 if self.m_sec == SEC_PLAYLIST {
                     self.m_studio_browser_button(ui, ctx, width);
                 } else {
-                    self.m_studio_undo_redo(ui, width);
+                    self.m_studio_undo_redo(ui, width, false);
                 }
             });
     }
 
     /// Select, Clone, Undo and Redo controls shared by both Playlist docks.
-    fn m_playlist_tool_buttons(&mut self, ui: &mut Ui) {
+    fn m_playlist_tool_buttons(&mut self, ui: &mut Ui, captions: bool) {
         let select_id = egui::Id::new("m_playlist_select");
         let mut select_mode = ui.data(|d| d.get_temp::<bool>(select_id)).unwrap_or(false) && !self.arr.auto_edit;
         ui.spacing_mut().item_spacing.x = 2.0;
@@ -953,6 +953,7 @@ impl VinteriaApp {
             self.arr.sel_clip = None;
             self.arr.sel.clear();
         }
+        if captions { sidebar_caption(ui, "Select"); }
         let selection = self.arr.selection();
         let can_clone = !selection.is_empty() && selection.iter().all(|&index| {
             self.project.arrangement.clips.get(index).is_some_and(|clip|
@@ -968,7 +969,8 @@ impl VinteriaApp {
                 }
             }
         });
-        if self.m_studio_undo_redo(ui, 44.0) {
+        if captions { sidebar_caption(ui, "Clone"); }
+        if self.m_studio_undo_redo(ui, 44.0, captions) {
             self.arr.sel_clip = None;
             self.arr.sel.clear();
             self.arr.msg.clear();
@@ -989,7 +991,7 @@ impl VinteriaApp {
                         ui.horizontal(|ui| {
                             Frame::none().fill(card_fill()).rounding(16.0)
                                 .inner_margin(Margin::symmetric(4.0, 2.0)).show(ui, |ui| {
-                                    ui.horizontal(|ui| self.m_playlist_tool_buttons(ui));
+                                    ui.horizontal(|ui| self.m_playlist_tool_buttons(ui, false));
                                 });
                             ui.separator();
                             self.m_studio_controls(ui, ctx, 44.0);
@@ -1175,7 +1177,7 @@ impl VinteriaApp {
     }
 
     /// Undo / Redo for the phone (the PC has Ctrl+Z / Ctrl+Y). A finished drag or edit is one step.
-    fn m_studio_undo_redo(&mut self, ui: &mut Ui, width: f32) -> bool {
+    fn m_studio_undo_redo(&mut self, ui: &mut Ui, width: f32, captions: bool) -> bool {
         let (can_undo, can_redo) = (!self.undo.is_empty(), !self.redo.is_empty());
         let undo = studio_icon(ui, width, Icon::Undo, false, "Undo");
         if !can_undo {
@@ -1185,6 +1187,7 @@ impl VinteriaApp {
         if did_undo {
             self.undo();
         }
+        if captions { sidebar_caption(ui, "Undo"); }
         let redo = studio_icon(ui, width, Icon::Redo, false, "Redo");
         if !can_redo {
             ui.painter().rect_filled(redo.rect, 8.0, bar_fill().gamma_multiply(0.6));
@@ -1193,23 +1196,28 @@ impl VinteriaApp {
         if did_redo {
             self.redo();
         }
+        if captions { sidebar_caption(ui, "Redo"); }
         did_undo || did_redo
     }
 
     fn m_studio_quick_controls(&mut self, ui: &mut Ui, ctx: &egui::Context, width: f32) {
         self.m_studio_tempo(ui, width, false, false);
+        sidebar_caption(ui, "BPM");
         let (rect, metronome) = ui.allocate_exact_size(vec2(width, 44.0), Sense::click());
         if metronome.on_hover_text("Metronome").clicked() {
             self.project.metronome = !self.project.metronome;
         }
         let clock_color = if self.project.metronome { super::theme::TEAL() } else { ink() };
         icon(ui.painter(), Icon::Clock, rect.center(), clock_color);
+        sidebar_caption(ui, "Click");
         self.m_automation_button(ui, ctx, width);
+        sidebar_caption(ui, "Auto.");
         if studio_icon(ui, width, Icon::Mic, self.rec_mode == 1 && self.record,
             "Record microphone to audio track").clicked()
         {
             self.m_voice_record();
         }
+        sidebar_caption(ui, "Mic");
         if studio_icon(ui, width, Icon::Keys, self.rec_mode == 0 && self.record,
             "Record notes in Piano Roll").clicked()
         {
@@ -1225,6 +1233,7 @@ impl VinteriaApp {
                 ctx.data_mut(|d| d.remove::<usize>(egui::Id::new(("m_piano_record", self.project.current_pattern))));
             }
         }
+        sidebar_caption(ui, "MIDI");
     }
 
     fn m_automation_button(&mut self, ui: &mut Ui, ctx: &egui::Context, width: f32) {
@@ -1481,9 +1490,15 @@ impl VinteriaApp {
                     }
                     let space = ui.available_width().max(12.0);
                     let (rect, scrub) = ui.allocate_exact_size(vec2(space, 44.0), Sense::click_and_drag());
-                    let track = Rect::from_center_size(rect.center(), vec2((rect.width() - 14.0).max(1.0), 5.0));
+                    let track = Rect::from_center_size(rect.center() + vec2(0.0, 7.0), vec2((rect.width() - 14.0).max(1.0), 5.0));
                     let head = track.left() + track.width() * (tick as f32 / end as f32).clamp(0.0, 1.0);
                     let p = ui.painter();
+                    let caption_y = rect.top() + 9.0;
+                    p.text(pos2(track.left(), caption_y), Align2::LEFT_CENTER,
+                        "Position", FontId::proportional(11.0), muted());
+                    p.text(pos2(track.right(), caption_y), Align2::RIGHT_CENTER,
+                        format!("Bar {} / {bars}", bar.saturating_add(1).min(bars)),
+                        FontId::proportional(11.0), ink());
                     p.rect_filled(track, 2.5, outline());
                     let head_pos = pos2(head, track.center().y);
                     p.line_segment([track.left_center(), head_pos], Stroke::new(5.0, p_accent()));
@@ -1575,15 +1590,18 @@ impl VinteriaApp {
         if dock_icon(ui, Icon::Stop, false, "Stop").clicked() {
             self.m_stop(ctx);
         }
+        sidebar_caption(ui, "Stop");
         let tick = self.shared.position.load(Ordering::Relaxed);
         let bar = tick / TICKS_PER_BAR;
         if dock_icon(ui, Icon::Rewind, false, "Previous bar").clicked() {
             let previous = if tick % TICKS_PER_BAR == 0 { bar.saturating_sub(1) } else { bar };
             self.m_seek(ctx, previous * TICKS_PER_BAR);
         }
+        sidebar_caption(ui, "Prev bar");
         if dock_icon(ui, Icon::Forward, false, "Next bar").clicked() {
             self.m_seek(ctx, (bar + 1).min(self.m_studio_transport_bars() - 1) * TICKS_PER_BAR);
         }
+        sidebar_caption(ui, "Next bar");
         let (name, symbol) = STUDIO_SECTIONS.get(self.m_sec).copied().unwrap_or(STUDIO_SECTIONS[0]);
         dock_menu(ui, symbol, name, true, |ui| {
             ui.set_min_width(174.0);
@@ -1598,56 +1616,66 @@ impl VinteriaApp {
                 }
             }
         });
+        sidebar_caption(ui, "Views");
         if self.m_sec == SEC_PLAYLIST {
             dock_menu(ui, Icon::Settings, "Playlist options", false,
                 |ui| self.m_playlist_options_content(ui));
+            sidebar_caption(ui, "Options");
         }
     }
 
     fn m_studio_portrait_sidebar(&mut self, ctx: &egui::Context) {
         let drawer = egui::Id::new("m_studio_project_drawer");
         egui::SidePanel::right("m_studio_portrait_sidebar")
-            .resizable(false).exact_width(TOUCH + 8.0).show_separator_line(false)
+            .resizable(false).exact_width(TOUCH + 14.0).show_separator_line(false)
             .frame(Frame::none().fill(glass_fill()).stroke(Stroke::new(1.0, glass_edge()))
                 .inner_margin(Margin::symmetric(3.0, 4.0)))
             .show(ctx, |ui| {
                 mobile_visuals(ui);
                 mobile_scroll(egui::ScrollArea::vertical()).id_salt("m_studio_sidebar_tools")
                     .auto_shrink([false, false]).show(ui, |ui| {
-                        ui.spacing_mut().item_spacing.y = 2.0;
-                        let open = ctx.data(|d| d.get_temp::<bool>(drawer)).unwrap_or(false);
-                        if dock_icon(ui, Icon::Menu, open, "Project actions").clicked() {
-                            ctx.data_mut(|d| {
-                                d.insert_temp(drawer, !open);
-                                d.remove::<bool>(egui::Id::new("m_browser_open"));
-                            });
-                        }
-                        self.m_studio_sidebar_transport(ui, ctx);
-                        ui.separator();
-                        if self.m_sec == SEC_PLAYLIST {
-                            self.m_studio_browser_button(ui, ctx, TOUCH);
-                            if studio_icon(ui, TOUCH, Icon::Repeat, self.project.loop_on,
-                                "Auto Play · Repeat Playlist").clicked()
-                            {
-                                self.project.loop_on = !self.project.loop_on;
-                                if self.project.loop_on {
-                                    self.project.loop_start = 0;
-                                    self.project.loop_bars = self.project.arrangement.song_end_bar().max(1);
+                        ui.vertical_centered(|ui| {
+                            ui.spacing_mut().item_spacing.y = 1.0;
+                            let open = ctx.data(|d| d.get_temp::<bool>(drawer)).unwrap_or(false);
+                            if dock_icon(ui, Icon::Menu, open, "Project actions").clicked() {
+                                ctx.data_mut(|d| {
+                                    d.insert_temp(drawer, !open);
+                                    d.remove::<bool>(egui::Id::new("m_browser_open"));
+                                });
+                            }
+                            sidebar_caption(ui, "Project");
+                            self.m_studio_sidebar_transport(ui, ctx);
+                            ui.separator();
+                            if self.m_sec == SEC_PLAYLIST {
+                                self.m_studio_browser_button(ui, ctx, TOUCH);
+                                sidebar_caption(ui, "Browser");
+                                if studio_icon(ui, TOUCH, Icon::Repeat, self.project.loop_on,
+                                    "Auto Play · Repeat Playlist").clicked()
+                                {
+                                    self.project.loop_on = !self.project.loop_on;
+                                    if self.project.loop_on {
+                                        self.project.loop_start = 0;
+                                        self.project.loop_bars = self.project.arrangement.song_end_bar().max(1);
+                                    }
+                                    if self.project.loop_on && !self.m_transport_playing(ctx) {
+                                        self.m_start_playback(ctx, true, self.project.current_pattern, true);
+                                    } else {
+                                        self.publish_edits();
+                                    }
                                 }
-                                if self.project.loop_on && !self.m_transport_playing(ctx) {
-                                    self.m_start_playback(ctx, true, self.project.current_pattern, true);
-                                } else {
-                                    self.publish_edits();
+                                sidebar_caption(ui, "Auto Play");
+                                ui.separator();
+                                self.m_playlist_tool_buttons(ui, true);
+                            } else {
+                                if dock_icon(ui, Icon::Folder, false, "Browser").clicked() {
+                                    self.m_select_studio_section(ctx, SEC_PLAYLIST);
+                                    ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_browser_open"), true));
                                 }
+                                sidebar_caption(ui, "Browser");
                             }
                             ui.separator();
-                            self.m_playlist_tool_buttons(ui);
-                        } else if dock_icon(ui, Icon::Folder, false, "Browser").clicked() {
-                            self.m_select_studio_section(ctx, SEC_PLAYLIST);
-                            ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_browser_open"), true));
-                        }
-                        ui.separator();
-                        self.m_studio_quick_controls(ui, ctx, TOUCH);
+                            self.m_studio_quick_controls(ui, ctx, TOUCH);
+                        });
                     });
             });
     }
@@ -2796,7 +2824,7 @@ impl VinteriaApp {
                     }
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 2.0;
-                        history_changed = self.m_studio_undo_redo(ui, 43.0);
+                        history_changed = self.m_studio_undo_redo(ui, 43.0, false);
                     });
                 });
             }
@@ -5295,7 +5323,7 @@ impl VinteriaApp {
                     mobile_visuals(ui);
                     Frame::none().fill(glass_fill()).stroke(Stroke::new(1.0, glass_edge()))
                         .rounding(14.0).inner_margin(Margin::symmetric(5.0, 3.0)).show(ui, |ui| {
-                            ui.horizontal(|ui| self.m_playlist_tool_buttons(ui));
+                            ui.horizontal(|ui| self.m_playlist_tool_buttons(ui, false));
                         });
                 });
         }
@@ -6403,7 +6431,7 @@ impl VinteriaApp {
             columns[lane] = Some(column);
         }
         let (viewport, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
-        let header_height = 30.0;
+        let header_height = 42.0;
         let grid = Rect::from_min_max((viewport.min + vec2(32.0, header_height)).min(viewport.max), viewport.max);
         if !grid.is_positive() { return; }
         let corner = Rect::from_min_max(viewport.min, grid.min);
@@ -6538,7 +6566,11 @@ impl VinteriaApp {
                 let name = if clip.audio { self.project.audio_pool.get(clip.pattern).map(|s| s.name.as_str()) }
                     else { pattern.map(|p| p.name.as_str()) };
                 if let Some(name) = name.filter(|_| rect.height() >= 14.0) {
-                    fit_label(&p, rect.shrink2(vec2(5.0, 0.0)), rect.top() + 9.0, name, argb(0xFF202831), 11.0);
+                    let short = (rect.width() < 87.0)
+                        .then(|| name.strip_prefix("MIDI clip ").filter(|n| n.parse::<usize>().is_ok()))
+                        .flatten().map(|n| format!("MIDI {n}"));
+                    fit_label(&p, rect.shrink2(vec2(4.0, 0.0)), rect.top() + 8.0,
+                        short.as_deref().unwrap_or(name), argb(0xFF202831), 10.0);
                 }
                 if let Some(pattern) = pattern.filter(|_| rect.height() > 27.0) {
                     let inset = Rect::from_min_max(rect.min + vec2(6.0, 17.0), rect.max - vec2(8.0, 5.0));
@@ -6713,8 +6745,10 @@ impl VinteriaApp {
                 n /= 26;
             }
             let label: String = letters.into_iter().rev().collect();
-            painter.text(cell.center(), Align2::CENTER_CENTER, label, FontId::proportional(12.0),
-                if track.mute { muted() } else { ink() });
+            painter.text(pos2(cell.center().x, cell.top() + 11.0), Align2::CENTER_CENTER,
+                label, FontId::proportional(12.0), ink());
+            fit_label(&painter, cell.shrink2(vec2(6.0, 0.0)).intersect(header), cell.top() + 28.0,
+                &track.name, if track.mute { muted() } else { ink() }, 11.0);
 
             let hit = ui.interact(hit_rect, id.with(("column_header", lane)), Sense::click())
                 .on_hover_text(format!("{} · {}", track.name, if track.kind == TrackKind::Audio { "Audio" } else { "MIDI" }));
@@ -6839,8 +6873,7 @@ impl VinteriaApp {
         let start = tick / snap * snap;
         match self.project.arrangement.kind(lane) {
             TrackKind::Midi => {
-                let duration = if snap == 1 { TICKS_PER_BAR } else { snap };
-                if arrangement_ui::new_midi_clip_at(&mut self.project, &mut self.arr, lane, start, duration) {
+                if arrangement_ui::new_midi_clip_at(&mut self.project, &mut self.arr, lane, start, TICKS_PER_BAR) {
                     let track = &mut self.project.arrangement.tracks[lane];
                     if track.blank {
                         track.blank = false;
@@ -8013,6 +8046,11 @@ fn paint_dock_icon(ui: &Ui, response: &Response, symbol: Icon, active: bool) {
     p.rect_filled(rect, radius, if active { p_accent() } else { card_fill() });
     control_state(p, rect, radius, response, color);
     icon(p, symbol, rect.center(), color);
+}
+
+fn sidebar_caption(ui: &mut Ui, label: &str) {
+    let (rect, _) = ui.allocate_exact_size(vec2(TOUCH + 6.0, 12.0), Sense::hover());
+    ui.painter().text(rect.center(), Align2::CENTER_CENTER, label, FontId::proportional(9.0), muted());
 }
 
 fn dock_icon(ui: &mut Ui, symbol: Icon, active: bool, label: &str) -> Response {
