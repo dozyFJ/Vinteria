@@ -788,3 +788,8 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 - Portrait Playlist options now open from the left with a fixed header and a full-height scrolling list.
 - Web: See all in Recent shows saved web projects.
 - Android handset verification pending.
+
+### Android 1.0.157
+
+- Added Winteria as the default mobile theme, using the launcher's violet ring, liquid fill and dark background. Graphite Silver and Day remain selectable.
+- Android handset verification pending.

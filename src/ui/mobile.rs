@@ -33,36 +33,107 @@ pub const CRASH_FILE: &str = "crash.txt";
 
 // ───────────────────── Pulse palette ─────────────────────
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum MobileTheme {
+    Winteria,
+    Graphite,
+    Day,
+}
+
+impl MobileTheme {
+    #[cfg(target_arch = "wasm32")]
+    const KEY: &'static str = "winteria:mobile-theme";
+    #[cfg(not(target_arch = "wasm32"))]
+    const FILE: &'static str = "mobile-theme.txt";
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Winteria => "Winteria",
+            Self::Graphite => "Graphite Silver",
+            Self::Day => "Day",
+        }
+    }
+
+    fn stored() -> &'static std::sync::atomic::AtomicU8 {
+        static THEME: std::sync::OnceLock<std::sync::atomic::AtomicU8> = std::sync::OnceLock::new();
+        THEME.get_or_init(|| {
+            #[cfg(target_arch = "wasm32")]
+            let saved = Self::browser_storage().and_then(|storage| storage.get_item(Self::KEY).ok().flatten());
+            #[cfg(not(target_arch = "wasm32"))]
+            let saved = std::fs::read_to_string(Self::FILE).ok();
+            let theme = match saved.as_deref().map(str::trim) {
+                Some("Graphite Silver") => Self::Graphite,
+                Some("Day") => Self::Day,
+                None if !is_dark() => Self::Day,
+                _ => Self::Winteria,
+            };
+            std::sync::atomic::AtomicU8::new(theme as u8)
+        })
+    }
+
+    fn current() -> Self {
+        match Self::stored().load(Ordering::Relaxed) {
+            n if n == Self::Graphite as u8 => Self::Graphite,
+            n if n == Self::Day as u8 => Self::Day,
+            _ => Self::Winteria,
+        }
+    }
+
+    fn save(self) {
+        Self::stored().store(self as u8, Ordering::Relaxed);
+        #[cfg(target_arch = "wasm32")]
+        if let Some(storage) = Self::browser_storage() {
+            let _ = storage.set_item(Self::KEY, self.name());
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = std::fs::write(Self::FILE, self.name());
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn browser_storage() -> Option<web_sys::Storage> {
+        web_sys::window()?.local_storage().ok().flatten()
+    }
+}
+
 fn argb(v: u32) -> Color32 {
     Color32::from_rgba_unmultiplied((v >> 16) as u8, (v >> 8) as u8, v as u8, (v >> 24) as u8)
 }
 fn pick(dark: u32, light: u32) -> Color32 {
-    argb(if is_dark() { dark } else { light })
+    argb(if MobileTheme::current() == MobileTheme::Day { light } else { dark })
 }
+fn mobile_color(winteria: u32, dark: u32, light: u32) -> Color32 {
+    match MobileTheme::current() {
+        MobileTheme::Winteria => argb(winteria),
+        MobileTheme::Graphite => argb(dark),
+        MobileTheme::Day => argb(light),
+    }
+}
+
 /// main text
 fn ink() -> Color32 {
-    pick(0xFFF1F3F5, 0xFF202B39)
+    mobile_color(0xFFE7ECFF, 0xFFF1F3F5, 0xFF202B39)
 }
 /// secondary text
 fn muted() -> Color32 {
-    pick(0xFFBFC5CC, 0xFF46556A)
+    mobile_color(0xFFBFC1DC, 0xFFBFC5CC, 0xFF46556A)
 }
 /// Silver accent from Chat Pulse in dark mode.
 fn p_accent() -> Color32 {
-    pick(0xFFDCE5EE, 0xFF345983)
+    mobile_color(0xFFA79CFF, 0xFFDCE5EE, 0xFF345983)
 }
 fn on_accent() -> Color32 {
-    pick(0xFF1A1B1D, 0xFFF0F2F8)
+    mobile_color(0xFF17122C, 0xFF1A1B1D, 0xFFF0F2F8)
 }
 fn p_bg() -> Color32 {
-    pick(0xFF191A1C, 0xFFEAF0F6)
+    mobile_color(0xFF0E1017, 0xFF191A1C, 0xFFEAF0F6)
 }
 fn bar_fill() -> Color32 {
-    pick(0xFF24272B, 0xFFF5F8FC)
+    mobile_color(0xFF1C1A2A, 0xFF24272B, 0xFFF5F8FC)
 }
 // A lightly translucent tint gives controls a frosted surface without blurring the grid.
 fn glass_fill() -> Color32 {
-    pick(0xEB353B42, 0xF2FAFCFF)
+    mobile_color(0xF02D2648, 0xEB353B42, 0xF2FAFCFF)
 }
 
 fn paint_glass_sheen(painter: &Painter, highlight: Rect) {
@@ -84,24 +155,24 @@ fn mobile_glass_chrome(ui: &Ui) {
 }
 
 fn glass_edge() -> Color32 {
-    pick(0xFF74808C, 0xFFA2B3CA)
+    mobile_color(0xFF75669D, 0xFF74808C, 0xFFA2B3CA)
 }
 
 fn piano_note_fill() -> Color32 {
-    pick(0xFFC9BAF6, 0xFFBBACE9)
+    mobile_color(0xFFC9C0FF, 0xFFC9BAF6, 0xFFBBACE9)
 }
 
 fn outline() -> Color32 {
-    pick(0xFF555F69, 0xFF8496AE)
+    mobile_color(0xFF605382, 0xFF555F69, 0xFF8496AE)
 }
 fn card_fill() -> Color32 {
-    pick(0xFF2B2F34, 0xFFDAE4EF)
+    mobile_color(0xFF252139, 0xFF2B2F34, 0xFFDAE4EF)
 }
 fn selected_fill() -> Color32 {
-    pick(0xFF424A53, 0xFFC6D9F0)
+    mobile_color(0xFF393066, 0xFF424A53, 0xFFC6D9F0)
 }
 fn grid_line() -> Color32 {
-    pick(0xFF454C54, 0xFFA5B5CA)
+    mobile_color(0xFF443A60, 0xFF454C54, 0xFFA5B5CA)
 }
 
 fn panel(p: &Painter, rect: Rect, radius: f32) {
@@ -558,15 +629,16 @@ fn mobile_visuals(ui: &mut Ui) {
     scroll.bar_inner_margin = 0.0;
     scroll.bar_outer_margin = 0.0;
     let v = ui.visuals_mut();
+    v.dark_mode = MobileTheme::current() != MobileTheme::Day;
     v.override_text_color = Some(ink());
     v.window_fill = card_fill();
     v.panel_fill = p_bg();
-    v.extreme_bg_color = pick(0xFF212327, 0xFFADB9C6);
+    v.extreme_bg_color = mobile_color(0xFF171523, 0xFF212327, 0xFFADB9C6);
     v.selection.bg_fill = selected_fill();
     v.selection.stroke = Stroke::new(1.0, p_accent());
     for (widget, fill) in [
         (&mut v.widgets.inactive, card_fill()),
-        (&mut v.widgets.hovered, pick(0xFF393F46, 0xFFD4DCE7)),
+        (&mut v.widgets.hovered, mobile_color(0xFF524485, 0xFF393F46, 0xFFD4DCE7)),
         (&mut v.widgets.active, selected_fill()),
         (&mut v.widgets.open, bar_fill()),
     ] {
@@ -3661,9 +3733,9 @@ impl VinteriaApp {
                     pitch = (i32::from(pitch) + group_delta.1) as u8;
                 }
                 let visual = body(len, pitch, start);
-                p.rect_filled(visual, 5.0, if highlighted { pick(0xFFDCEAFF, 0xFFC5DDF7) } else { piano_note_fill() });
+                p.rect_filled(visual, 5.0, if highlighted { mobile_color(0xFFE7ECFF, 0xFFDCEAFF, 0xFFC5DDF7) } else { piano_note_fill() });
                 if highlighted {
-                    p.rect_stroke(visual, 5.0, Stroke::new(1.4, pick(0xFF89B3FF, 0xFF345983)));
+                    p.rect_stroke(visual, 5.0, Stroke::new(1.4, mobile_color(0xFFA79CFF, 0xFF89B3FF, 0xFF345983)));
                 }
                 if note.slide { piano_slide_mark(&p, visual); }
                 let grip = Rect::from_center_size(visual.right_center() - vec2(3.0, 0.0), vec2(2.0, 10.0));
@@ -5998,9 +6070,9 @@ impl VinteriaApp {
                 let track = &self.project.arrangement.tracks[lane];
                 let audio = track.kind == crate::arrangement::TrackKind::Audio;
                 let base_fill = if audio {
-                    pick(0xFF232A2B, 0xFFDDEBED)
+                    mobile_color(0xFF1B1A2B, 0xFF232A2B, 0xFFDDEBED)
                 } else {
-                    pick(0xFF25282D, 0xFFE1E9F3)
+                    mobile_color(0xFF191725, 0xFF25282D, 0xFFE1E9F3)
                 };
                 let row_fill = if lane == self.arr.sel_lane {
                     tint(base_fill, selected_fill(), 0.24)
@@ -6110,7 +6182,7 @@ impl VinteriaApp {
                 let resizing = resize_from.is_some();
                 let col = lane_col(c.lane);
                 let pastel = if c.audio { argb(0xFFD6EEF5) } else { argb(0xFFDED1F3) };
-                let fill = tint(col, pastel, if is_dark() { 0.38 } else { 0.42 });
+                let fill = tint(col, pastel, if MobileTheme::current() == MobileTheme::Day { 0.42 } else { 0.38 });
                 let fill = if c.mute { tint(fill, card_fill(), 0.45) } else { fill };
                 p.rect_filled(r, 5.0, fill);
                 if playing && !c.mute && active_lanes[c.lane].is_some() && (c.start..c.end_tick()).contains(&pos) {
@@ -6985,8 +7057,8 @@ impl VinteriaApp {
                 let rect = Rect::from_min_size(pos2(area.left() + i as f32 * column, area.top()), vec2(column, area.height()));
                 if !rect.intersects(visible) { continue; }
                 let base = if self.project.arrangement.kind(lane) == TrackKind::Audio {
-                    pick(0xFF232A2B, 0xFFDDEBED)
-                } else { pick(0xFF25282D, 0xFFE1E9F3) };
+                    mobile_color(0xFF1B1A2B, 0xFF232A2B, 0xFFDDEBED)
+                } else { mobile_color(0xFF191725, 0xFF25282D, 0xFFE1E9F3) };
                 let fill = if self.arr.sel_lane == lane { tint(base, selected_fill(), 0.28) } else { base };
                 p.rect_filled(rect, 0.0, fill);
                 p.vline(rect.left(), rect.y_range(), Stroke::new(1.0, grid_line()));
@@ -8269,19 +8341,15 @@ impl VinteriaApp {
     fn m_settings(&mut self, ui: &mut Ui, ctx: &egui::Context) {
         mobile_scroll(egui::ScrollArea::vertical()).auto_shrink([false, false]).show(ui, |ui| {
             heading(ui, "Theme");
-            ui.horizontal(|ui| {
-                let w = (ui.available_width() - 8.0) / 2.0;
-                if p_button(ui, "Graphite Silver", is_dark(), vec2(w, 42.0)).clicked() {
-                    set_dark(true);
+            for theme in [MobileTheme::Winteria, MobileTheme::Graphite, MobileTheme::Day] {
+                if p_button(ui, theme.name(), MobileTheme::current() == theme, vec2(ui.available_width(), 42.0)).clicked() {
+                    theme.save();
+                    set_dark(theme != MobileTheme::Day);
                     save_prefs();
                     apply_visuals(ctx);
+                    ctx.request_repaint();
                 }
-                if p_button(ui, "Day", !is_dark(), vec2(w, 42.0)).clicked() {
-                    set_dark(false);
-                    save_prefs();
-                    apply_visuals(ctx);
-                }
-            });
+            }
             ui.add_space(10.0);
             heading(ui, "Sound");
             let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 64.0), Sense::hover());
@@ -8656,7 +8724,7 @@ fn mobile_side_editor(ctx: &egui::Context, id: egui::Id, title: &str, side: egui
             let (rect, _) = ui.allocate_exact_size(vec2(width, screen.height()), Sense::click());
             let corners = if right { egui::Rounding { nw: 18.0, sw: 18.0, ..Default::default() } }
                 else { egui::Rounding { ne: 18.0, se: 18.0, ..Default::default() } };
-            ui.painter().rect_filled(rect, corners, pick(0xF2202226, 0xF2EAF0F6));
+            ui.painter().rect_filled(rect, corners, mobile_color(0xF2191628, 0xF2202226, 0xF2EAF0F6));
             ui.painter().rect_stroke(rect, corners, Stroke::new(1.0, glass_edge().gamma_multiply(0.7)));
             let header = Rect::from_min_size(rect.min, vec2(width, 54.0));
             let header_corners = egui::Rounding { sw: 0.0, se: 0.0, ..corners };
