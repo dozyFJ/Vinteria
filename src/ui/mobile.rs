@@ -1140,7 +1140,7 @@ impl VinteriaApp {
                 });
 
                 ui.add_space(16.0);
-                let mut recent = None;
+                let mut open = None;
                 ui.horizontal(|ui| {
                     heading(ui, "Recent");
                     if !self.recent.is_empty() {
@@ -1168,7 +1168,7 @@ impl VinteriaApp {
                                             if Self::m_navigation_tile(ui, vec2(tile_width, 68.0), Icon::Folder,
                                                 name, lane_col(column * 2 + row)).clicked()
                                             {
-                                                recent = Some(path.clone());
+                                                open = Some(path.clone());
                                             }
                                         }
                                     });
@@ -1177,7 +1177,28 @@ impl VinteriaApp {
                         });
                 }
 
-                if let Some(path) = recent {
+                ui.add_space(16.0);
+                heading(ui, "Projects");
+                let error = ui.data(|d| d.get_temp::<String>(egui::Id::new("m_project_save_error")));
+                if let Some(message) = &error {
+                    ui.colored_label(RED, message);
+                }
+                if self.m_needs_project_save() || error.is_some() {
+                    self.m_unsaved_project_actions(ui);
+                }
+                let projects = self.hub_cache.get_or_insert_with(|| hub_projects(&self.recent));
+                if projects.is_empty() {
+                    ui.label(RichText::new("No projects yet.").color(muted()));
+                }
+                let width = ui.available_width();
+                for (index, (path, _, _)) in projects.iter().enumerate() {
+                    let name = path.file_stem().and_then(|name| name.to_str()).unwrap_or("Project");
+                    if Self::m_navigation_tile(ui, vec2(width, 60.0), Icon::Folder, name, lane_col(index)).clicked() {
+                        open = Some(path.clone());
+                    }
+                }
+
+                if let Some(path) = open {
                     if self.m_save_pending_project(ui.ctx()) && self.m_open_project_file(ui.ctx(), path, false) {
                         self.m_open_studio(SEC_PLAYLIST);
                     }
@@ -1963,7 +1984,7 @@ impl VinteriaApp {
     fn m_leave_studio(&mut self, ctx: &egui::Context) {
         self.return_to_start(ctx, false);
         self.m_save_pending_project(ctx);
-        self.m_tab = 0;
+        self.m_tab = 4;
         self.m_sec = 0;
         self.hub_cache = None;
         ctx.data_mut(|d| {
@@ -2207,6 +2228,20 @@ impl VinteriaApp {
 
     // ───────────────────── Projects ─────────────────────
 
+    fn m_unsaved_project_actions(&mut self, ui: &mut Ui) {
+        ui.add(egui::Label::new(RichText::new(&self.project.name).strong()).truncate());
+        let w = ui.available_width();
+        ui.horizontal(|ui| {
+            if p_button(ui, "Continue", true, vec2((w - 84.0).max(80.0), TOUCH)).clicked() {
+                self.m_open_studio(0);
+            }
+            if p_button(ui, "Save", false, vec2(72.0, TOUCH)).clicked() {
+                self.m_save_project_to_list(ui.ctx());
+            }
+        });
+        ui.add_space(8.0);
+    }
+
     fn m_projects(&mut self, ui: &mut Ui) {
         let mut open = None;
         let mut template = None;
@@ -2228,17 +2263,7 @@ impl VinteriaApp {
                 }
                 section => {
                     if section == 0 && (self.m_needs_project_save() || project_error.is_some()) {
-                        ui.add(egui::Label::new(RichText::new(&self.project.name).strong()).truncate());
-                        let w = ui.available_width();
-                        ui.horizontal(|ui| {
-                            if p_button(ui, "Continue", true, vec2((w - 84.0).max(80.0), TOUCH)).clicked() {
-                                self.m_open_studio(0);
-                            }
-                            if p_button(ui, "Save", false, vec2(72.0, TOUCH)).clicked() {
-                                self.m_save_project_to_list(ui.ctx());
-                            }
-                        });
-                        ui.add_space(8.0);
+                        self.m_unsaved_project_actions(ui);
                     }
                     if self.hub_cache.is_none() {
                         self.hub_cache = Some(hub_projects(&self.recent));

@@ -766,3 +766,8 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 - Playlist options: full-width actions, an explicit timeline state, and the current grid value on the right.
 - Clip actions: narrower sidebar and a separated red Delete action. Auto Play emphasizes its caption while active.
 - Android handset verification pending.
+
+### Android 1.0.153
+
+- Home: added a vertical project-card list beneath Recent. Leaving a project returns to Home.
+- Android handset verification pending.
