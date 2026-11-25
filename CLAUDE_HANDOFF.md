@@ -713,3 +713,8 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 
 - Mobile Playlist no longer follows the playhead in either orientation. Manual Stop and Return to start can still reset the view.
 - Android song playback stops and returns the playhead to the start at the end unless an explicit loop is enabled. Native Android playback verification is pending.
+
+### Android 1.0.123
+
+- Restyle mobile Session as a four-by-four pad launcher using the Playlist's graphite surfaces, colored track headers and pastel clips. Switch track and scene banks from the top controls. Scene launches, queued states and active pads are visible in the matrix.
+- Empty pads accept the selected compatible Playlist clip; MIDI pads also accept the current pattern and Audio pads can use the track's last sample. Native Android interaction tests are pending.

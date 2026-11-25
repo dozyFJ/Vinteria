@@ -4054,104 +4054,202 @@ impl VinteriaApp {
     /// Clip launcher in portrait: a row per scene, a column per track. Tap a clip to launch it on the next bar, tap a
     /// running clip to stop its track; tap an empty MIDI cell to put the current pattern there; hold a clip to remove it.
     fn m_session(&mut self, ui: &mut Ui) {
+        use crate::arrangement::TrackKind;
         use crate::audio_engine::QUEUED_STOP;
         use crate::session::MAX_LANES;
+
+        const BANK: usize = 4;
         let lanes = self.project.arrangement.tracks.len().min(MAX_LANES);
-        ui.horizontal(|ui| {
-            if p_button(ui, "Stop all", true, vec2(100.0, 36.0)).clicked() {
-                self.shared.send(Cmd::StopAllClips);
-            }
-            if p_button(ui, "+ Scene", false, vec2(90.0, 36.0)).clicked() {
-                self.project.session.add_scene();
-            }
-            if p_button(ui, "- Scene", false, vec2(90.0, 36.0)).clicked() {
-                self.project.session.remove_scene();
-            }
-        });
-        ui.label(RichText::new("Tap: launch / stop  ·  empty cell: put the current pattern  ·  hold: remove").size(11.0).color(muted()));
-        ui.add_space(6.0);
         if lanes == 0 {
-            ui.label(RichText::new("No tracks yet.").color(muted()));
+            ui.label(RichText::new("Add a track in Playlist to use Session.").color(muted()));
             return;
         }
-        let blink = ((ui.input(|i| i.time) * 3.0) as i64) % 2 == 0;
+        let track_id = egui::Id::new("m_session_track_bank");
+        let scene_id = egui::Id::new("m_session_scene_bank");
+        let track_banks = lanes.div_ceil(BANK);
+        let scene_banks = self.project.session.scenes.max(1).div_ceil(BANK);
+        let mut track_bank = ui.data(|d| d.get_temp::<usize>(track_id)).unwrap_or(0).min(track_banks - 1);
+        let mut scene_bank = ui.data(|d| d.get_temp::<usize>(scene_id)).unwrap_or(0).min(scene_banks - 1);
+        let mut add = false;
+        let mut remove = false;
+        Frame::none().fill(glass_fill()).stroke(Stroke::new(1.0, glass_edge())).rounding(13.0)
+            .inner_margin(Margin::symmetric(6.0, 4.0)).show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    if dock_icon(ui, Icon::Stop, false, "Stop all clips").clicked() {
+                        self.shared.send(Cmd::StopAllClips);
+                    }
+                    egui::ComboBox::from_id_salt(track_id).width(76.0)
+                        .selected_text(format!("Tracks {}–{}", track_bank * BANK + 1, ((track_bank + 1) * BANK).min(lanes)))
+                        .show_ui(ui, |ui| {
+                            for bank in 0..track_banks {
+                                let label = format!("Tracks {}–{}", bank * BANK + 1, ((bank + 1) * BANK).min(lanes));
+                                ui.selectable_value(&mut track_bank, bank, label);
+                            }
+                        });
+                    egui::ComboBox::from_id_salt(scene_id).width(79.0)
+                        .selected_text(format!("Scenes {}–{}", scene_bank * BANK + 1,
+                            ((scene_bank + 1) * BANK).min(self.project.session.scenes)))
+                        .show_ui(ui, |ui| {
+                            for bank in 0..scene_banks {
+                                let label = format!("Scenes {}–{}", bank * BANK + 1,
+                                    ((bank + 1) * BANK).min(self.project.session.scenes));
+                                ui.selectable_value(&mut scene_bank, bank, label);
+                            }
+                        });
+                    dock_menu(ui, Icon::Menu, "Scene options", false, |ui| {
+                        if ui.add_enabled(self.project.session.scenes < 64, egui::Button::new("Add scene")).clicked() {
+                            add = true;
+                            ui.close_menu();
+                        }
+                        if ui.add_enabled(self.project.session.scenes > 1, egui::Button::new("Remove last scene")).clicked() {
+                            remove = true;
+                            ui.close_menu();
+                        }
+                    });
+                });
+            });
+        if add || remove {
+            self.m_playlist_undo_step();
+            if add {
+                self.project.session.add_scene();
+                scene_bank = self.project.session.scenes.saturating_sub(1) / BANK;
+            } else {
+                self.project.session.remove_scene();
+                scene_bank = scene_bank.min(self.project.session.scenes.saturating_sub(1) / BANK);
+            }
+        }
+        ui.data_mut(|d| {
+            d.insert_temp(track_id, track_bank);
+            d.insert_temp(scene_id, scene_bank);
+        });
+        ui.add_space(6.0);
+
+        let first_track = track_bank * BANK;
+        let first_scene = scene_bank * BANK;
+        let track_end = (first_track + BANK).min(lanes);
+        let scene_end = (first_scene + BANK).min(self.project.session.scenes);
+        let gap = 5.0;
+        let ruler_width = 38.0;
+        let header = 36.0;
+        let width = ui.available_width();
+        let pad_width = ((width - ruler_width - gap * BANK as f32) / BANK as f32).max(38.0);
+        let visible_height = ui.available_height();
+        let pad_height = ((visible_height - header - gap * BANK as f32) / BANK as f32).clamp(49.0, 104.0);
         let beat = TICKS_PER_BAR / 4;
         let phase = (self.shared.position.load(Ordering::Relaxed) % beat) as f32 / beat as f32;
-        let (cell_w, cell_h, head_w, head_h) = (86.0f32, 52.0f32, 48.0f32, 30.0f32);
-        let scenes = self.project.session.scenes;
-        mobile_scroll(egui::ScrollArea::both()).id_salt("m_session").auto_shrink([false, false]).show(ui, |ui| {
-            let (rect, _) = ui.allocate_exact_size(vec2(head_w + lanes as f32 * (cell_w + 6.0), head_h + scenes as f32 * (cell_h + 6.0)), Sense::hover());
-            // track names across the top
-            for l in 0..lanes {
-                let x = rect.left() + head_w + l as f32 * (cell_w + 6.0);
-                let t = &self.project.arrangement.tracks[l];
-                let name: String = t.name.chars().take(9).collect();
-                ui.painter().circle_filled(pos2(x + 8.0, rect.top() + 12.0), 4.0, lane_col(l));
-                ui.painter().text(pos2(x + 16.0, rect.top() + 12.0), Align2::LEFT_CENTER, name, FontId::proportional(12.0), ink());
+        let mut animate = false;
+        let source = self.arr.sel_clip.and_then(|index| self.project.arrangement.clips.get(index)).copied();
+        mobile_scroll(egui::ScrollArea::both()).id_salt("m_session_pad_matrix").auto_shrink([false, false]).show(ui, |ui| {
+            let matrix_width = ruler_width + (pad_width + gap) * BANK as f32;
+            let matrix_height = header + (pad_height + gap) * (scene_end - first_scene) as f32;
+            let (area, _) = ui.allocate_exact_size(vec2(matrix_width, matrix_height), Sense::hover());
+            let p = ui.painter_at(area);
+            p.rect_filled(area, 12.0, p_bg());
+            let x_at = |lane: usize| area.left() + ruler_width + gap + (lane - first_track) as f32 * (pad_width + gap);
+            for lane in first_track..track_end {
+                let track = &self.project.arrangement.tracks[lane];
+                let rect = Rect::from_min_size(pos2(x_at(lane), area.top()), vec2(pad_width, header - gap));
+                let color = lane_col(lane);
+                p.rect_filled(rect, 8.0, if lane == self.arr.sel_lane { selected_fill() } else { card_fill() });
+                p.rect_filled(Rect::from_min_size(rect.min + vec2(4.0, 6.0), vec2(3.0, rect.height() - 12.0)), 1.5, color);
+                let label = rect.shrink2(vec2(10.0, 0.0));
+                playlist_label(&p, label, rect.center().y, &track.name, ink());
+                if ui.interact(rect, ui.id().with(("session_track", lane)), Sense::click()).clicked() {
+                    self.arr.sel_lane = lane;
+                }
             }
-            for sc in 0..scenes {
-                let y = rect.top() + head_h + sc as f32 * (cell_h + 6.0);
-                // scene launcher
-                let sr = Rect::from_min_size(pos2(rect.left(), y), vec2(head_w - 8.0, cell_h));
-                let sresp = ui.interact(sr, ui.id().with(("scene", sc)), Sense::click());
-                panel(ui.painter(), sr, 12.0);
-                icon(ui.painter(), Icon::Play, sr.center() + vec2(1.0, -6.0), ink());
-                ui.painter().text(sr.center() + vec2(0.0, 13.0), Align2::CENTER_CENTER, format!("{}", sc + 1), FontId::proportional(11.0), muted());
-                if sresp.clicked() {
-                    for c in self.project.session.clips.iter().filter(|c| c.scene == sc) {
-                        self.shared.send(Cmd::LaunchClip { lane: c.lane, pattern: c.pattern, audio: c.audio });
+
+            for scene in first_scene..scene_end {
+                let y = area.top() + header + (scene - first_scene) as f32 * (pad_height + gap);
+                let scene_pad = Rect::from_min_size(pos2(area.left(), y), vec2(ruler_width, pad_height));
+                let scene_has_clips = self.project.session.clips.iter().any(|clip| clip.scene == scene);
+                let hit = ui.interact(scene_pad, ui.id().with(("session_scene", scene)),
+                    if scene_has_clips { Sense::click() } else { Sense::hover() });
+                p.rect_filled(scene_pad, 9.0, bar_fill());
+                p.rect_stroke(scene_pad, 9.0, Stroke::new(1.0, outline()));
+                control_state(&p, scene_pad, 9.0, &hit, ink());
+                icon(&p, Icon::Play, scene_pad.center() - vec2(0.0, 10.0),
+                    if scene_has_clips { p_accent() } else { muted() });
+                p.text(scene_pad.center() + vec2(0.0, 13.0), Align2::CENTER_CENTER, scene + 1,
+                    FontId::proportional(12.0), ink());
+                if hit.on_hover_text("Launch scene").clicked() {
+                    for clip in self.project.session.clips.iter().filter(|clip| clip.scene == scene) {
+                        self.shared.send(Cmd::LaunchClip { lane: clip.lane, pattern: clip.pattern, audio: clip.audio });
                     }
                 }
-                for l in 0..lanes {
-                    let r = Rect::from_min_size(pos2(rect.left() + head_w + l as f32 * (cell_w + 6.0), y), vec2(cell_w, cell_h));
-                    let resp = ui.interact(r, ui.id().with(("slot", l, sc)), Sense::click());
-                    let clip = self.project.session.get(l, sc).copied();
-                    let p = ui.painter();
-                    match clip {
-                        Some(c) => {
-                            let code = c.code();
-                            let running = self.shared.session_run[l].load(Ordering::Relaxed) == code;
-                            let queue = self.shared.session_queue[l].load(Ordering::Relaxed);
-                            let queued = queue == code || (running && queue == QUEUED_STOP);
-                            let col = lane_col(l);
-                            p.rect_filled(r, 12.0, col.linear_multiply(if running { 0.95 } else { 0.55 }));
-                            if running {
-                                let pulse = (1.0 - phase).powi(2);
-                                p.rect_filled(r, 12.0, Color32::from_white_alpha((pulse * 56.0) as u8));
-                            }
-                            if running || (queued && blink) {
-                                p.rect_stroke(r.expand(1.5), 13.0, Stroke::new(2.5, p_accent()));
-                            }
-                            let name = if c.audio { self.project.audio_pool.get(c.pattern).map(|s| s.name.clone()).unwrap_or_default() } else { self.project.patterns.get(c.pattern).map(|p| p.name.clone()).unwrap_or_default() };
-                            let short: String = name.chars().take(10).collect();
-                            icon(p, if running { Icon::Stop } else { Icon::Play }, r.left_top() + vec2(14.0, 16.0), Color32::WHITE);
-                            p.text(pos2(r.left() + 8.0, r.bottom() - 13.0), Align2::LEFT_CENTER, short, FontId::proportional(11.5), Color32::WHITE);
-                            if resp.long_touched() || resp.secondary_clicked() {
-                                self.project.session.clear(l, sc);
-                            } else if resp.clicked() {
-                                if running {
-                                    self.shared.send(Cmd::StopLane { lane: l });
-                                } else {
-                                    self.shared.send(Cmd::LaunchClip { lane: l, pattern: c.pattern, audio: c.audio });
-                                }
+                for lane in first_track..track_end {
+                    let pad = Rect::from_min_size(pos2(x_at(lane), y), vec2(pad_width, pad_height));
+                    let hit = ui.interact(pad, ui.id().with(("session_pad", lane, scene)), Sense::click());
+                    let clip = self.project.session.get(lane, scene).copied();
+                    let audio_lane = self.project.arrangement.tracks[lane].kind == TrackKind::Audio;
+                    if let Some(clip) = clip {
+                        let code = clip.code();
+                        let running = self.shared.session_run[lane].load(Ordering::Relaxed) == code;
+                        let queue = self.shared.session_queue[lane].load(Ordering::Relaxed);
+                        let pending_stop = running && queue == QUEUED_STOP;
+                        let queued = queue == code || pending_stop;
+                        animate |= running || queued;
+                        let pastel = if clip.audio { argb(0xFFD6EEF5) } else { argb(0xFFDED1F3) };
+                        let color = tint(lane_col(lane), pastel, if running { 0.46 } else { 0.36 });
+                        let text = argb(0xFF1A1B1D);
+                        p.rect_filled(pad, 9.0, color);
+                        control_state(&p, pad, 9.0, &hit, text);
+                        if running || queued {
+                            p.rect_stroke(pad.shrink(1.0), 8.0,
+                                Stroke::new(if running { 2.0 } else { 1.5 }, p_accent()));
+                        }
+                        icon(&p, if running { Icon::Stop } else { Icon::Play }, pad.left_top() + vec2(14.0, 15.0), text);
+                        let led = pad.right_top() + vec2(-10.0, 11.0);
+                        p.circle_filled(led, 3.0, if queued { argb(0xFF8D4D19) } else if running { argb(0xFF246046) } else { text.gamma_multiply(0.34) });
+                        let name = if clip.audio { self.project.audio_pool.get(clip.pattern).map(|s| s.name.as_str()) }
+                            else { self.project.patterns.get(clip.pattern).map(|p| p.name.as_str()) };
+                        playlist_label(&p, pad.shrink2(vec2(6.0, 0.0)), pad.center().y + 3.0,
+                            name.unwrap_or("Clip"), text);
+                        if running {
+                            let progress = Rect::from_min_size(pad.left_bottom() + vec2(6.0, -7.0),
+                                vec2((pad.width() - 12.0) * phase, 2.0));
+                            p.rect_filled(progress, 1.0, text.gamma_multiply(0.58));
+                        }
+                        let hint = if pending_stop { "Stop queued" } else if queued { "Launch queued" }
+                            else if running { "Playing · tap to stop" } else { "Tap to launch · hold to clear" };
+                        let hit = hit.on_hover_text(hint);
+                        if hit.long_touched() || hit.secondary_clicked() {
+                            if running || queued { self.shared.send(Cmd::StopLane { lane }); }
+                            self.m_playlist_undo_step();
+                            self.project.session.clear(lane, scene);
+                        } else if hit.clicked() {
+                            if running || queued {
+                                self.shared.send(Cmd::StopLane { lane });
+                            } else {
+                                self.shared.send(Cmd::LaunchClip { lane, pattern: clip.pattern, audio: clip.audio });
                             }
                         }
-                        None => {
-                            p.rect_filled(r, 12.0, p_bg());
-                            p.rect_stroke(r, 12.0, Stroke::new(1.0, grid_line()));
-                            let midi = self.project.arrangement.tracks[l].kind != crate::arrangement::TrackKind::Audio;
-                            if midi {
-                                icon(p, Icon::Plus, r.center(), muted().linear_multiply(0.6));
-                                if resp.clicked() && self.project.current_pattern < self.project.patterns.len() {
-                                    self.project.session.set(l, sc, self.project.current_pattern, false);
-                                }
+                    } else {
+                        let assign = source.filter(|clip| clip.audio == audio_lane).map(|clip| clip.pattern)
+                            .or_else(|| if audio_lane {
+                                self.project.arrangement.tracks[lane].audio_brush
+                                    .filter(|&sample| sample < self.project.audio_pool.len())
+                            } else { Some(self.project.current_pattern).filter(|&pattern| pattern < self.project.patterns.len()) });
+                        p.rect_filled(pad, 9.0, card_fill());
+                        p.rect_stroke(pad, 9.0, Stroke::new(1.0, grid_line()));
+                        if assign.is_some() {
+                            control_state(&p, pad, 9.0, &hit, ink());
+                        }
+                        icon(&p, Icon::Plus, pad.center(), if assign.is_some() { muted() } else { muted().gamma_multiply(0.45) });
+                        let hint = if assign.is_some() { "Assign clip" } else { "Select an Audio clip in Playlist first" };
+                        if hit.on_hover_text(hint).clicked() {
+                            if let Some(pattern) = assign {
+                                self.m_playlist_undo_step();
+                                self.project.session.set(lane, scene, pattern, audio_lane);
                             }
                         }
                     }
                 }
             }
         });
-        ui.ctx().request_repaint_after(std::time::Duration::from_millis(150));
+        if animate {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(45));
+        }
     }
 
     /// Smart Step editor: hold a step to open it (velocity, pitch, pan, chance, slide).
