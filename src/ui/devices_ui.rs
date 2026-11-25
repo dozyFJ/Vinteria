@@ -28,7 +28,7 @@ pub(super) fn instrument_blurb(t: Track) -> &'static str {
 }
 
 /// The two quick knobs under an instrument: tone (filter) and level.
-fn tone_level(ui: &mut Ui, p: &mut Project, lane: usize, t: Track) {
+fn tone_level(ui: &mut Ui, p: &mut Project, lane: usize, t: Track, knobs: bool) {
     let tr = &mut p.arrangement.tracks[lane];
     let (tone, level) = match t {
         Track::Wavetable => (Some(&mut tr.snd.wt.cutoff), Some(&mut tr.snd.wt.volume)),
@@ -38,8 +38,21 @@ fn tone_level(ui: &mut Ui, p: &mut Project, lane: usize, t: Track) {
         Track::Sampler => (None, Some(&mut tr.sampler.volume)),
         Track::Drums => (None, None),
     };
-    if let Some(v) = tone { ui.add(egui::Slider::new(v, 40.0..=18000.0).logarithmic(true).text("Tone")); }
-    if let Some(v) = level { ui.add(egui::Slider::new(v, 0.0..=3.0).text("Level")); }
+    if knobs {
+        ui.horizontal_wrapped(|ui| {
+            if let Some(value) = tone {
+                super::widgets::knob(ui, "Tone", value, 40.0, 18000.0, true,
+                    |hz| format!("{hz:.0} Hz"));
+            }
+            if let Some(value) = level {
+                super::widgets::knob(ui, "Output", value, 0.0, 3.0, false,
+                    |gain| format!("{:+.1} dB", super::widgets::db(gain)));
+            }
+        });
+    } else {
+        if let Some(v) = tone { ui.add(egui::Slider::new(v, 40.0..=18000.0).logarithmic(true).text("Tone")); }
+        if let Some(v) = level { ui.add(egui::Slider::new(v, 0.0..=3.0).text("Level")); }
+    }
     if t == Track::Drums { ui.label("Edit sounds in the Channel Rack."); }
 }
 
@@ -105,59 +118,37 @@ fn show(ui: &mut Ui, p: &mut Project, st: &mut ArrState, dc: &mut DetailCtx, plu
             }
             if !effects_only && !mobile_instrument { ui.label(RichText::new("→").color(DIM())); }
             if effects_only {} else if kind == TrackKind::Midi && mobile_instrument {
-                // phone: big actions with a line on what each does; the lists open in a left side panel
                 let current = p.arrangement.tracks[lane].instrument;
                 let ctx = ui.ctx().clone();
-                let open_panel = |kind: u8| ctx.data_mut(|d| d.insert_temp(egui::Id::new(INSTRUMENT_PANEL), (lane, kind)));
-                let response = card_ui(ui, instrument_width, |ui| {
-                    let title = current.map_or("No instrument yet".to_owned(), |t| Inst::from_track(t).title().to_owned());
-                    ui.label(RichText::new(&title).strong().size(17.0));
-                    let screen = ui.ctx().screen_rect();
-                    if screen.width() < screen.height() {
-                        ui.add_space(6.0);
-                        ui.columns(2, |cols| {
-                            if mobile_action(&mut cols[0], "Instrument", "Choose engine").clicked() {
-                                open_panel(0);
-                            }
-                            if mobile_action(&mut cols[1], "Load WAV", "Use a sample").clicked() {
-                                open_panel(1);
-                            }
-                        });
-                        if current.is_some() {
-                            ui.columns(2, |cols| {
-                                if mobile_action(&mut cols[0], "Presets", "Choose a sound").clicked() {
-                                    open_panel(2);
-                                }
-                                if mobile_action(&mut cols[1], "Editor", "Shape the sound").clicked() {
-                                    ctx.data_mut(|d| d.insert_temp(egui::Id::new(INSTRUMENT_EDITOR), lane));
-                                }
-                            });
-                        }
-                        if let Some(track) = current {
-                            ui.separator();
-                            ui.spacing_mut().slider_width = (ui.available_width() * 0.52).max(42.0);
-                            tone_level(ui, p, lane, track);
-                        }
-                    } else {
-                        ui.add_space(4.0);
-                        if mobile_action(ui, "Choose instrument", "Pick the sound engine: synth, 808 bass, sampler, drums…").clicked() {
-                            open_panel(0);
-                        }
-                        if mobile_action(ui, "Load WAV", "Turn one of your samples into the instrument, played across the keys").clicked() {
+                let open_panel = |page: u8| {
+                    ctx.data_mut(|d| d.insert_temp(egui::Id::new(INSTRUMENT_PANEL), (lane, page)));
+                };
+                let response = track_settings_section(ui, "Source", |ui| {
+                    let title = current.map_or("Choose instrument", |track| Inst::from_track(track).title());
+                    let button = egui::Button::new(RichText::new(format!("{title}  ›")).strong().size(17.0));
+                    if ui.add_sized([ui.available_width(), 40.0], button).clicked() {
+                        open_panel(0);
+                    }
+
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.button("Load WAV").clicked() {
                             open_panel(1);
                         }
-                        if let Some(t) = current {
-                            if mobile_action(ui, "Presets", &format!("Ready-made sounds for {title}")).clicked() {
+                        ui.add_enabled_ui(current.is_some(), |ui| {
+                            if ui.button("Presets").clicked() {
                                 open_panel(2);
                             }
-                            if mobile_action(ui, "Open editor", "Every knob of this instrument, full screen").clicked() {
-                                ui.data_mut(|d| d.insert_temp(egui::Id::new(INSTRUMENT_EDITOR), lane));
+                            if ui.button("Editor").clicked() {
+                                ctx.data_mut(|d| d.insert_temp(egui::Id::new(INSTRUMENT_EDITOR), lane));
                             }
-                            ui.add_space(4.0);
-                            tone_level(ui, p, lane, t);
-                        }
-                    }
+                        });
+                    });
                 });
+                if let Some(track) = current {
+                    track_settings_section(ui, "Instrument sound", |ui| {
+                        tone_level(ui, p, lane, track, true);
+                    });
+                }
                 if let Some(payload) = response.dnd_release_payload::<DragItem>() {
                     match &*payload {
                         DragItem::Instrument(t) => assign(p, lane, *t, dc),
@@ -193,7 +184,7 @@ fn show(ui: &mut Ui, p: &mut Project, st: &mut ArrState, dc: &mut DetailCtx, plu
                                 if ui.button(preset).clicked() { super::instruments_ui::apply_named_lane(p, lane, t, preset); ui.close_menu(); }
                             }
                         });
-                        tone_level(ui, p, lane, t);
+                        tone_level(ui, p, lane, t, false);
                     } else {
                         let (r, _) = ui.allocate_exact_size(vec2(instrument_width, 106.0), Sense::hover());
                         ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, "Drop an instrument or WAV\nor use Choose", egui::FontId::proportional(13.0), DIM());
@@ -552,17 +543,18 @@ fn track_settings(ui: &mut Ui, p: &mut Project, lane: usize, mobile: bool, mut e
     });
         });
 }
-fn track_settings_section(ui: &mut Ui, title: &str, content: impl FnOnce(&mut Ui)) {
+fn track_settings_section(ui: &mut Ui, title: &str, content: impl FnOnce(&mut Ui)) -> egui::Response {
     let width = (ui.available_width() - 22.0).max(0.0);
-    egui::Frame::none().fill(PANEL2()).rounding(12.0).stroke(Stroke::new(1.0, border()))
+    let response = egui::Frame::none().fill(PANEL2()).rounding(12.0).stroke(Stroke::new(1.0, border()))
         .inner_margin(10.0).show(ui, |ui| {
             ui.set_width(width);
             ui.spacing_mut().slider_width = (width * 0.5).max(44.0);
             ui.label(RichText::new(title).small().strong().color(DIM()));
             ui.add_space(4.0);
             content(ui);
-        });
+        }).response;
     ui.add_space(6.0);
+    response
 }
 
 pub(super) fn mobile_track_settings(

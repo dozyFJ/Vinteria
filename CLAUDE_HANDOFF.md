@@ -727,3 +727,7 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 ### Android 1.0.125
 
 - Rebuild the mobile Track settings source page around source, playback and waveform sections. Audio exposes sample replacement, gain, reverse, pitch and fades. MIDI retains instrument selection and adds track playback controls above the Sampler waveform.
+
+### Android 1.0.126
+
+- Replace the four-tile MIDI instrument panel with a source selector, a compact action row, and rotary instrument sound controls in the same visual style as Audio Track settings.
