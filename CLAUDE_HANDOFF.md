@@ -718,3 +718,8 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 
 - Restyle mobile Session as a four-by-four pad launcher using the Playlist's graphite surfaces, colored track headers and pastel clips. Switch track and scene banks from the top controls. Scene launches, queued states and active pads are visible in the matrix.
 - Empty pads accept the selected compatible Playlist clip; MIDI pads also accept the current pattern and Audio pads can use the track's last sample. Native Android interaction tests are pending.
+
+### Android 1.0.124
+
+- Make Track settings explicit in the Audio and MIDI card actions menu, and open it directly with a double tap on a portrait track card. It opens on Sample or Instrument by default.
+- Native Android interaction testing is pending.

@@ -1190,6 +1190,7 @@ impl VinteriaApp {
         let options_id = egui::Id::new("m_playlist_track_names").with("track_modal");
         let mut selected = None;
         let mut settings = None;
+        let mut open_track = None;
         let mut effect = None;
         let mut instrument = None;
         let mut group_drop = None;
@@ -1233,6 +1234,8 @@ impl VinteriaApp {
                     }
                     if menu_hit.clicked() || hit.secondary_clicked() || hit.long_touched() {
                         settings = Some(lane);
+                    } else if hit.double_clicked() {
+                        open_track = Some(lane);
                     } else if hit.clicked() {
                         selected = Some(lane);
                     }
@@ -1316,7 +1319,18 @@ impl VinteriaApp {
             self.arr.auto_master = false;
             ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_playlist_reveal_track"), lane));
         }
-        if let Some(lane) = settings {
+        if let Some(lane) = open_track {
+            self.arr.sel_lane = lane;
+            self.arr.sel_clip = None;
+            self.arr.sel.clear();
+            self.arr.auto_master = false;
+            ctx.data_mut(|d| {
+                d.remove::<usize>(options_id);
+                d.remove::<usize>(egui::Id::new("m_clip_sheet_selection"));
+                d.insert_temp(egui::Id::new(("m_track_settings_page", lane)), 0_usize);
+                d.insert_temp(egui::Id::new("m_track_sheet_open"), true);
+            });
+        } else if let Some(lane) = settings {
             ctx.data_mut(|d| d.insert_temp(options_id, lane));
         }
         if let Some((kind, lane)) = effect {
@@ -6789,7 +6803,7 @@ impl VinteriaApp {
                                     if p_button(ui, "Cancel", false, size).clicked() { confirm = false; }
                                     return;
                                 }
-                                main = p_button(ui, "Main", false, size).clicked();
+                                main = p_button(ui, "Track settings", false, size).clicked();
                                 effects = p_button(ui, "Effects", false, size).clicked();
                                 toggle_mute = p_button(ui, if muted_track { "Enable track" } else { "Disable track" }, muted_track, size).clicked();
                                 toggle_solo = p_button(ui, if solo { "Turn solo off" } else { "Solo" }, solo, size).clicked();
@@ -6844,7 +6858,7 @@ impl VinteriaApp {
             ctx.data_mut(|d| d.insert_temp(confirm_id, confirm));
         }
         if main {
-            ctx.data_mut(|d| d.insert_temp(egui::Id::new(("m_track_settings_page", lane)), 1_usize));
+            ctx.data_mut(|d| d.insert_temp(egui::Id::new(("m_track_settings_page", lane)), 0_usize));
         }
         main
     }
