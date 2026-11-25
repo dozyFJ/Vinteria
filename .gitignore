@@ -25,3 +25,4 @@
 # User sample packs; include the small factory sounds only
 /samples/*
 !/samples/Factory*.wav
+Documents/
