@@ -734,7 +734,6 @@ impl VinteriaApp {
                         }
                     });
             } else if portrait {
-                self.m_studio_portrait_top_bar(ctx);
                 if self.m_tab == 1 {
                     self.m_studio_transport_dock(ctx);
                     self.m_mixer_sheet(ctx);
@@ -1221,9 +1220,13 @@ impl VinteriaApp {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn m_render_track_button(&mut self, ui: &mut Ui, ctx: &egui::Context, width: f32) {
-        if !studio_icon(ui, width, Icon::Wave, false, "Render Playlist mix to audio").clicked() {
-            return;
+        if studio_icon(ui, width, Icon::Wave, false, "Render Playlist mix to audio").clicked() {
+            self.m_render_playlist_mix(ctx);
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn m_render_playlist_mix(&mut self, ctx: &egui::Context) {
         if self.project.arrangement.clips.is_empty() {
             self.status = "Add clips to the Playlist before rendering.".into();
             self.arr.msg.clone_from(&self.status);
@@ -1429,11 +1432,13 @@ impl VinteriaApp {
 
     fn m_studio_transport_dock(&mut self, ctx: &egui::Context) {
         let playlist = self.m_sec == SEC_PLAYLIST;
-        egui::TopBottomPanel::bottom("m_studio_transport_dock").show_separator_line(false)
+        let dock = egui::TopBottomPanel::bottom("m_studio_transport_dock").show_separator_line(false)
             .frame(Frame::none().fill(glass_fill()).stroke(Stroke::new(1.0, glass_edge()))
                 .inner_margin(Margin { left: 8.0, right: 8.0, top: 4.0, bottom: 10.0 }))
             .show(ctx, |ui| {
                 mobile_visuals(ui);
+                self.m_studio_dock_controls(ui, ctx);
+                ui.separator();
                 let vertical_playlist = playlist && portrait_view(ui) && !self.arr.auto_edit
                     && ui.data(|d| d.get_temp::<bool>(egui::Id::new("m_playlist_vertical")).unwrap_or(true));
                 if playlist && !vertical_playlist {
@@ -1451,9 +1456,6 @@ impl VinteriaApp {
                 let end = bars * TICKS_PER_BAR;
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
-                    if playlist {
-                        self.m_playlist_tool_buttons(ui);
-                    }
                     let reserve = if playlist { 46.0 } else { 0.0 };
                     let space = (ui.available_width() - reserve).max(12.0);
                     let (rect, scrub) = ui.allocate_exact_size(vec2(space, 44.0), Sense::click_and_drag());
@@ -1511,6 +1513,7 @@ impl VinteriaApp {
                     });
                 });
             });
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_studio_transport_rect"), dock.response.rect));
         if playlist {
             let pass = ctx.cumulative_pass_nr();
             ctx.data_mut(|d| d.insert_temp(egui::Id::new(PLAYLIST_DOCK_PASS), pass));
@@ -1524,8 +1527,11 @@ impl VinteriaApp {
         let screen = ctx.screen_rect();
         let mut open = ctx.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false) && self.m_sec == SEC_PLAYLIST;
         if !open && self.m_sec == SEC_PLAYLIST && !egui::DragAndDrop::has_any_payload(ctx) {
+            let dock = ctx.data(|d| d.get_temp::<Rect>(egui::Id::new("m_studio_transport_rect")));
             let edge = ctx.input(|i| i.pointer.press_origin().zip(i.pointer.interact_pos())
-                .is_some_and(|(a, b)| a.x > screen.right() - 22.0 && a.x - b.x > 36.0 && (a.y - b.y).abs() < a.x - b.x));
+                .is_some_and(|(a, b)| a.x > screen.right() - 22.0 && a.x - b.x > 36.0
+                    && (a.y - b.y).abs() < a.x - b.x
+                    && !dock.is_some_and(|rect| rect.contains(a))));
             if edge {
                 open = true;
                 ctx.data_mut(|d| d.insert_temp(open_id, true));
@@ -1574,44 +1580,35 @@ impl VinteriaApp {
         ctx.request_repaint();
     }
 
-    fn m_studio_portrait_top_bar(&mut self, ctx: &egui::Context) {
+    fn m_studio_dock_controls(&mut self, ui: &mut Ui, ctx: &egui::Context) {
         let drawer = egui::Id::new("m_studio_project_drawer");
-        egui::TopBottomPanel::top("m_studio_portrait_top_bar").show_separator_line(false)
-            .frame(Frame::none().fill(glass_fill()).stroke(Stroke::new(1.0, glass_edge()))
-                .inner_margin(Margin::symmetric(6.0, 3.0)))
-            .show(ctx, |ui| {
-                mobile_visuals(ui);
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 3.0;
-                    let open = ctx.data(|d| d.get_temp::<bool>(drawer)).unwrap_or(false);
-                    if dock_icon(ui, Icon::Menu, open, "Project actions").clicked() {
-                        ctx.data_mut(|d| {
-                            d.insert_temp(drawer, !open);
-                            d.remove::<bool>(egui::Id::new("m_browser_open"));
-                        });
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 3.0;
+            let open = ctx.data(|d| d.get_temp::<bool>(drawer)).unwrap_or(false);
+            if dock_icon(ui, Icon::Menu, open, "Project actions").clicked() {
+                ctx.data_mut(|d| {
+                    d.insert_temp(drawer, !open);
+                    d.remove::<bool>(egui::Id::new("m_browser_open"));
+                });
+            }
+            let width = (ui.available_width() - TOUCH - ui.spacing().item_spacing.x).max(1.0);
+            mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_studio_dock_controls")
+                .max_width(width).auto_shrink([false, true]).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
                         if self.m_sec == SEC_PLAYLIST {
-                            self.m_studio_browser_button(ui, ctx, TOUCH);
-                        } else if dock_icon(ui, Icon::Folder, false, "Browser").clicked() {
-                            self.m_select_studio_section(ctx, SEC_PLAYLIST);
-                            ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_browser_open"), true));
+                            self.m_playlist_tool_buttons(ui);
                         }
-                        let width = ui.available_width().max(1.0);
-                        ui.allocate_ui_with_layout(vec2(width, TOUCH), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                            mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_studio_top_controls")
-                                .max_width(width).auto_shrink([false, true]).show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 2.0;
-                                        self.m_studio_quick_controls(ui, ctx, 38.0);
-                                        #[cfg(not(target_arch = "wasm32"))]
-                                        self.m_render_track_button(ui, ctx, 38.0);
-                                    });
-                                });
-                        });
+                        self.m_studio_quick_controls(ui, ctx, 38.0);
                     });
                 });
-            });
+            if self.m_sec == SEC_PLAYLIST {
+                self.m_studio_browser_button(ui, ctx, TOUCH);
+            } else if dock_icon(ui, Icon::Folder, false, "Browser").clicked() {
+                self.m_select_studio_section(ctx, SEC_PLAYLIST);
+                ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_browser_open"), true));
+            }
+        });
     }
 
     fn m_studio_project_drawer(&mut self, ctx: &egui::Context) {
@@ -1665,6 +1662,8 @@ impl VinteriaApp {
                     (Icon::Record, rec, 1),
                     (Icon::Folder, "Save project", 2),
                     (Icon::Share, "Export or share", 3),
+                    #[cfg(not(target_arch = "wasm32"))]
+                    (Icon::Wave, "Render mix to audio", 8),
                     (Icon::FullView, "Full view", 4),
                     (Icon::Orientation, "Switch to landscape", 5),
                     (Icon::Settings, "Settings", 7),
@@ -1683,6 +1682,8 @@ impl VinteriaApp {
                                 self.m_export.open = true;
                                 self.m_export.song = self.m_sec == SEC_PLAYLIST;
                             }
+                            #[cfg(not(target_arch = "wasm32"))]
+                            8 => self.m_render_playlist_mix(ctx),
                             4 => ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_studio_full_view"), true)),
                             5 => ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_studio_landscape"), true)),
                             7 => {
