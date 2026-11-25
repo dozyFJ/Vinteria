@@ -1603,19 +1603,28 @@ impl VinteriaApp {
         }
         sidebar_caption(ui, "Next bar");
         let (name, symbol) = STUDIO_SECTIONS.get(self.m_sec).copied().unwrap_or(STUDIO_SECTIONS[0]);
-        dock_menu(ui, symbol, name, true, |ui| {
-            ui.set_min_width(174.0);
-            for (index, (label, symbol)) in STUDIO_SECTIONS.into_iter().enumerate() {
-                if index == SEC_PIANO || matches!(symbol, Icon::Tracks) {
-                    continue;
+        let views = dock_icon(ui, symbol, true, name);
+        let popup_id = views.id.with("views");
+        if views.clicked() {
+            ui.memory_mut(|memory| memory.toggle_popup(popup_id));
+        }
+        egui::popup::popup_above_or_below_widget(
+            ui, popup_id, &views, egui::AboveOrBelow::Below, egui::PopupCloseBehavior::CloseOnClickOutside,
+            |ui| {
+                mobile_visuals(ui);
+                ui.set_min_width(174.0);
+                for (index, (label, symbol)) in STUDIO_SECTIONS.into_iter().enumerate() {
+                    if index == SEC_PIANO || matches!(symbol, Icon::Tracks) {
+                        continue;
+                    }
+                    let label = if label == "Steps" { "Drum Rack" } else { label };
+                    if drawer_row(ui, symbol, label, index == self.m_sec).clicked() {
+                        self.m_select_studio_section(ctx, index);
+                        ui.memory_mut(|memory| memory.close_popup());
+                    }
                 }
-                let label = if label == "Steps" { "Drum Rack" } else { label };
-                if drawer_row(ui, symbol, label, index == self.m_sec).clicked() {
-                    self.m_select_studio_section(ctx, index);
-                    ui.close_menu();
-                }
-            }
-        });
+            },
+        );
         sidebar_caption(ui, "Views");
         if self.m_sec == SEC_PLAYLIST {
             dock_menu(ui, Icon::Settings, "Playlist options", false,
@@ -2437,11 +2446,20 @@ impl VinteriaApp {
                             let shade = if running { selected_fill() } else if (step / 4) % 2 == 0 { card_fill() } else { bar_fill() };
                             p.rect_filled(rect, 0.0, shade);
                             let ruler = Rect::from_min_size(rect.min, vec2(ruler_width, row_height));
-                            p.rect_filled(ruler, 0.0, if running { selected_fill() } else { bar_fill() });
-                            p.text(ruler.center(), Align2::CENTER_CENTER, step + 1,
-                                FontId::proportional(10.0), if running || beat_start { ink() } else { muted() });
-                            p.hline(rect.x_range(), rect.top(), Stroke::new(if bar_start { 1.6 } else { 0.8 },
-                                if beat_start { outline() } else { grid_line() }));
+                            let ruler_fill = if running || bar_start { selected_fill() }
+                                else if beat_start { card_fill() } else { bar_fill() };
+                            p.rect_filled(ruler, 0.0, ruler_fill);
+                            if bar_start {
+                                p.text(ruler.center() - vec2(0.0, 7.0), Align2::CENTER_CENTER,
+                                    format!("B{}", step / 16 + 1), FontId::proportional(9.0), p_accent());
+                            }
+                            p.text(ruler.center() + vec2(0.0, if bar_start { 7.0 } else { 0.0 }),
+                                Align2::CENTER_CENTER, step + 1, FontId::proportional(10.0),
+                                if running || beat_start { ink() } else { muted() });
+                            let divider = if bar_start { Stroke::new(2.0, p_accent().gamma_multiply(0.68)) }
+                                else if beat_start { Stroke::new(1.4, outline()) }
+                                else { Stroke::new(0.65, grid_line()) };
+                            p.hline(rect.x_range(), rect.top(), divider);
                             for lane in 0..NUM_DRUMS {
                                 let cell = Rect::from_min_size(pos2(cell_x(rect.left(), lane), rect.top()), vec2(cell_width, row_height));
                                 p.vline(cell.left(), cell.y_range(), Stroke::new(1.0, grid_line()));
@@ -2478,8 +2496,31 @@ impl VinteriaApp {
                                 let start = if bipolar { inner.center().x } else { inner.left() };
                                 let end = inner.left() + inner.width() * value;
                                 let bar = Rect::from_min_max(pos2(start.min(end), inner.top()), pos2(start.max(end) + 1.0, inner.bottom()));
+                                let color = lane_col(selected);
                                 if st.on {
-                                    p.rect_filled(bar, 2.0, lane_col(selected));
+                                    p.rect_filled(bar, 2.0, color);
+                                }
+                                if let Some(point) = hit.interact_pointer_pos().filter(|_| hit.dragged()) {
+                                    p.rect_stroke(rect.shrink(0.5), 2.0, Stroke::new(1.2, color));
+                                    let value = match graph {
+                                        0 => format!("Velocity {}", st.vel),
+                                        1 => format!("Pan {:+}", st.pan),
+                                        2 => format!("Pitch {:+} st", st.pitch),
+                                        _ => format!("Chance {}%", st.prob),
+                                    };
+                                    let ctx = ui.ctx();
+                                    let tooltip = ctx.layer_painter(egui::LayerId::new(
+                                        egui::Order::Tooltip, ui.id().with("drum_graph_value")));
+                                    let label = tooltip.layout_no_wrap(value, FontId::proportional(12.0), ink());
+                                    let size = label.size() + vec2(16.0, 10.0);
+                                    let screen = ctx.screen_rect();
+                                    let max_x = (screen.right() - size.x - 4.0).max(screen.left() + 4.0);
+                                    let x = (point.x - size.x - 12.0).clamp(screen.left() + 4.0, max_x);
+                                    let y = (point.y - size.y - 7.0).max(screen.top() + 4.0);
+                                    let tip = Rect::from_min_size(pos2(x, y), size);
+                                    tooltip.rect_filled(tip, 7.0, bar_fill());
+                                    tooltip.rect_stroke(tip, 7.0, Stroke::new(1.0, color));
+                                    tooltip.galley(tip.min + vec2(8.0, 5.0), label, ink());
                                 }
                             }
                             if running {
@@ -4139,11 +4180,13 @@ impl VinteriaApp {
         };
         let title = track.name.clone();
         let screen = ctx.screen_rect();
-        let width = screen.width();
-        let portrait = width < screen.height();
+        let portrait = screen.width() < screen.height();
+        let width = if portrait { (screen.width() * 0.90).min(440.0) } else { screen.width() };
         let kind = if track.kind == crate::arrangement::TrackKind::Audio { "Audio track" } else { "MIDI track" };
-        let sheet_h = (screen.height() * 0.78).min(screen.height() - 40.0);
-        let origin = pos2(screen.left(), screen.bottom() - sheet_h * shown);
+        let sheet_h = if portrait { screen.height() }
+            else { (screen.height() * 0.78).min(screen.height() - 40.0) };
+        let origin = if portrait { screen.left_top() - vec2(width * (1.0 - shown), 0.0) }
+            else { pos2(screen.left(), screen.bottom() - sheet_h * shown) };
         let mut done = false;
         egui::Area::new(id.with("scrim")).order(egui::Order::Middle).fixed_pos(screen.min)
                 .show(ctx, |ui| {
@@ -4157,37 +4200,48 @@ impl VinteriaApp {
                 let size = vec2(width, sheet_h);
                 let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
                 let mut inner = rect.shrink(9.0);
-                let corners = egui::Rounding { nw: 20.0, ne: 20.0, ..Default::default() };
+                let corners = if portrait { egui::Rounding { ne: 18.0, se: 18.0, ..Default::default() } }
+                    else { egui::Rounding { nw: 20.0, ne: 20.0, ..Default::default() } };
                 ui.painter().rect_filled(rect, corners, p_bg());
+                ui.painter().rect_stroke(rect, corners, Stroke::new(1.0, outline()));
                 if portrait {
-                    let header = Rect::from_min_size(rect.min, vec2(rect.width(), 76.0));
-                    ui.painter().rect_filled(header, corners, glass_fill());
-                    ui.painter().line_segment([header.left_bottom(), header.right_bottom()], Stroke::new(1.0, glass_edge()));
-                }
-                // grip: swipe it down (or tap it) to close
-                let head = Rect::from_min_size(rect.min, vec2(rect.width(), 22.0));
-                let grip = ui.interact(head, id.with("grip"), Sense::click_and_drag());
-                ui.painter().rect_filled(Rect::from_center_size(pos2(head.center().x, head.top() + 10.0), vec2(40.0, 5.0)), 2.5, outline());
-                if grip.clicked() || grip.drag_stopped() && grip.drag_delta().y >= 0.0 || grip.dragged() && ui.input(|i| {
-                    i.pointer.press_origin().zip(i.pointer.interact_pos()).is_some_and(|(a, b)| b.y - a.y > 40.0)
-                }) {
-                    done = true;
-                }
-                inner.min.y = head.bottom();
-                let mut content = ui.new_child(egui::UiBuilder::new().max_rect(inner));
-                content.set_clip_rect(rect.intersect(screen));
-                mobile_visuals(&mut content);
-                content.horizontal(|ui| {
-                    done |= p_button(ui, "Done", true, vec2(60.0, 32.0)).clicked();
-                    if portrait {
+                    let header = Rect::from_min_size(rect.min, vec2(rect.width(), 62.0));
+                    let header_corners = egui::Rounding { ne: 18.0, ..Default::default() };
+                    ui.painter().rect_filled(header, header_corners, glass_fill());
+                    ui.painter().hline(header.x_range(), header.bottom(), Stroke::new(1.0, glass_edge()));
+                    let mut head = ui.new_child(egui::UiBuilder::new().id_salt("track_drawer_header")
+                        .max_rect(header.shrink2(vec2(9.0, 8.0))));
+                    head.set_clip_rect(header.intersect(screen));
+                    mobile_visuals(&mut head);
+                    head.horizontal(|ui| {
+                        done |= p_button(ui, "Done", true, vec2(57.0, 36.0)).clicked();
                         ui.vertical(|ui| {
                             ui.add(egui::Label::new(RichText::new(&title).size(17.0).strong()).truncate());
                             ui.label(RichText::new(kind).size(11.0).color(muted()));
                         });
-                    } else {
-                        ui.add(egui::Label::new(RichText::new(&title).size(15.0).strong()).truncate());
+                    });
+                    inner.min.y = header.bottom() + 8.0;
+                } else {
+                    let head = Rect::from_min_size(rect.min, vec2(rect.width(), 22.0));
+                    let grip = ui.interact(head, id.with("grip"), Sense::click_and_drag());
+                    ui.painter().rect_filled(Rect::from_center_size(pos2(head.center().x, head.top() + 10.0),
+                        vec2(40.0, 5.0)), 2.5, outline());
+                    if grip.clicked() || grip.drag_stopped() && grip.drag_delta().y >= 0.0 || grip.dragged() && ui.input(|i| {
+                        i.pointer.press_origin().zip(i.pointer.interact_pos()).is_some_and(|(a, b)| b.y - a.y > 40.0)
+                    }) {
+                        done = true;
                     }
-                });
+                    inner.min.y = head.bottom();
+                }
+                let mut content = ui.new_child(egui::UiBuilder::new().max_rect(inner));
+                content.set_clip_rect(inner.intersect(screen));
+                mobile_visuals(&mut content);
+                if !portrait {
+                    content.horizontal(|ui| {
+                        done |= p_button(ui, "Done", true, vec2(60.0, 32.0)).clicked();
+                        ui.add(egui::Label::new(RichText::new(&title).size(15.0).strong()).truncate());
+                    });
+                }
                 let mut detail = arrangement_ui::DetailCtx {
                     roll_track: &mut self.roll.track,
                     live_track: &mut self.live_track,

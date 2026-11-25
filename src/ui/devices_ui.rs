@@ -624,12 +624,22 @@ pub(super) fn mobile_track_settings(
         content.set_clip_rect(body.intersect(ui.clip_rect()));
         &mut content
     } else {
-        ui.horizontal(|ui| {
-            let width = (ui.available_width() - 2.0 * ui.spacing().item_spacing.x) / 3.0;
+        let area = ui.available_rect_before_wrap();
+        let footer_top = (area.bottom() - 52.0).max(area.top());
+        let footer = egui::Rect::from_min_max(egui::pos2(area.left(), footer_top), area.max);
+        ui.painter().rect_filled(footer, 8.0, ui.visuals().window_fill());
+        let mut nav = ui.new_child(egui::UiBuilder::new().id_salt("track_settings_footer")
+            .max_rect(footer.shrink(4.0)));
+        nav.set_clip_rect(footer.intersect(ui.clip_rect()));
+        nav.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let width = ((ui.available_width() - 8.0) / 3.0).max(1.0);
             tabs(ui, width);
         });
-        ui.add_space(8.0);
-        ui
+        let body = egui::Rect::from_min_max(area.min, egui::pos2(area.right(), (footer_top - 7.0).max(area.top())));
+        content = ui.new_child(egui::UiBuilder::new().id_salt("track_settings_content").max_rect(body));
+        content.set_clip_rect(body.intersect(ui.clip_rect()));
+        &mut content
     };
     ui.data_mut(|d| d.insert_temp(page_id, page));
 
