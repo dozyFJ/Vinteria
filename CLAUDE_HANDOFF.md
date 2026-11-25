@@ -776,3 +776,9 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 
 - Portrait Drum Rack: pad settings open from the left and WAV search opens from the right. Choosing a sample returns to the same pad.
 - Android handset verification pending.
+
+### Android 1.0.155
+
+- Home: stronger section headings, more contrast across Library and Recent tiles, and compact project list rows.
+- Portrait studio: Views now opens from the left.
+- Android handset verification pending.

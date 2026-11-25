@@ -391,6 +391,10 @@ fn icon(p: &Painter, kind: Icon, c: Pos2, col: Color32) {
 }
 
 /// Section title inside the scrolling body.
+fn home_section_title(ui: &mut Ui, title: &str) {
+    ui.label(RichText::new(title).size(17.0).strong().color(ink()));
+}
+
 fn heading(ui: &mut Ui, text: &str) {
     ui.add_space(4.0);
     ui.label(RichText::new(text.to_uppercase()).size(12.0).strong().color(muted()));
@@ -848,9 +852,9 @@ impl VinteriaApp {
             }
         }
         if self.m_tab == 1 && portrait && !full_view {
-            self.m_studio_bottom_sheet(ctx);
+            self.m_studio_menu_overlay(ctx);
         } else {
-            ctx.data_mut(|d| d.remove::<bool>(egui::Id::new("m_studio_bottom_sheet")));
+            ctx.data_mut(|d| d.remove::<bool>(egui::Id::new("m_studio_menu_overlay")));
         }
         #[cfg(target_os = "android")]
         self.m_sync_orientation(ctx);
@@ -1111,7 +1115,7 @@ impl VinteriaApp {
     fn m_home(&mut self, ui: &mut Ui) {
         mobile_scroll(egui::ScrollArea::vertical()).id_salt("m_home_scroll")
             .auto_shrink([false, false]).show(ui, |ui| {
-                heading(ui, "Library");
+                home_section_title(ui, "Library");
                 let gap = ui.spacing().item_spacing;
                 let width = (ui.available_width() - gap.x).max(2.0);
                 let sounds_width = (width * 0.55).floor();
@@ -1142,10 +1146,10 @@ impl VinteriaApp {
                 ui.add_space(16.0);
                 let mut open = None;
                 ui.horizontal(|ui| {
-                    heading(ui, "Recent");
+                    home_section_title(ui, "Recent");
                     if !self.recent.is_empty() {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("See all").clicked() {
+                            if p_button(ui, "See all", false, vec2(72.0, 30.0)).clicked() {
                                 self.m_tab = 0;
                                 self.m_sec = 1;
                             }
@@ -1178,7 +1182,7 @@ impl VinteriaApp {
                 }
 
                 ui.add_space(16.0);
-                heading(ui, "Projects");
+                home_section_title(ui, "Projects");
                 let error = ui.data(|d| d.get_temp::<String>(egui::Id::new("m_project_save_error")));
                 if let Some(message) = &error {
                     ui.colored_label(RED, message);
@@ -1193,7 +1197,7 @@ impl VinteriaApp {
                 let width = ui.available_width();
                 for (index, (path, _, _)) in projects.iter().enumerate() {
                     let name = path.file_stem().and_then(|name| name.to_str()).unwrap_or("Project");
-                    if Self::m_navigation_tile(ui, vec2(width, 60.0), Icon::Folder, name, lane_col(index)).clicked() {
+                    if Self::m_project_list_card(ui, width, name, lane_col(index)).clicked() {
                         open = Some(path.clone());
                     }
                 }
@@ -1209,14 +1213,37 @@ impl VinteriaApp {
     fn m_navigation_tile(ui: &mut Ui, size: egui::Vec2, symbol: Icon, title: &str, accent: Color32) -> egui::Response {
         let (rect, response) = ui.allocate_exact_size(size, Sense::click());
         let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, 13.0, tint(card_fill(), accent, 0.12));
-        painter.rect_stroke(rect, 13.0, Stroke::new(1.0, tint(outline(), accent, 0.34)));
+        let featured = matches!(symbol, Icon::Wave);
+        let surface = tint(card_fill(), accent, if featured { 0.34 } else { 0.24 });
+        painter.rect_filled(rect, 13.0, surface);
+        painter.rect_stroke(rect, 13.0, Stroke::new(1.0, tint(outline(), accent, 0.50)));
+        let sheen = Rect::from_min_size(rect.left_top() + vec2(12.0, 2.0),
+            vec2((rect.width() - 24.0).max(0.0), 24.0));
+        paint_glass_sheen(&painter, sheen);
         control_state(&painter, rect, 13.0, &response, ink());
-        let icon_center = rect.left_top() + vec2(23.0, 21.0);
-        painter.rect_filled(Rect::from_center_size(icon_center, vec2(30.0, 28.0)),
-            8.0, tint(card_fill(), accent, 0.25));
-        icon(&painter, symbol, icon_center, ink());
-        playlist_label(&painter, rect.shrink2(vec2(10.0, 0.0)), rect.bottom() - 15.0, title, ink());
+        let badge_size = if featured { 44.0 } else { 32.0 };
+        let icon_center = rect.left_top() + vec2(11.0 + badge_size * 0.5, 10.0 + badge_size * 0.5);
+        painter.rect_filled(Rect::from_center_size(icon_center, vec2(badge_size, badge_size)),
+            9.0, if featured { p_accent() } else { tint(surface, accent, 0.45) });
+        icon(&painter, symbol, icon_center, if featured { on_accent() } else { ink() });
+        fit_label(&painter, rect.shrink2(vec2(11.0, 0.0)), rect.bottom() - 16.0,
+            title, ink(), if featured { 17.0 } else { 13.0 });
+        response.on_hover_text(title)
+    }
+
+    fn m_project_list_card(ui: &mut Ui, width: f32, title: &str, accent: Color32) -> Response {
+        let (rect, response) = ui.allocate_exact_size(vec2(width, 49.0), Sense::click());
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 11.0, tint(card_fill(), accent, 0.12));
+        painter.rect_stroke(rect, 11.0, Stroke::new(1.0, tint(outline(), accent, 0.32)));
+        control_state(&painter, rect, 11.0, &response, ink());
+        let badge = Rect::from_center_size(rect.left_center() + vec2(25.0, 0.0), vec2(31.0, 31.0));
+        painter.rect_filled(badge, 8.0, tint(card_fill(), accent, 0.40));
+        icon(&painter, Icon::Folder, badge.center(), ink());
+        let text = Rect::from_min_max(rect.left_top() + vec2(48.0, 0.0), rect.right_bottom() - vec2(30.0, 0.0));
+        fit_label(&painter, text, rect.center().y, title, ink(), 14.0);
+        painter.text(rect.right_center() - vec2(12.0, 0.0), Align2::RIGHT_CENTER, "›",
+            FontId::proportional(20.0), muted());
         response.on_hover_text(title)
     }
 
@@ -1739,7 +1766,7 @@ impl VinteriaApp {
         sidebar_caption(ui, "Next bar");
         let (name, symbol) = STUDIO_SECTIONS.get(self.m_sec).copied().unwrap_or(STUDIO_SECTIONS[0]);
         let views = dock_icon(ui, symbol, true, name);
-        let sheet = egui::Id::new("m_studio_bottom_sheet");
+        let sheet = egui::Id::new("m_studio_menu_overlay");
         if views.clicked() {
             ctx.data_mut(|d| d.insert_temp(sheet, false));
         }
@@ -1752,30 +1779,37 @@ impl VinteriaApp {
         }
     }
 
-    fn m_studio_bottom_sheet(&mut self, ctx: &egui::Context) {
-        let id = egui::Id::new("m_studio_bottom_sheet");
+    fn m_studio_menu_overlay(&mut self, ctx: &egui::Context) {
+        let id = egui::Id::new("m_studio_menu_overlay");
         let Some(options) = ctx.data(|d| d.get_temp::<bool>(id)) else { return };
-        let (title, height) = if options { ("Playlist options", 420.0) } else { ("Views", 288.0) };
-        let close = mobile_bottom_sheet(ctx, id.with(options), title, height, |ui| {
-            if options {
+        let close = if options {
+            mobile_bottom_sheet(ctx, id.with("options"), "Playlist options", 420.0, |ui| {
                 ui.spacing_mut().interact_size.y = 37.0;
                 ui.style_mut().override_font_id = Some(FontId::proportional(14.0));
-                return self.m_playlist_options_content(ui, true);
+                self.m_playlist_options_content(ui, true)
+            })
+        } else {
+            let drawer = id.with("views");
+            let mut selected = None;
+            let close = mobile_side_editor(ctx, drawer, "Views", egui::Align::Min, 0.78, |ui| {
+                mobile_scroll(egui::ScrollArea::vertical()).show(ui, |ui| {
+                    for (index, (label, symbol)) in STUDIO_SECTIONS.into_iter().enumerate() {
+                        if index == SEC_PIANO || matches!(symbol, Icon::Tracks) {
+                            continue;
+                        }
+                        let label = if label == "Steps" { "Drum Rack" } else { label };
+                        if drawer_row(ui, symbol, label, index == self.m_sec).clicked() {
+                            selected = Some(index);
+                        }
+                    }
+                });
+            });
+            if let Some(index) = selected {
+                self.m_select_studio_section(ctx, index);
+                ctx.animate_bool(drawer.with("animation"), false);
             }
-            mobile_scroll(egui::ScrollArea::vertical()).show(ui, |ui| {
-                for (index, (label, symbol)) in STUDIO_SECTIONS.into_iter().enumerate() {
-                    if index == SEC_PIANO || matches!(symbol, Icon::Tracks) {
-                        continue;
-                    }
-                    let label = if label == "Steps" { "Drum Rack" } else { label };
-                    if drawer_row(ui, symbol, label, index == self.m_sec).clicked() {
-                        self.m_select_studio_section(ctx, index);
-                        return true;
-                    }
-                }
-                false
-            }).inner
-        });
+            close || selected.is_some()
+        };
         if close {
             ctx.data_mut(|d| d.remove::<bool>(id));
             ctx.request_repaint();
