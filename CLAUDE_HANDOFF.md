@@ -731,3 +731,7 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 ### Android 1.0.126
 
 - Replace the four-tile MIDI instrument panel with a source selector, a compact action row, and rotary instrument sound controls in the same visual style as Audio Track settings.
+
+### Android 1.0.127
+
+- Put source and playback into two compact columns in mobile Track settings. Use bounded pitch and level controls and keep the sample waveform full-width under the panel.

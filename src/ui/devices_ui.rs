@@ -123,32 +123,39 @@ fn show(ui: &mut Ui, p: &mut Project, st: &mut ArrState, dc: &mut DetailCtx, plu
                 let open_panel = |page: u8| {
                     ctx.data_mut(|d| d.insert_temp(egui::Id::new(INSTRUMENT_PANEL), (lane, page)));
                 };
-                let response = track_settings_section(ui, "Source", |ui| {
-                    let title = current.map_or("Choose instrument", |track| Inst::from_track(track).title());
-                    let button = egui::Button::new(RichText::new(format!("{title}  ›")).strong().size(17.0));
-                    if ui.add_sized([ui.available_width(), 40.0], button).clicked() {
-                        open_panel(0);
-                    }
-
-                    ui.horizontal_wrapped(|ui| {
-                        if ui.button("Load WAV").clicked() {
-                            open_panel(1);
+                let clip = st.sel_clip.filter(|&i| p.arrangement.clips.get(i)
+                    .is_some_and(|clip| !clip.audio && clip.lane == lane));
+                let response = track_settings_section(ui, "Instrument", |ui| {
+                    ui.columns(2, |cols| {
+                        let source = &mut cols[0];
+                        let title = current.map_or("Choose instrument", |track| Inst::from_track(track).title());
+                        let button = egui::Button::new(RichText::new(title).strong()).wrap_mode(egui::TextWrapMode::Wrap);
+                        if source.add_sized([source.available_width(), 32.0], button).clicked() {
+                            open_panel(0);
                         }
-                        ui.add_enabled_ui(current.is_some(), |ui| {
-                            if ui.button("Presets").clicked() {
+                        source.horizontal_wrapped(|ui| {
+                            if ui.button("Load WAV").clicked() { open_panel(1); }
+                            if ui.add_enabled(current.is_some(), egui::Button::new("Presets")).clicked() {
                                 open_panel(2);
                             }
-                            if ui.button("Editor").clicked() {
+                            if ui.add_enabled(current.is_some(), egui::Button::new("Editor")).clicked() {
                                 ctx.data_mut(|d| d.insert_temp(egui::Id::new(INSTRUMENT_EDITOR), lane));
                             }
                         });
+                        if let Some(track) = current {
+                            tone_level(source, p, lane, track, true);
+                        }
+
+                        let playback = &mut cols[1];
+                        playback.label(RichText::new("Playback").small().strong().color(DIM()));
+                        let track = &mut p.arrangement.tracks[lane];
+                        level_row(playback, "Track level", &mut track.volume, 1.5);
+                        pitch_row(playback, "Transpose", &mut track.transpose);
+                        if let Some(i) = clip {
+                            pitch_row(playback, "Clip transpose", &mut p.arrangement.clips[i].pitch);
+                        }
                     });
                 });
-                if let Some(track) = current {
-                    track_settings_section(ui, "Instrument sound", |ui| {
-                        tone_level(ui, p, lane, track, true);
-                    });
-                }
                 if let Some(payload) = response.dnd_release_payload::<DragItem>() {
                     match &*payload {
                         DragItem::Instrument(t) => assign(p, lane, *t, dc),
@@ -543,6 +550,19 @@ fn track_settings(ui: &mut Ui, p: &mut Project, lane: usize, mobile: bool, mut e
     });
         });
 }
+fn level_row(ui: &mut Ui, label: &str, value: &mut f32, max: f32) {
+    ui.label(label);
+    ui.add(egui::DragValue::new(value).range(0.0..=max).speed(0.01)
+        .custom_formatter(|value, _| format!("{:+.1} dB", super::widgets::db(value as f32)))
+        .custom_parser(|text| text.trim_end_matches(" dB").parse::<f64>().ok()
+            .map(|db| 10.0_f64.powf(db / 20.0))));
+}
+
+fn pitch_row<T: egui::emath::Numeric>(ui: &mut Ui, label: &str, value: &mut T) {
+    ui.label(label);
+    ui.add(egui::DragValue::new(value).range(-24..=24).speed(0.2).suffix(" st"));
+}
+
 fn track_settings_section(ui: &mut Ui, title: &str, content: impl FnOnce(&mut Ui)) -> egui::Response {
     let width = (ui.available_width() - 22.0).max(0.0);
     let response = egui::Frame::none().fill(PANEL2()).rounding(12.0).stroke(Stroke::new(1.0, border()))
@@ -625,45 +645,44 @@ pub(super) fn mobile_track_settings(
                 if kind == TrackKind::Audio {
                     let clip = clip.or_else(|| project.arrangement.clips.iter()
                         .position(|clip| clip.audio && clip.lane == lane));
-                    track_settings_section(ui, "Source", |ui| {
-                        let name = clip.and_then(|i| project.audio_pool.get(project.arrangement.clips[i].pattern))
-                            .map_or("No audio clip", |sample| sample.name.as_str());
-                        ui.label(RichText::new(name).strong().size(17.0));
-                        if let Some(i) = clip {
-                            ui.menu_button("Replace sample", |ui| {
-                                if let Some(path) = super::arrangement_ui::sample_picker(ui, library) {
-                                    if let Ok(data) = library.get(&path) {
-                                        let name = path.file_stem().map(|s| s.to_string_lossy()).unwrap_or_default();
-                                        let sample = project.pool_index(&name, &path.to_string_lossy(), data);
-                                        project.arrangement.clips[i].pattern = sample;
-                                        state.sel_sample = Some(sample);
+                    track_settings_section(ui, "Sample", |ui| {
+                        ui.columns(2, |cols| {
+                            let source = &mut cols[0];
+                            let name = clip.and_then(|i| project.audio_pool.get(project.arrangement.clips[i].pattern))
+                                .map_or("No audio clip", |sample| sample.name.as_str());
+                            source.label(RichText::new(name).strong());
+                            if let Some(i) = clip {
+                                source.menu_button("Replace sample", |ui| {
+                                    if let Some(path) = super::arrangement_ui::sample_picker(ui, library) {
+                                        if let Ok(data) = library.get(&path) {
+                                            let name = path.file_stem().map(|s| s.to_string_lossy()).unwrap_or_default();
+                                            let sample = project.pool_index(&name, &path.to_string_lossy(), data);
+                                            project.arrangement.clips[i].pattern = sample;
+                                            state.sel_sample = Some(sample);
+                                        }
+                                        ui.close_menu();
                                     }
-                                    ui.close_menu();
-                                }
-                            });
-                        }
-                    });
-                    track_settings_section(ui, "Playback", |ui| {
-                        let track = &mut project.arrangement.tracks[lane];
-                        ui.horizontal_wrapped(|ui| {
-                            super::widgets::knob(ui, "Track level", &mut track.volume, 0.0, 1.5, false,
-                                |value| format!("{:+.1} dB", super::widgets::db(value)));
+                                });
+                                source.toggle_value(&mut project.arrangement.clips[i].reverse, "Reverse");
+                            }
+                            let playback = &mut cols[1];
+                            playback.label(RichText::new("Playback").small().strong().color(DIM()));
+                            let track = &mut project.arrangement.tracks[lane];
+                            level_row(playback, "Track level", &mut track.volume, 1.5);
                             if let Some(i) = clip {
                                 let clip = &mut project.arrangement.clips[i];
-                                super::widgets::knob(ui, "Clip gain", &mut clip.gain, 0.0, 2.0, false,
-                                    |value| format!("{:+.1} dB", super::widgets::db(value)));
-                                ui.toggle_value(&mut clip.reverse, "Reverse");
+                                level_row(playback, "Clip gain", &mut clip.gain, 2.0);
+                                pitch_row(playback, "Clip pitch", &mut clip.pitch);
+                                let max_fade = clip.len / 2;
+                                playback.spacing_mut().slider_width = (playback.available_width() - 4.0).max(16.0);
+                                playback.label("Fade in");
+                                playback.add(egui::Slider::new(&mut clip.fade_in, 0..=max_fade).show_value(false));
+                                playback.label("Fade out");
+                                playback.add(egui::Slider::new(&mut clip.fade_out, 0..=max_fade).show_value(false));
+                            } else {
+                                pitch_row(playback, "Pitch", &mut track.transpose);
                             }
                         });
-                        if let Some(i) = clip {
-                            let clip = &mut project.arrangement.clips[i];
-                            ui.add(egui::Slider::new(&mut clip.pitch, -24..=24).text("Clip pitch").suffix(" st"));
-                            let max_fade = clip.len / 2;
-                            ui.add(egui::Slider::new(&mut clip.fade_in, 0..=max_fade).text("Fade in").show_value(false));
-                            ui.add(egui::Slider::new(&mut clip.fade_out, 0..=max_fade).text("Fade out").show_value(false));
-                        } else {
-                            ui.add(egui::Slider::new(&mut track.transpose, -24..=24).text("Pitch").suffix(" st"));
-                        }
                     });
                     if let Some(sample) = clip.and_then(|i| project.audio_pool.get(project.arrangement.clips[i].pattern)) {
                         track_settings_section(ui, "Waveform", |ui| {
@@ -672,18 +691,6 @@ pub(super) fn mobile_track_settings(
                     }
                 } else {
                     show(ui, project, state, detail, plugin_window, library, playhead, 3);
-                    track_settings_section(ui, "Playback", |ui| {
-                        let track = &mut project.arrangement.tracks[lane];
-                        ui.horizontal_wrapped(|ui| {
-                            super::widgets::knob(ui, "Track level", &mut track.volume, 0.0, 1.5, false,
-                                |value| format!("{:+.1} dB", super::widgets::db(value)));
-                            ui.add(egui::Slider::new(&mut track.transpose, -24..=24).text("Transpose").suffix(" st"));
-                        });
-                        if let Some(i) = clip {
-                            let clip = &mut project.arrangement.clips[i];
-                            ui.add(egui::Slider::new(&mut clip.pitch, -24..=24).text("Clip transpose").suffix(" st"));
-                        }
-                    });
                     let track = &project.arrangement.tracks[lane];
                     if let Some(sample) = track.sampler.sample.as_ref().filter(|_| track.instrument == Some(Track::Sampler)) {
                         track_settings_section(ui, "Waveform", |ui| {
