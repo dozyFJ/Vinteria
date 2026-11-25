@@ -1185,17 +1185,93 @@ impl VinteriaApp {
     }
 
     fn m_plugin_store(&mut self, ui: &mut Ui) {
-        mobile_scroll(egui::ScrollArea::vertical()).auto_shrink([false, false]).show(ui, |ui| {
-            heading(ui, "Built-in instruments");
-            for (index, track) in [Track::Synth, Track::Wavetable, Track::Bass808, Track::Analog, Track::Sampler, Track::Drums].iter().enumerate() {
-                list_row(ui, lane_col(index), "I", track.name(), "Instrument", "", false);
-            }
-            ui.add_space(12.0);
-            heading(ui, "Built-in effects");
-            for (index, effect) in crate::fx::ALL.iter().enumerate() {
-                list_row(ui, lane_col(index), "FX", effect.name(), effect.category(), "", false);
+        let destination_id = egui::Id::new("m_plugin_store_destination");
+        let mut destination = ui.data(|d| d.get_temp::<usize>(destination_id))
+            .filter(|&lane| lane < self.project.arrangement.tracks.len());
+        let mut instrument = None;
+        let mut effect = None;
+        mobile_scroll(egui::ScrollArea::vertical()).id_salt("m_plugin_store_scroll")
+            .auto_shrink([false, false]).show(ui, |ui| {
+                let label = destination.map_or("New MIDI track", |lane| self.project.arrangement.tracks[lane].name.as_str());
+                egui::ComboBox::from_id_salt("m_plugin_store_track").selected_text(label).show_ui(ui, |ui| {
+                    let new_track_label = RichText::new("New MIDI track").color(if destination.is_none() { on_accent() } else { ink() });
+                    ui.selectable_value(&mut destination, None, new_track_label);
+                    for (lane, track) in self.project.arrangement.tracks.iter().enumerate() {
+                        let text = RichText::new(&track.name).color(if destination == Some(lane) { on_accent() } else { ink() });
+                        ui.selectable_value(&mut destination, Some(lane), text);
+                    }
+                });
+                if !self.arr.msg.is_empty() {
+                    ui.label(RichText::new(&self.arr.msg).color(RED));
+                }
+                heading(ui, "Built-in instruments");
+                let accepts_instrument = destination.is_none_or(|lane| {
+                    let track = &self.project.arrangement.tracks[lane];
+                    track.kind == crate::arrangement::TrackKind::Midi && !track.playlist_locked
+                });
+                ui.add_enabled_ui(accepts_instrument, |ui| {
+                    for (index, track) in Track::ALL.into_iter().enumerate() {
+                        if list_row(ui, lane_col(index), "I", track.name(), "Instrument", "Add", false).clicked() {
+                            instrument = Some(track);
+                        }
+                    }
+                });
+                ui.add_space(12.0);
+                heading(ui, "Built-in effects");
+                if destination.is_none() {
+                    ui.label("Select an existing track to add an effect.");
+                }
+                ui.add_enabled_ui(destination.is_some(), |ui| {
+                    for (index, kind) in crate::fx::ALL.into_iter().enumerate() {
+                        if list_row(ui, lane_col(index), "FX", kind.name(), kind.category(), "Add", false).clicked() {
+                            effect = Some(kind);
+                        }
+                    }
+                });
+            });
+        ui.data_mut(|d| {
+            if let Some(lane) = destination {
+                d.insert_temp(destination_id, lane);
+            } else {
+                d.remove::<usize>(destination_id);
             }
         });
+        let (lane, page): (usize, usize) = if let Some(track) = instrument {
+            let lane = destination.unwrap_or_else(|| {
+                self.project.arrangement.add_track(crate::arrangement::TrackKind::Midi);
+                let lane = self.project.arrangement.tracks.len() - 1;
+                self.project.arrangement.tracks[lane].name = track.name().into();
+                lane
+            });
+            let mut detail = arrangement_ui::DetailCtx {
+                roll_track: &mut self.roll.track,
+                live_track: &mut self.live_track,
+                inst: &mut self.inst,
+            };
+            devices_ui::assign(&mut self.project, lane, track, &mut detail);
+            self.arr.msg.clear();
+            (lane, 0)
+        } else if let (Some(kind), Some(lane)) = (effect, destination) {
+            self.m_drop_effect(kind, lane);
+            if !self.arr.msg.is_empty() {
+                return;
+            }
+            (lane, 2)
+        } else {
+            return;
+        };
+
+        self.arr.sel_lane = lane;
+        self.arr.sel_clip = None;
+        self.m_playlist_undo_step();
+        self.m_open_studio(SEC_PLAYLIST);
+        ui.data_mut(|d| {
+            d.remove::<usize>(destination_id);
+            d.insert_temp(egui::Id::new("m_playlist_reveal_track"), lane);
+            d.insert_temp(egui::Id::new(("m_track_settings_page", lane)), page);
+            d.insert_temp(egui::Id::new("m_track_sheet_open"), true);
+        });
+        ui.ctx().request_repaint();
     }
 
     /// Undo / Redo for the phone (the PC has Ctrl+Z / Ctrl+Y). A finished drag or edit is one step.
