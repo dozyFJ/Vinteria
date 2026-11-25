@@ -1783,11 +1783,16 @@ impl VinteriaApp {
         let id = egui::Id::new("m_studio_menu_overlay");
         let Some(options) = ctx.data(|d| d.get_temp::<bool>(id)) else { return };
         let close = if options {
-            mobile_bottom_sheet(ctx, id.with("options"), "Playlist options", 420.0, |ui| {
+            let mut action = false;
+            let closed = mobile_side_editor(ctx, id.with("options"), "Playlist options", egui::Align::Min, 0.86, |ui| {
                 ui.spacing_mut().interact_size.y = 37.0;
                 ui.style_mut().override_font_id = Some(FontId::proportional(14.0));
-                self.m_playlist_options_content(ui, true)
-            })
+                action = self.m_playlist_options_content(ui, true);
+            });
+            if action {
+                ctx.animate_bool(id.with("options").with("animation"), false);
+            }
+            closed || action
         } else {
             let drawer = id.with("views");
             let mut selected = None;
@@ -2312,7 +2317,12 @@ impl VinteriaApp {
                         files.sort_by_key(|(_, modified)| std::cmp::Reverse(*modified));
                         files.into_iter().map(|(path, _)| path).collect()
                     } else if section == 1 {
-                        self.recent.iter().filter(|path| path.is_file()).cloned().collect()
+                        self.recent.iter().filter(|path| {
+                            #[cfg(target_arch = "wasm32")]
+                            { self.hub_cache.as_deref().unwrap_or_default().iter().any(|(saved, _, _)| saved == *path) }
+                            #[cfg(not(target_arch = "wasm32"))]
+                            { path.is_file() }
+                        }).cloned().collect()
                     } else {
                         self.hub_cache.as_deref().unwrap_or_default().iter().map(|(path, _, _)| path.clone()).collect()
                     };
@@ -5601,7 +5611,12 @@ impl VinteriaApp {
             egui::Button::new(label).min_size(vec2(width, 0.0))
         };
         ui.set_min_width(176.0);
-        mobile_scroll(egui::ScrollArea::vertical()).max_height(ui.available_height().min((ui.ctx().screen_rect().height() * 0.50).min(330.0)))
+        let max_height = if sheet {
+            ui.available_height()
+        } else {
+            ui.available_height().min((ui.ctx().screen_rect().height() * 0.50).min(330.0))
+        };
+        mobile_scroll(egui::ScrollArea::vertical()).max_height(max_height)
             .show(ui, |ui| {
                 if ui.add_enabled(!self.undo.is_empty(), button(ui, "Undo")).clicked() {
                     self.undo();
@@ -8669,39 +8684,6 @@ fn mobile_side_editor(ctx: &egui::Context, id: egui::Id, title: &str, side: egui
         ctx.animate_bool(id.with("animation"), false);
     }
     done
-}
-
-fn mobile_bottom_sheet(ctx: &egui::Context, id: egui::Id, title: &str, height: f32, body: impl FnOnce(&mut Ui) -> bool) -> bool {
-    let screen = ctx.screen_rect();
-    let height = height.min(screen.height() * 0.70);
-    let shown = ctx.animate_bool(id.with("animation"), true);
-    let mut close = ctx.input(|input| input.key_pressed(egui::Key::Escape));
-    egui::Area::new(id.with("scrim")).order(egui::Order::Middle).fixed_pos(screen.min)
-        .movable(false).show(ctx, |ui| {
-            let (rect, hit) = ui.allocate_exact_size(screen.size(), Sense::click());
-            ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha((120.0 * shown) as u8));
-            close |= hit.clicked();
-        });
-    egui::Area::new(id).order(egui::Order::Foreground).movable(false).constrain(false)
-        .fixed_pos(pos2(screen.left(), screen.bottom() - height * shown)).show(ctx, |ui| {
-            let (rect, _) = ui.allocate_exact_size(vec2(screen.width(), height), Sense::click());
-            let corners = egui::Rounding { nw: 18.0, ne: 18.0, ..Default::default() };
-            ui.painter().rect_filled(rect, corners, glass_fill());
-            ui.painter().rect_stroke(rect, corners, Stroke::new(1.0, glass_edge()));
-            let mut content = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(10.0)));
-            content.set_clip_rect(rect.intersect(screen));
-            mobile_visuals(&mut content);
-            content.horizontal(|ui| {
-                close |= p_button(ui, "Done", true, vec2(57.0, 36.0)).clicked();
-                ui.label(RichText::new(title).size(17.0).strong());
-            });
-            content.separator();
-            close |= body(&mut content);
-        });
-    if close {
-        ctx.animate_bool(id.with("animation"), false);
-    }
-    close
 }
 
 fn mobile_editor_sheet(ctx: &egui::Context, id: &'static str, title: &str, body: impl FnOnce(&mut Ui)) -> bool {

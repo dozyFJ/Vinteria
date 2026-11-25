@@ -782,3 +782,9 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 - Home: stronger section headings, more contrast across Library and Recent tiles, and compact project list rows.
 - Portrait studio: Views now opens from the left.
 - Android handset verification pending.
+
+### Android 1.0.156
+
+- Portrait Playlist options now open from the left with a fixed header and a full-height scrolling list.
+- Web: See all in Recent shows saved web projects.
+- Android handset verification pending.
