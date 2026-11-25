@@ -161,7 +161,7 @@ impl Library {
         Ok(d)
     }
 
-    pub fn assign(&mut self, project: &mut Project, lane: usize, path: &Path) {
+    pub fn assign(&mut self, project: &mut Project, lane: usize, path: &Path) -> bool {
         match self.get(path) {
             Ok(data) => {
                 let name = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
@@ -169,8 +169,12 @@ impl Library {
                 project.drum_fx.resize(NUM_DRUMS, crate::project::SampleFx::default());
                 project.drum_fx[lane] = crate::project::SampleFx::default();
                 self.message = format!("{name} -> {}", DRUM_NAMES[lane]);
+                true
             }
-            Err(e) => self.message = format!("Load failed: {e}"),
+            Err(e) => {
+                self.message = format!("Load failed: {e}");
+                false
+            }
         }
     }
 

@@ -138,13 +138,19 @@ fn audio_color() -> Color32 {
 
 /// A searchable list of the sounds of the Browser (every WAV of the library folders): returns the one that was clicked.
 pub(super) fn sample_picker(ui: &mut Ui, lib: &mut Library) -> Option<std::path::PathBuf> {
-    let id = egui::Id::new("clip_menu_sound_search");
+    sample_picker_list(ui, lib, egui::Id::new("clip_menu_sound_search"), false)
+}
+
+pub(super) fn sample_picker_list(ui: &mut Ui, lib: &Library, id: egui::Id, panel: bool) -> Option<std::path::PathBuf> {
     let mut q: String = ui.data(|d| d.get_temp(id)).unwrap_or_default();
-    ui.add(egui::TextEdit::singleline(&mut q).hint_text("search the sounds").desired_width(230.0));
+    let width = if panel { ui.available_width() } else { 230.0 };
+    let height = if panel { 38.0 } else { ui.spacing().interact_size.y };
+    ui.add_sized([width, height], egui::TextEdit::singleline(&mut q).hint_text("Search sounds"));
     ui.data_mut(|d| d.insert_temp(id, q.clone()));
     let low = q.trim().to_lowercase();
     let mut chosen = None;
-    egui::ScrollArea::vertical().id_salt("clip_menu_sounds").max_height(300.0).show(ui, |ui| {
+    let list_height = if panel { ui.available_height() } else { 300.0 };
+    egui::ScrollArea::vertical().id_salt(id.with("list")).max_height(list_height).show(ui, |ui| {
         let mut shown = 0;
         for f in lib.files.iter() {
             let name = f.file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
@@ -152,7 +158,13 @@ pub(super) fn sample_picker(ui: &mut Ui, lib: &mut Library) -> Option<std::path:
                 continue;
             }
             let kit = f.parent().and_then(|d| d.file_name()).map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
-            if ui.button(format!("{name}   ({kit})")).clicked() {
+            let label = format!("{name}   ({kit})");
+            let button = if panel {
+                egui::Button::new(label).truncate().min_size(egui::vec2(ui.available_width(), 40.0))
+            } else {
+                egui::Button::new(label)
+            };
+            if ui.add(button).clicked() {
                 chosen = Some(f.clone());
             }
             shown += 1;

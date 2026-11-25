@@ -2569,7 +2569,7 @@ impl VinteriaApp {
                 let sample = self.project.drum_samples[lane].as_ref().map_or("Built-in", |sample| sample.name.as_str());
                 let hit = ui.interact(rect, ui.id().with(("vertical_drum_header", lane)), Sense::click())
                     .on_hover_text(format!("{name} · {sample}"));
-                if hit.secondary_clicked() {
+                if hit.long_touched() || hit.secondary_clicked() {
                     sound_menu = Some(lane);
                 } else if hit.clicked() {
                     selected = lane;
@@ -4203,7 +4203,7 @@ impl VinteriaApp {
                     });
             };
             let closed = if clip.audio && ctx.screen_rect().width() < ctx.screen_rect().height() {
-                mobile_left_editor(ctx, egui::Id::new("m_audio_clip_drawer"), title, 0.90, controls)
+                mobile_side_editor(ctx, egui::Id::new("m_audio_clip_drawer"), title, egui::Align::Min, 0.90, controls)
             } else {
                 mobile_editor_sheet(ctx, "m_clip_sheet_window", title, controls)
             };
@@ -4289,14 +4289,49 @@ impl VinteriaApp {
 
     fn m_drum_sound_sheet(&mut self, ctx: &egui::Context) {
         let id = egui::Id::new("m_drum_sound_sheet");
+        let picker = id.with("picker");
         let lane = ctx.data(|d| d.get_temp::<usize>(id));
         let Some(lane) = lane.filter(|&lane| self.m_sec == 1 && lane < NUM_DRUMS) else {
             if lane.is_some() {
-                ctx.data_mut(|d| d.remove::<usize>(id));
+                ctx.data_mut(|d| { d.remove::<usize>(id); d.remove::<bool>(picker); });
             }
             return;
         };
-        let done = mobile_editor_sheet(ctx, "m_drum_sound", DRUM_NAMES[lane], |ui| {
+        let screen = ctx.screen_rect();
+        let portrait = screen.width() < screen.height();
+        if portrait && ctx.data(|d| d.get_temp::<bool>(picker)).unwrap_or(false) {
+            let error_id = picker.with("error");
+            let mut chosen = None;
+            let done = mobile_side_editor(ctx, picker, "Choose WAV", egui::Align::Max, 0.86, |ui| {
+                if let Some(error) = ui.data(|d| d.get_temp::<String>(error_id)) {
+                    ui.colored_label(RED, error);
+                }
+                chosen = arrangement_ui::sample_picker_list(ui, &self.lib, picker.with("search"), true);
+            });
+            let assigned = chosen.is_some_and(|path| {
+                let assigned = self.lib.assign(&mut self.project, lane, &path);
+                self.status.clone_from(&self.lib.message);
+                if assigned {
+                    self.m_playlist_undo_step();
+                    self.publish_edits();
+                    ctx.animate_bool(picker.with("animation"), false);
+                } else {
+                    ctx.data_mut(|d| d.insert_temp(error_id, self.lib.message.clone()));
+                }
+                assigned
+            });
+            if done || assigned {
+                ctx.data_mut(|d| {
+                    d.remove::<bool>(picker);
+                    d.remove::<String>(error_id);
+                });
+                ctx.request_repaint();
+            }
+            return;
+        }
+        let drawer = id.with("controls");
+        let mut choose = false;
+        let controls = |ui: &mut Ui| {
             ui.add_space(8.0);
             if let Some(sample) = self.project.drum_samples.get(lane).and_then(Option::as_ref) {
                 track_ui::sample_waveform(ui, sample, self.project.bpm, &self.shared);
@@ -4307,6 +4342,10 @@ impl VinteriaApp {
             ui.horizontal(|ui| {
                 if p_button(ui, "Preview", true, vec2(96.0, 40.0)).clicked() {
                     self.shared.send(Cmd::DrumHit { lane, vel: 112 });
+                }
+                if portrait {
+                    choose = p_button(ui, "Choose WAV", false, vec2(110.0, 40.0)).clicked();
+                    return;
                 }
                 ui.menu_button("Choose WAV", |ui| {
                     if let Some(path) = arrangement_ui::sample_picker(ui, &mut self.lib) {
@@ -4323,10 +4362,25 @@ impl VinteriaApp {
                 .custom_formatter(|v, _| format!("{:+.1} dB", widgets::db(v as f32))));
             ui.label("Pan");
             ui.add(egui::Slider::new(&mut channel.pan, -1.0..=1.0));
-        });
+        };
+        let done = if portrait {
+            mobile_side_editor(ctx, drawer, DRUM_NAMES[lane], egui::Align::Min, 0.82, |ui| {
+                mobile_scroll(egui::ScrollArea::vertical()).show(ui, controls);
+            })
+        } else {
+            mobile_editor_sheet(ctx, "m_drum_sound", DRUM_NAMES[lane], controls)
+        };
+        if choose {
+            self.shared.send(Cmd::PreviewStop);
+            ctx.data_mut(|d| {
+                d.remove::<String>(picker.with("error"));
+                d.insert_temp(picker, true);
+            });
+            ctx.request_repaint();
+        }
         if done {
             self.shared.send(Cmd::PreviewStop);
-            ctx.data_mut(|d| d.remove::<usize>(id));
+            ctx.data_mut(|d| { d.remove::<usize>(id); d.remove::<bool>(picker); });
         }
     }
 
@@ -8257,7 +8311,7 @@ fn playlist_clip_menu(
     if portrait {
         let mut action = None;
         let drawer = id.with("left_drawer");
-        let close = mobile_left_editor(ctx, drawer, "Clip actions", 0.78, |ui| {
+        let close = mobile_side_editor(ctx, drawer, "Clip actions", egui::Align::Min, 0.78, |ui| {
             mobile_scroll(egui::ScrollArea::vertical()).show(ui, |ui| {
                 for (index, &(symbol, label, enabled)) in actions.iter().enumerate().filter(|(index, _)| *index != 4).chain(actions.get(4).map(|action| (4, action))) {
                     let label = match index {
@@ -8535,10 +8589,12 @@ fn studio_icon(ui: &mut Ui, width: f32, symbol: Icon, active: bool, label: &str)
     response.on_hover_text(label)
 }
 
-fn mobile_left_editor(ctx: &egui::Context, id: egui::Id, title: &str, width_fraction: f32, body: impl FnOnce(&mut Ui)) -> bool {
+fn mobile_side_editor(ctx: &egui::Context, id: egui::Id, title: &str, side: egui::Align, width_fraction: f32, body: impl FnOnce(&mut Ui)) -> bool {
     let screen = ctx.screen_rect();
     let width = (screen.width() * width_fraction).min(440.0);
     let shown = ctx.animate_bool(id.with("animation"), true);
+    let right = side == egui::Align::Max;
+    let x = if right { screen.right() - width * shown } else { screen.left() - width * (1.0 - shown) };
     let mut done = false;
     egui::Area::new(id.with("scrim")).order(egui::Order::Middle).fixed_pos(screen.min)
         .movable(false).show(ctx, |ui| {
@@ -8547,15 +8603,16 @@ fn mobile_left_editor(ctx: &egui::Context, id: egui::Id, title: &str, width_frac
             done |= response.clicked();
         });
     egui::Area::new(id).order(egui::Order::Foreground).constrain(false).movable(false)
-        .fixed_pos(screen.min - vec2(width * (1.0 - shown), 0.0)).show(ctx, |ui| {
+        .fixed_pos(pos2(x, screen.top())).show(ctx, |ui| {
             let (rect, _) = ui.allocate_exact_size(vec2(width, screen.height()), Sense::click());
-            let corners = egui::Rounding { ne: 18.0, se: 18.0, ..Default::default() };
+            let corners = if right { egui::Rounding { nw: 18.0, sw: 18.0, ..Default::default() } }
+                else { egui::Rounding { ne: 18.0, se: 18.0, ..Default::default() } };
             ui.painter().rect_filled(rect, corners, pick(0xF2202226, 0xF2EAF0F6));
             ui.painter().rect_stroke(rect, corners, Stroke::new(1.0, glass_edge().gamma_multiply(0.7)));
             let header = Rect::from_min_size(rect.min, vec2(width, 54.0));
-            let header_corners = egui::Rounding { ne: 18.0, ..Default::default() };
+            let header_corners = egui::Rounding { sw: 0.0, se: 0.0, ..corners };
             ui.painter().rect_filled(header, header_corners, glass_fill());
-            let highlight = Rect::from_min_size(header.min + vec2(0.0, 2.0), vec2(width - 18.0, 28.0));
+            let highlight = Rect::from_min_size(header.min + vec2(if right { 18.0 } else { 0.0 }, 2.0), vec2(width - 18.0, 28.0));
             paint_glass_sheen(ui.painter(), highlight);
             ui.painter().hline(header.x_range(), header.bottom(), Stroke::new(1.0, glass_edge()));
             let mut head = ui.new_child(egui::UiBuilder::new().id_salt("header")

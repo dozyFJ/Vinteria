@@ -1,6 +1,6 @@
 [package]
 name = "vinteria_daw"
-version = "1.0.153"
+version = "1.0.154"
 edition = "2021"
 description = "Winteria DAW - a from-scratch DAW (audio engine, synths, sequencer, piano roll, arrangement, mixer)"
 

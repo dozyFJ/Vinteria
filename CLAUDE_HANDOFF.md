@@ -771,3 +771,8 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 
 - Home: added a vertical project-card list beneath Recent. Leaving a project returns to Home.
 - Android handset verification pending.
+
+### Android 1.0.154
+
+- Portrait Drum Rack: pad settings open from the left and WAV search opens from the right. Choosing a sample returns to the same pad.
+- Android handset verification pending.
