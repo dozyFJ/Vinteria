@@ -6126,7 +6126,8 @@ impl VinteriaApp {
             return;
         }
         let (viewport, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
-        let grid = Rect::from_min_max((viewport.min + vec2(32.0, 28.0)).min(viewport.max), viewport.max);
+        let option_height = if docked { 0.0 } else { 30.0 };
+        let grid = Rect::from_min_max((viewport.min + vec2(32.0, option_height)).min(viewport.max), viewport.max);
         if !grid.is_positive() { return; }
         let mut size = ui.data(|d| d.get_temp::<egui::Vec2>(id.with("size")))
             .unwrap_or(vec2((grid.width() / 3.0).clamp(66.0, 112.0), 74.0));
@@ -6336,19 +6337,7 @@ impl VinteriaApp {
         });
         ui.data_mut(|d| d.insert_temp(id.with("offset"), out.state.offset));
 
-        let header = Rect::from_min_max(viewport.min, pos2(viewport.right(), grid.top()));
         let ruler = Rect::from_min_max(pos2(viewport.left(), grid.top()), pos2(grid.left(), grid.bottom()));
-        let p = ui.painter_at(header);
-        p.rect_filled(header, 0.0, glass_fill());
-        for (i, &lane) in lanes.iter().enumerate() {
-            let rect = Rect::from_min_size(pos2(out.inner.x + i as f32 * column, header.top()), vec2(column, header.height()))
-                .intersect(Rect::from_min_max(pos2(grid.left(), header.top()), header.max));
-            if rect.is_positive() {
-                p.rect_filled(rect.shrink(2.0), 5.0, if self.arr.sel_lane == lane { selected_fill() } else { card_fill() });
-                fit_label(&p, rect.shrink2(vec2(6.0, 0.0)), rect.center().y,
-                    &self.project.arrangement.tracks[lane].name, ink(), 11.0);
-            }
-        }
         let p = ui.painter_at(ruler);
         p.rect_filled(ruler, 0.0, bar_fill());
         let first = ((ruler.top() - out.inner.y).max(0.0) / bar_height) as u32;
@@ -6383,7 +6372,7 @@ impl VinteriaApp {
             }
         }
         if !docked {
-            self.m_playlist_options(ui, Rect::from_min_size(header.min, vec2(32.0, 28.0)));
+            self.m_playlist_options(ui, Rect::from_min_size(viewport.min, vec2(32.0, option_height)));
         }
         if let Some(index) = picked_clip {
             let clip = self.project.arrangement.clips[index];

@@ -698,3 +698,8 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 
 - The portrait project actions open in an animated left drawer from the top-left button. Quick controls and Browser stay in the top bar, and sections remain in the dock.
 - Native Android visual and gesture verification is pending.
+
+### Android 1.0.120
+
+- Remove duplicate track headers above the portrait vertical timeline. Track cards remain in the strip above the dock. Full view keeps a small space for its Playlist options button.
+- Native Android layout verification is pending.
