@@ -2467,7 +2467,12 @@ impl VinteriaApp {
                                 if st.on {
                                     let note = cell.shrink2(vec2(3.0, 5.0));
                                     let color = lane_col(lane).linear_multiply(0.50 + 0.50 * f32::from(st.vel) / 127.0);
+                                    // soft glow around a lit step in its drum's colour
+                                    for (grow, alpha) in [(5.0, 0.10), (2.5, 0.18)] {
+                                        p.rect_filled(note.expand(grow), 5.0 + grow, lane_col(lane).gamma_multiply(alpha));
+                                    }
                                     p.rect_filled(note, 5.0, color);
+                                    clip_shine(&p, note, lane_col(lane), false);
                                     if st.is_smart() {
                                         p.circle_filled(note.right_center() - vec2(5.0, 0.0), 2.0, Color32::from_black_alpha(160));
                                     }
@@ -6721,7 +6726,9 @@ impl VinteriaApp {
                 let rect = bounds_at.shrink2(vec2(3.0, 1.0));
                 let pastel = if clip.audio { argb(0xFFD6EEF5) } else { argb(0xFFDED1F3) };
                 let fill = tint(lane_col(clip.lane), pastel, 0.38);
-                p.rect_filled(rect, 6.0, if clip.mute { tint(fill, card_fill(), 0.45) } else { fill });
+                let fill = if clip.mute { tint(fill, card_fill(), 0.45) } else { fill };
+                p.rect_filled(rect, 6.0, fill);
+                clip_shine(&p, rect, lane_col(clip.lane), clip.mute);
                 if !locked && selection_box.is_some_and(|area| area.intersects(rect)) { selected.push(index); }
                 if self.arr.is_sel(index) || selected.last() == Some(&index) {
                     p.rect_stroke(rect, 6.0, Stroke::new(1.7, p_accent()));
@@ -6737,22 +6744,73 @@ impl VinteriaApp {
                         short.as_deref().unwrap_or(name), argb(0xFF202831), 10.0);
                 }
                 if let Some(pattern) = pattern.filter(|_| rect.height() > 27.0) {
-                    let inset = Rect::from_min_max(rect.min + vec2(6.0, 17.0), rect.max - vec2(8.0, 5.0));
+                    // mini notes: time runs down the clip, pitch across it, each note as long as it plays
+                    let inset = Rect::from_min_max(rect.min + vec2(7.0, 17.0), rect.max - vec2(6.0, 5.0));
                     let visible_marks = inset.intersect(visible);
                     if visible_marks.is_positive() {
-                        let time_at = |y: f32| (y - inset.top()) / inset.height() * clip.len as f32;
-                        let first = clip.offset.saturating_add(time_at(visible_marks.top()).floor() as u32);
-                        let last = clip.offset.saturating_add(time_at(visible_marks.bottom()).ceil() as u32)
-                            .min(clip.offset.saturating_add(clip.len));
+                        let span = clip.offset..clip.offset.saturating_add(clip.len);
+                        let (lo, hi) = pattern.notes.iter().filter(|n| !n.mute && span.contains(&n.start))
+                            .fold((u8::MAX, 0u8), |(lo, hi), n| (lo.min(n.pitch), hi.max(n.pitch)));
+                        let range = f32::from(hi.saturating_sub(lo)).max(11.0);
                         let marks = p.with_clip_rect(visible_marks);
-                        // Bound the work for a small preview, even for a dense MIDI import.
+                        let ink_note = tint(lane_col(clip.lane), Color32::BLACK, 0.55);
+                        let y_of = |tick: u32| inset.top() + tick.saturating_sub(clip.offset) as f32 / clip.len.max(1) as f32 * inset.height();
                         let max_marks = (visible_marks.height().ceil() as usize).saturating_mul(3);
-                        let notes = pattern.notes.iter().filter(|note| !note.mute && (first..last).contains(&note.start));
+                        let notes = pattern.notes.iter().filter(|n| !n.mute && span.contains(&n.start)
+                            && y_of(n.start) <= visible_marks.bottom() && y_of(n.start.saturating_add(n.len)) >= visible_marks.top());
                         for note in notes.take(max_marks) {
-                            let y = inset.top() + (note.start - clip.offset) as f32 / clip.len.max(1) as f32 * inset.height();
-                            let x = inset.left() + (note.pitch % 12) as f32 / 12.0 * inset.width();
-                            marks.line_segment([pos2(x, y), pos2(x + 7.0, y)],
-                                Stroke::new(1.6, Color32::from_black_alpha(145)));
+                            let x = inset.left() + f32::from(note.pitch.saturating_sub(lo.min(note.pitch))) / range * (inset.width() - 4.0);
+                            let y0 = y_of(note.start);
+                            let y1 = y_of(note.start.saturating_add(note.len).min(span.end)).max(y0 + 2.5);
+                            marks.rect_filled(Rect::from_min_max(pos2(x, y0 + 0.5), pos2(x + 4.0, y1 - 0.5)), 1.5, ink_note);
+                        }
+                        if lo == u8::MAX {
+                            // a drum clip: its lit steps as short bars, one row per step
+                            let first = clip.offset / TICKS_PER_STEP;
+                            let last = span.end.div_ceil(TICKS_PER_STEP);
+                            let rows = pattern.drums.len().max(1) as f32;
+                            for step in first..last {
+                                let y = y_of(step * TICKS_PER_STEP);
+                                if y > visible_marks.bottom() { break; }
+                                if y < visible_marks.top() - 4.0 { continue; }
+                                for (row, lane_steps) in pattern.drums.iter().enumerate() {
+                                    if lane_steps.get(step as usize).is_some_and(|st| st.on) {
+                                        let w = (inset.width() - 4.0) / rows;
+                                        let x = inset.left() + row as f32 * w;
+                                        marks.rect_filled(Rect::from_min_size(pos2(x, y), vec2((w - 2.0).max(3.0), 3.0)), 1.5, ink_note);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if clip.audio && rect.height() > 24.0 {
+                    // mini waveform down the clip: the part of the file that plays inside it
+                    if let Some(data) = self.project.audio_pool.get(clip.pattern).and_then(|s| s.data.as_ref()) {
+                        let body = Rect::from_min_max(rect.min + vec2(7.0, 17.0), rect.max - vec2(5.0, 5.0));
+                        let shown = body.intersect(visible);
+                        if shown.is_positive() && !data.mono.is_empty() {
+                            let bpm = self.project.bpm.max(1.0);
+                            let clip_bpm = if clip.warp > 0.0 { clip.warp } else { bpm };
+                            let clip_secs = clip.len as f32 / crate::sequencer::PPQ as f32 * 60.0 / bpm;
+                            let secs_per_px = clip_secs / body.height().max(1.0);
+                            let offset_secs = clip.offset as f32 / crate::sequencer::PPQ as f32 * 60.0 / clip_bpm;
+                            let wave = tint(lane_col(clip.lane), Color32::BLACK, 0.5);
+                            let painter = p.with_clip_rect(shown);
+                            let mut y = shown.top();
+                            while y < shown.bottom() {
+                                let t = (y - body.top()) * secs_per_px;
+                                let (ta, tb) = if clip.reverse { (offset_secs + clip_secs - t - 2.0 * secs_per_px, offset_secs + clip_secs - t) }
+                                    else { (offset_secs + t, offset_secs + t + 2.0 * secs_per_px) };
+                                let a0 = (ta.max(0.0) * data.rate as f32) as usize;
+                                if a0 >= data.mono.len() { break; }
+                                let a1 = ((tb.max(0.0) * data.rate as f32) as usize).min(data.mono.len()).max(a0 + 1);
+                                let stride = ((a1 - a0) / 24).max(1);
+                                let peak = (a0..a1).step_by(stride).fold(0.0f32, |m, i| m.max(data.mono[i].abs()));
+                                let half = peak.min(1.0) * body.width() * 0.48;
+                                painter.line_segment([pos2(body.center().x - half, y), pos2(body.center().x + half, y)], Stroke::new(1.5, wave));
+                                y += 2.0;
+                            }
                         }
                     }
                 }
@@ -6895,11 +6953,9 @@ impl VinteriaApp {
             let track = &self.project.arrangement.tracks[lane];
             let color = lane_col(lane);
             let selected = self.arr.sel_lane == lane && !self.arr.auto_master;
-            if selected {
-                painter.rect_filled(cell, 0.0, selected_fill());
-            }
+            painter.rect_filled(cell, 0.0, tint(bar_fill(), color, if selected { 0.30 } else { 0.14 }));
             painter.vline(cell.right(), cell.y_range(), Stroke::new(1.0, outline()));
-            painter.hline(cell.x_range(), cell.bottom() - 1.0, Stroke::new(if selected { 2.0 } else { 1.0 }, color));
+            painter.hline(cell.x_range(), cell.bottom() - 1.5, Stroke::new(if selected { 3.0 } else { 2.0 }, color));
 
             let mut n = index + 1;
             let mut letters = Vec::new();
@@ -8170,6 +8226,27 @@ pub(super) fn mobile_action(ui: &mut Ui, title: &str, what: &str) -> Response {
     fit_label(p, text, card.top() + 37.0, what, muted(), 11.0);
     p.text(card.right_center() - vec2(12.0, 0.0), Align2::RIGHT_CENTER, "›", FontId::proportional(20.0), muted());
     response
+}
+
+/// Clip / step body polish: a light-to-dark sheen down the body and a track-colour edge on the left.
+fn clip_shine(p: &Painter, rect: Rect, color: Color32, muted_clip: bool) {
+    let body = rect.shrink2(vec2(1.0, 2.0));
+    if body.is_positive() {
+        let mut mesh = egui::Mesh::default();
+        let top = Color32::from_white_alpha(if muted_clip { 6 } else { 22 });
+        let bottom = Color32::from_black_alpha(if muted_clip { 8 } else { 26 });
+        mesh.colored_vertex(body.left_top(), top);
+        mesh.colored_vertex(body.right_top(), top);
+        mesh.colored_vertex(body.right_bottom(), bottom);
+        mesh.colored_vertex(body.left_bottom(), bottom);
+        mesh.add_triangle(0, 1, 2);
+        mesh.add_triangle(0, 2, 3);
+        p.add(Shape::mesh(mesh));
+    }
+    if rect.width() > 10.0 && rect.height() > 8.0 {
+        let edge = Rect::from_min_size(rect.min, vec2(3.0, rect.height()));
+        p.rect_filled(edge, egui::Rounding { nw: 6.0, sw: 6.0, ne: 0.0, se: 0.0 }, if muted_clip { color.gamma_multiply(0.4) } else { color });
+    }
 }
 
 /// FL-style knob: dark disc with an indicator; `t` in 0..1 (pan: 0.5 is centre, drawn from the top).

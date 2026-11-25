@@ -735,3 +735,9 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 ### Android 1.0.127
 
 - Put source and playback into two compact columns in mobile Track settings. Use bounded pitch and level controls and keep the sample waveform full-width under the panel.
+
+### Android 1.0.148
+
+- Portrait vertical Playlist and Drum Rack look: column headers tinted with the track colour (stronger when selected) with a 2–3 px underline; clips get a soft sheen (light top → darker bottom) and a track-colour edge on the left (`clip_shine`); lit Drum Rack steps glow in their drum's colour.
+- Clip contents: MIDI clips show their real notes (time runs down the clip, length = note length, spread over the clip's pitch range); drum clips show their lit steps as short bars per drum row; audio clips show a mini waveform down the clip (respects offset, warp tempo and reverse).
+- Checked on the desktop build in mobile mode (400×860) with the Trap Beat (808 Mafia) template: drum, 808 bass, wavetable and analog clips.
