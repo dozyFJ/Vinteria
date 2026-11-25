@@ -1434,7 +1434,9 @@ impl VinteriaApp {
                 .inner_margin(Margin { left: 8.0, right: 8.0, top: 4.0, bottom: 10.0 }))
             .show(ctx, |ui| {
                 mobile_visuals(ui);
-                if playlist {
+                let vertical_playlist = playlist && portrait_view(ui) && !self.arr.auto_edit
+                    && ui.data(|d| d.get_temp::<bool>(egui::Id::new("m_playlist_vertical")).unwrap_or(true));
+                if playlist && !vertical_playlist {
                     self.m_playlist_track_strip(ui);
                     ui.separator();
                 }
@@ -6296,18 +6298,34 @@ impl VinteriaApp {
         let lanes: Vec<_> = self.project.arrangement.tracks.iter().enumerate()
             .filter(|(_, track)| !self.project.arrangement.groups.iter().any(|g| g.id == track.group && g.collapsed))
             .map(|(lane, _)| lane).collect();
-        if lanes.is_empty() {
-            ui.label("Add a track or expand a group in the dock.");
-            return;
-        }
         let mut columns = vec![None; self.project.arrangement.tracks.len()];
         for (column, &lane) in lanes.iter().enumerate() {
             columns[lane] = Some(column);
         }
         let (viewport, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
-        let option_height = if docked { 0.0 } else { 30.0 };
-        let grid = Rect::from_min_max((viewport.min + vec2(32.0, option_height)).min(viewport.max), viewport.max);
+        let header_height = 30.0;
+        let grid = Rect::from_min_max((viewport.min + vec2(32.0, header_height)).min(viewport.max), viewport.max);
         if !grid.is_positive() { return; }
+        let corner = Rect::from_min_max(viewport.min, grid.min);
+        let mut trigger = ui.new_child(egui::UiBuilder::new().id_salt("vertical_track_menu").max_rect(corner));
+        trigger.set_clip_rect(corner.intersect(ui.clip_rect()));
+        let button = egui::Button::new("").frame(false).min_size(corner.size());
+        let menu = egui::menu::menu_custom_button(&mut trigger, button, |ui| {
+            ui.set_width((ctx.screen_rect().width() - 40.0).clamp(120.0, 280.0));
+            self.m_playlist_track_strip(ui);
+            if !docked {
+                ui.separator();
+                self.m_playlist_options_content(ui);
+            }
+        });
+        trigger.painter().rect_filled(corner, 0.0, if menu.response.hovered() { selected_fill() } else { bar_fill() });
+        icon(trigger.painter(), Icon::Tracks, corner.center(), ink());
+        menu.response.on_hover_text("Tracks");
+        if lanes.is_empty() {
+            ui.painter().text(grid.center(), Align2::CENTER_CENTER, "Add a track or expand a group",
+                FontId::proportional(12.0), muted());
+            return;
+        }
         let mut size = ui.data(|d| d.get_temp::<egui::Vec2>(id.with("size")))
             .unwrap_or(vec2((grid.width() / 3.0).clamp(66.0, 112.0), 74.0));
         let (pinching, zoom) = grid_pinch(ui, id.with("pinch"), grid);
@@ -6568,8 +6586,57 @@ impl VinteriaApp {
                 self.m_seek(&ctx, ((point.y - out.inner.y).max(0.0) / scale) as u32);
             }
         }
-        if !docked {
-            self.m_playlist_options(ui, Rect::from_min_size(viewport.min, vec2(32.0, option_height)));
+        let header = Rect::from_min_max(pos2(grid.left(), viewport.top()), pos2(grid.right(), grid.top()));
+        let painter = ui.painter_at(header).with_clip_rect(header.intersect(ui.clip_rect()));
+        painter.rect_filled(header, 0.0, bar_fill());
+        let options = egui::Id::new("m_playlist_track_names").with("track_modal");
+        for (index, &lane) in lanes.iter().enumerate() {
+            let left = out.inner.x + index as f32 * column;
+            let cell = Rect::from_min_size(pos2(left, header.top()), vec2(column, header_height));
+            let hit_rect = cell.intersect(header);
+            if !hit_rect.is_positive() { continue; }
+
+            let track = &self.project.arrangement.tracks[lane];
+            let color = lane_col(lane);
+            let selected = self.arr.sel_lane == lane && !self.arr.auto_master;
+            if selected {
+                painter.rect_filled(cell, 0.0, selected_fill());
+            }
+            painter.vline(cell.right(), cell.y_range(), Stroke::new(1.0, outline()));
+            painter.hline(cell.x_range(), cell.bottom() - 1.0, Stroke::new(if selected { 2.0 } else { 1.0 }, color));
+
+            let mut n = index + 1;
+            let mut letters = Vec::new();
+            while n > 0 {
+                n -= 1;
+                letters.push(char::from(b'A' + (n % 26) as u8));
+                n /= 26;
+            }
+            let label: String = letters.into_iter().rev().collect();
+            painter.text(cell.center(), Align2::CENTER_CENTER, label, FontId::proportional(12.0),
+                if track.mute { muted() } else { ink() });
+
+            let hit = ui.interact(hit_rect, id.with(("column_header", lane)), Sense::click())
+                .on_hover_text(format!("{} · {}", track.name, if track.kind == TrackKind::Audio { "Audio" } else { "MIDI" }));
+            if hit.secondary_clicked() || hit.long_touched() {
+                ctx.data_mut(|d| d.insert_temp(options, lane));
+            } else if hit.clicked() {
+                let open_settings = hit.double_clicked();
+                if self.arr.sel_lane != lane || open_settings {
+                    self.arr.sel_clip = None;
+                    self.arr.sel.clear();
+                }
+                self.arr.sel_lane = lane;
+                self.arr.auto_master = false;
+                if open_settings {
+                    ctx.data_mut(|d| {
+                        d.remove::<usize>(options);
+                        d.remove::<usize>(egui::Id::new("m_clip_sheet_selection"));
+                        d.insert_temp(egui::Id::new(("m_track_settings_page", lane)), 0_usize);
+                        d.insert_temp(egui::Id::new("m_track_sheet_open"), true);
+                    });
+                }
+            }
         }
         if let Some(index) = picked_clip {
             let clip = self.project.arrangement.clips[index];
