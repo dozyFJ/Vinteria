@@ -2823,7 +2823,7 @@ impl VinteriaApp {
             ui.ctx().request_repaint();
             return close;
         }
-        ui.label(RichText::new(if selecting { "Drag empty grid to select · Drag a selected note to move" } else if slide_mode { "Tap a note to toggle slide" } else { "Drag the ruler to loop · Double-tap a note to delete" })
+        ui.label(RichText::new(if selecting { "Drag empty grid to select · Drag a selected note to move" } else if slide_mode { "Tap a note to toggle slide" } else { "Double-tap to select all · Hold a note to delete" })
             .size(11.0).color(muted()));
         if extend {
             match self.m_extend_piano(pi, clip_index) {
@@ -3038,6 +3038,12 @@ impl VinteriaApp {
                     && note.pitch <= high_pitch
             };
             selected.retain(|&index| notes.get(index).is_some_and(editable));
+            let now = ui.input(|input| input.time);
+            let pending_id = selected_id.with("pending_empty_tap");
+            let tap_wait = std::time::Duration::from_millis(320);
+            let mut pending = ui.data_mut(|d| d.remove_temp::<(f64, u32, u8)>(pending_id));
+            let mut place_note = None;
+            let mut select_all = !pinching && !slide_mode && resp.double_clicked();
             let mut group_delta = (0i64, 0i32);
             let mut commit_group = false;
             if !selecting || pinching {
@@ -3097,7 +3103,7 @@ impl VinteriaApp {
                         p.rect_stroke(area, 3.0, Stroke::new(1.2, p_accent()));
                     }
                     drag = (!resp.drag_stopped()).then_some((origin, point, moving));
-                } else if resp.clicked() {
+                } else if resp.clicked() && !select_all {
                     selected = point.and_then(note_at).into_iter().collect();
                     drag = None;
                 } else if !ui.input(|input| input.pointer.primary_down()) {
@@ -3221,28 +3227,66 @@ impl VinteriaApp {
                         format!("{}{}", names[usize::from(pitch % 12)], i16::from(pitch) / 12 - 1),
                         FontId::proportional(size), Color32::from_gray(18));
                 }
-                if !pinching && (note_response.secondary_clicked() || handle.secondary_clicked()) {
+                if !pinching && (note_response.secondary_clicked() || handle.secondary_clicked()
+                    || note_response.long_touched() || handle.long_touched()) {
                     remove = Some(index);
                 } else if !pinching && (note_response.clicked() || handle.clicked()) {
                     if slide_mode {
                         toggle_slide = Some(index);
                         continue;
                     }
-                    let now = ui.input(|input| input.time);
                     let repeat = ui.data(|d| d.get_temp::<(usize, u32, u8, f64)>(tap_id))
                         .is_some_and(|(last_index, start, pitch, time)| {
                             (last_index, start, pitch) == (index, note.start, note.pitch)
                                 && (0.0..=0.42).contains(&(now - time))
                         });
-                    if repeat {
-                        remove = Some(index);
+                    if repeat || note_response.double_clicked() || handle.double_clicked() {
+                        select_all = true;
                     } else {
                         ui.data_mut(|d| d.insert_temp(tap_id, (index, note.start, note.pitch, now)));
                         audition = Some((note.track, note.pitch, note.vel));
                     }
                 }
             }
-            if commit_group {
+            if pinching || selecting || select_all {
+                pending = None;
+            } else if resp.clicked() {
+                if let Some(pt) = resp.interact_pointer_pos() {
+                    let row = (((pt.y - rect.top()) / row_h) as usize).min(rows - 1);
+                    let pitch = high_pitch - row as u8;
+                    let raw = ((pt.x - rect.left()) / pixels_per_tick).max(0.0) as u32;
+                    let tick = clip_start + (raw / snap * snap).min((duration - 1) / snap * snap);
+                    if tick < editable_end {
+                        if slide_mode {
+                            place_note = Some((tick, pitch));
+                        } else {
+                            place_note = pending.map(|(_, tick, pitch)| (tick, pitch));
+                            pending = Some((now, tick, pitch));
+                        }
+                    }
+                }
+            } else if let Some((at, tick, pitch)) = pending {
+                if now - at >= tap_wait.as_secs_f64() {
+                    place_note = Some((tick, pitch));
+                    pending = None;
+                }
+            }
+            if let Some(tap) = pending {
+                ui.data_mut(|d| d.insert_temp(pending_id, tap));
+                ui.ctx().request_repaint_after(tap_wait.saturating_sub(
+                    std::time::Duration::from_secs_f64((now - tap.0).max(0.0))));
+            }
+            if select_all {
+                selecting = true;
+                let all: Vec<_> = notes.iter().enumerate()
+                    .filter(|(_, note)| editable(note)).map(|(index, _)| index).collect();
+                ui.data_mut(|d| {
+                    d.insert_temp(copy_id, true);
+                    d.insert_temp(selected_id, all);
+                    d.remove::<(usize, u32, u8, f64)>(tap_id);
+                });
+                ui.ctx().request_repaint();
+            } else if commit_group {
                 self.m_playlist_undo_step();
                 let pattern = &mut self.project.patterns[pi];
                 for index in selected {
@@ -3280,42 +3324,32 @@ impl VinteriaApp {
                 self.project.patterns[pi].notes.remove(index);
             } else if let Some((track, pitch, velocity)) = audition {
                 self.m_preview_piano_notes(ui.ctx(), track, vec![pitch], velocity);
-            } else if resp.clicked() {
+            } else if let Some((tick, pitch)) = place_note.filter(|(tick, _)| (clip_start..editable_end).contains(tick)) {
                 ui.data_mut(|d| d.remove::<(usize, u32, u8, f64)>(tap_id));
-                if let Some(pt) = resp.interact_pointer_pos() {
-                    let row = (((pt.y - rect.top()) / row_h) as usize).min(rows - 1);
-                    let pitch = high_pitch - row as u8;
-                    // place on the chosen grid: the tap position rounded down to it
-                    let raw = ((pt.x - rect.left()) / step_w * TICKS_PER_STEP as f32).max(0.0) as u32;
-                    let tick = clip_start + (raw / snap * snap).min((duration - 1) / snap * snap);
-                    if tick >= editable_end {
-                        return rect.min;
+                let mut pitches = if chords {
+                    let tone = crate::theory::snap_to_scale(key_root, key_scale, pitch);
+                    crate::theory::stack_chord(key_root, key_scale, tone, 3)
+                } else {
+                    vec![pitch]
+                };
+                let len = (if chords { snap.max(TICKS_PER_STEP) * 4 } else { snap }).min(editable_end - tick);
+                let notes = &mut self.project.patterns[pi].notes;
+                pitches.retain(|&pitch| {
+                    if notes.iter().any(|note| note.pitch == pitch
+                        && note.start <= tick && tick < note.start.saturating_add(note.len))
+                    {
+                        return false;
                     }
-                    let mut pitches = if chords {
-                        let tone = crate::theory::snap_to_scale(key_root, key_scale, pitch);
-                        crate::theory::stack_chord(key_root, key_scale, tone, 3)
-                    } else {
-                        vec![pitch]
-                    };
-                    let len = (if chords { snap.max(TICKS_PER_STEP) * 4 } else { snap }).min(editable_end - tick);
-                    let notes = &mut self.project.patterns[pi].notes;
-                    pitches.retain(|&pitch| {
-                        if notes.iter().any(|note| note.pitch == pitch
-                            && note.start <= tick && tick < note.start.saturating_add(note.len))
-                        {
-                            return false;
-                        }
-                        let len = notes.iter().filter(|note| note.pitch == pitch && note.start > tick)
-                            .fold(len, |len, note| len.min(note.start - tick));
-                        notes.push(crate::piano_roll::Note { start: tick, len, pitch, vel: 100, track, slide: slide_mode, chance: 100, pan: 0, mute: false });
-                        true
-                    });
-                    if !pitches.is_empty() {
-                        let pattern = &mut self.project.patterns[pi];
-                        pattern.length_steps = pattern.length_steps.max((tick + len).div_ceil(TICKS_PER_STEP));
-                        self.m_playlist_undo_step();
-                        self.m_preview_piano_notes(ui.ctx(), track, pitches, 100);
-                    }
+                    let len = notes.iter().filter(|note| note.pitch == pitch && note.start > tick)
+                        .fold(len, |len, note| len.min(note.start - tick));
+                    notes.push(crate::piano_roll::Note { start: tick, len, pitch, vel: 100, track, slide: slide_mode, chance: 100, pan: 0, mute: false });
+                    true
+                });
+                if !pitches.is_empty() {
+                    let pattern = &mut self.project.patterns[pi];
+                    pattern.length_steps = pattern.length_steps.max((tick + len).div_ceil(TICKS_PER_STEP));
+                    self.m_playlist_undo_step();
+                    self.m_preview_piano_notes(ui.ctx(), track, pitches, 100);
                 }
             }
             rect.min
