@@ -551,7 +551,7 @@ const MIXER_PAGE: &str = "m_mixer_page";
 
 const STUDIO_SECTIONS: [(&str, Icon); 6] = [
     ("Playlist", Icon::Timeline), ("Steps", Icon::Steps), ("Piano", Icon::Keys),
-    ("Session", Icon::Session), ("Mixer", Icon::Mixer), ("Tracks", Icon::Tracks),
+    ("Launchpad", Icon::Session), ("Mixer", Icon::Mixer), ("Tracks", Icon::Tracks),
 ];
 const SEC_PLAYLIST: usize = 0;
 const CONTROLS_DRAWER: &str = "m_landscape_controls_drawer";
@@ -2080,7 +2080,7 @@ impl VinteriaApp {
             SEC_PLAYLIST => self.m_playlist(ui),
             1 => self.m_steps(ui),
             SEC_PIANO => self.m_piano(ui),
-            3 => self.m_session(ui),
+            3 => self.m_launchpad(ui),
             4 => self.m_mixer(ui),
             _ => self.m_tracks(ui),
         }
@@ -4067,7 +4067,7 @@ impl VinteriaApp {
 
     /// Clip launcher in portrait: a row per scene, a column per track. Tap a clip to launch it on the next bar, tap a
     /// running clip to stop its track; tap an empty MIDI cell to put the current pattern there; hold a clip to remove it.
-    fn m_session(&mut self, ui: &mut Ui) {
+    fn m_launchpad(&mut self, ui: &mut Ui) {
         use crate::arrangement::TrackKind;
         use crate::audio_engine::QUEUED_STOP;
         use crate::session::MAX_LANES;
@@ -4075,7 +4075,7 @@ impl VinteriaApp {
         const BANK: usize = 4;
         let lanes = self.project.arrangement.tracks.len().min(MAX_LANES);
         if lanes == 0 {
-            ui.label(RichText::new("Add a track in Playlist to use Session.").color(muted()));
+            ui.label(RichText::new("Add a track in Playlist to launch clips.").color(muted()));
             return;
         }
         let track_id = egui::Id::new("m_session_track_bank");
@@ -4142,9 +4142,9 @@ impl VinteriaApp {
         let first_scene = scene_bank * BANK;
         let track_end = (first_track + BANK).min(lanes);
         let scene_end = (first_scene + BANK).min(self.project.session.scenes);
-        let gap = 5.0;
-        let ruler_width = 38.0;
-        let header = 36.0;
+        let gap = 6.0;
+        let ruler_width = 42.0;
+        let header = 44.0;
         let width = ui.available_width();
         let pad_width = ((width - ruler_width - gap * BANK as f32) / BANK as f32).max(38.0);
         let visible_height = ui.available_height();
@@ -4159,28 +4159,46 @@ impl VinteriaApp {
             let (area, _) = ui.allocate_exact_size(vec2(matrix_width, matrix_height), Sense::hover());
             let p = ui.painter_at(area);
             p.rect_filled(area, 12.0, p_bg());
-            let x_at = |lane: usize| area.left() + ruler_width + gap + (lane - first_track) as f32 * (pad_width + gap);
+            let scene_left = area.left() + BANK as f32 * (pad_width + gap);
+            let x_at = |lane: usize| area.left() + (lane - first_track) as f32 * (pad_width + gap);
             for lane in first_track..track_end {
                 let track = &self.project.arrangement.tracks[lane];
                 let rect = Rect::from_min_size(pos2(x_at(lane), area.top()), vec2(pad_width, header - gap));
                 let color = lane_col(lane);
-                p.rect_filled(rect, 8.0, if lane == self.arr.sel_lane { selected_fill() } else { card_fill() });
-                p.rect_filled(Rect::from_min_size(rect.min + vec2(4.0, 6.0), vec2(3.0, rect.height() - 12.0)), 1.5, color);
-                let label = rect.shrink2(vec2(10.0, 0.0));
+                p.rect_filled(rect, 9.0, if lane == self.arr.sel_lane { selected_fill() } else { glass_fill() });
+                let stop = Rect::from_min_size(rect.right_top() - vec2(25.0, 0.0), vec2(25.0, rect.height()));
+                let active = self.project.session.clips.iter().filter(|clip| clip.lane == lane).any(|clip| {
+                    let code = clip.code();
+                    self.shared.session_run[lane].load(Ordering::Relaxed) == code
+                        || self.shared.session_queue[lane].load(Ordering::Relaxed) == code
+                });
+                animate |= active;
+                let label = Rect::from_min_max(rect.min + vec2(5.0, 0.0), pos2(stop.left(), rect.bottom()));
                 playlist_label(&p, label, rect.center().y, &track.name, ink());
-                if ui.interact(rect, ui.id().with(("session_track", lane)), Sense::click()).clicked() {
+                p.rect_filled(Rect::from_min_size(rect.left_bottom() + vec2(5.0, -4.0),
+                    vec2(rect.width() - 10.0, 2.0)), 1.0, color);
+                if ui.interact(label, ui.id().with(("session_track", lane)), Sense::click()).clicked() {
                     self.arr.sel_lane = lane;
+                }
+                let stop_hit = ui.interact(stop, ui.id().with(("session_track_stop", lane)),
+                    if active { Sense::click() } else { Sense::hover() });
+                p.rect_filled(Rect::from_center_size(stop.center(), vec2(7.0, 7.0)),
+                    2.0, if active { color } else { muted().gamma_multiply(0.45) });
+                if stop_hit.on_hover_text("Stop track").clicked() {
+                    self.shared.send(Cmd::StopLane { lane });
                 }
             }
 
             for scene in first_scene..scene_end {
                 let y = area.top() + header + (scene - first_scene) as f32 * (pad_height + gap);
-                let scene_pad = Rect::from_min_size(pos2(area.left(), y), vec2(ruler_width, pad_height));
+                let scene_pad = Rect::from_min_size(pos2(scene_left, y), vec2(ruler_width, pad_height));
                 let scene_has_clips = self.project.session.clips.iter().any(|clip| clip.scene == scene);
                 let hit = ui.interact(scene_pad, ui.id().with(("session_scene", scene)),
                     if scene_has_clips { Sense::click() } else { Sense::hover() });
-                p.rect_filled(scene_pad, 9.0, bar_fill());
-                p.rect_stroke(scene_pad, 9.0, Stroke::new(1.0, outline()));
+                p.rect_filled(scene_pad, 12.0, if scene_has_clips {
+                    tint(bar_fill(), p_accent(), 0.16)
+                } else { bar_fill() });
+                p.rect_stroke(scene_pad, 12.0, Stroke::new(1.0, outline()));
                 control_state(&p, scene_pad, 9.0, &hit, ink());
                 icon(&p, Icon::Play, scene_pad.center() - vec2(0.0, 10.0),
                     if scene_has_clips { p_accent() } else { muted() });
@@ -4203,18 +4221,19 @@ impl VinteriaApp {
                         let pending_stop = running && queue == QUEUED_STOP;
                         let queued = queue == code || pending_stop;
                         animate |= running || queued;
-                        let pastel = if clip.audio { argb(0xFFD6EEF5) } else { argb(0xFFDED1F3) };
-                        let color = tint(lane_col(lane), pastel, if running { 0.46 } else { 0.36 });
-                        let text = argb(0xFF1A1B1D);
-                        p.rect_filled(pad, 9.0, color);
-                        control_state(&p, pad, 9.0, &hit, text);
-                        if running || queued {
-                            p.rect_stroke(pad.shrink(1.0), 8.0,
-                                Stroke::new(if running { 2.0 } else { 1.5 }, p_accent()));
-                        }
+                        let lane_color = lane_col(lane);
+                        let pad_color = tint(card_fill(), lane_color, if running { 0.38 } else { 0.20 });
+                        let signal = if queued { argb(0xFFC58B48) } else { lane_color };
+                        let text = ink();
+                        p.rect_filled(pad, 12.0, pad_color);
+                        control_state(&p, pad, 12.0, &hit, text);
+                        p.rect_stroke(pad.shrink(1.0), 11.0, Stroke::new(
+                            if running || queued { 2.0 } else { 1.0 },
+                            if running || queued { signal } else { tint(outline(), lane_color, 0.35) },
+                        ));
                         icon(&p, if running { Icon::Stop } else { Icon::Play }, pad.left_top() + vec2(14.0, 15.0), text);
                         let led = pad.right_top() + vec2(-10.0, 11.0);
-                        p.circle_filled(led, 3.0, if queued { argb(0xFF8D4D19) } else if running { argb(0xFF246046) } else { text.gamma_multiply(0.34) });
+                        p.circle_filled(led, 3.0, if running || queued { signal } else { lane_color.gamma_multiply(0.48) });
                         let name = if clip.audio { self.project.audio_pool.get(clip.pattern).map(|s| s.name.as_str()) }
                             else { self.project.patterns.get(clip.pattern).map(|p| p.name.as_str()) };
                         playlist_label(&p, pad.shrink2(vec2(6.0, 0.0)), pad.center().y + 3.0,
@@ -4222,7 +4241,7 @@ impl VinteriaApp {
                         if running {
                             let progress = Rect::from_min_size(pad.left_bottom() + vec2(6.0, -7.0),
                                 vec2((pad.width() - 12.0) * phase, 2.0));
-                            p.rect_filled(progress, 1.0, text.gamma_multiply(0.58));
+                            p.rect_filled(progress, 1.0, lane_color);
                         }
                         let hint = if pending_stop { "Stop queued" } else if queued { "Launch queued" }
                             else if running { "Playing · tap to stop" } else { "Tap to launch · hold to clear" };
@@ -4244,8 +4263,8 @@ impl VinteriaApp {
                                 self.project.arrangement.tracks[lane].audio_brush
                                     .filter(|&sample| sample < self.project.audio_pool.len())
                             } else { Some(self.project.current_pattern).filter(|&pattern| pattern < self.project.patterns.len()) });
-                        p.rect_filled(pad, 9.0, card_fill());
-                        p.rect_stroke(pad, 9.0, Stroke::new(1.0, grid_line()));
+                        p.rect_filled(pad, 12.0, glass_fill());
+                        p.rect_stroke(pad, 12.0, Stroke::new(1.0, grid_line()));
                         if assign.is_some() {
                             control_state(&p, pad, 9.0, &hit, ink());
                         }
