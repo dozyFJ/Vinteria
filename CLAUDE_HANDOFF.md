@@ -687,3 +687,9 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 - Restore the portrait top bar for BPM, recording, automation and Browser. Project actions open from the top-bar menu instead of the left drawer.
 - Remove the duplicate project-menu button from the dock and retain the transport and section selector there.
 - Native Android visual and touch verification is pending.
+
+### Android 1.0.118
+
+- Add a vertical Playlist for portrait: tracks are columns and bars run down the screen. The playhead is horizontal. Move clips across tracks or down the timeline, resize from the lower edge, and use the existing clip actions.
+- Playlist options can switch back to a horizontal timeline. Landscape and volume automation editing continue to use the horizontal view.
+- Native Android visual and gesture checks are pending.

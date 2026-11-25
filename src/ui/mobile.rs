@@ -4815,6 +4815,13 @@ impl VinteriaApp {
                     return;
                 }
                 egui::CollapsingHeader::new("Playlist").default_open(true).show(ui, |ui| {
+                    if portrait_view(ui) {
+                        let id = egui::Id::new("m_playlist_vertical");
+                        let mut vertical = ui.data(|d| d.get_temp::<bool>(id)).unwrap_or(true);
+                        if ui.checkbox(&mut vertical, "Vertical timeline").changed() {
+                            ui.data_mut(|d| d.insert_temp(id, vertical));
+                        }
+                    }
                     let snap = grid_label(self.arr.snap);
                     egui::ComboBox::from_id_salt("playlist_grid").selected_text(format!("Grid · {snap}"))
                         .show_ui(ui, |ui| {
@@ -4958,6 +4965,12 @@ impl VinteriaApp {
             select_mode = false;
         }
         ui.data_mut(|d| d.insert_temp(select_id, select_mode));
+        if portrait_view(ui) && !self.arr.auto_edit && ui.data(|d| {
+            d.get_temp::<bool>(egui::Id::new("m_playlist_vertical")).unwrap_or(true)
+        }) {
+            self.m_vertical_playlist(ui, select_mode, docked);
+            return;
+        }
         let ruler = TOUCH;
         let automation = self.arr.auto_edit;
         let width_id = egui::Id::new("m_playlist_bar_width");
@@ -6046,50 +6059,422 @@ impl VinteriaApp {
                     });
                 }
             } else if let Some(tick) = tick {
-                use crate::arrangement::TrackKind;
-                let snap = self.arr.snap.max(1);
-                let start = tick / snap * snap;
-                match self.project.arrangement.kind(lane) {
-                    TrackKind::Midi => {
-                        let duration = if snap == 1 { TICKS_PER_BAR } else { snap };
-                        if arrangement_ui::new_midi_clip_at(&mut self.project, &mut self.arr, lane, start, duration) {
-                            let track = &mut self.project.arrangement.tracks[lane];
-                            if track.blank {
-                                track.blank = false;
-                                track.instrument = Some(Track::Synth);
-                            }
-                        } else {
-                            self.arr.msg = "There is no room for a MIDI clip at this position.".into();
-                        }
-                    }
-                    TrackKind::Audio => {
-                        let sample = self.project.arrangement.tracks[lane].audio_brush.or_else(|| {
-                            self.project.arrangement.clips.iter().rev()
-                                .find(|clip| clip.audio && clip.lane == lane)
-                                .map(|clip| clip.pattern)
-                        });
-                        if let Some(sample) = sample.filter(|&sample| {
-                            self.project.audio_pool.get(sample).is_some_and(|entry| entry.data.is_some())
-                        }) {
-                            let bpm = self.project.bpm;
-                            match arrangement_ui::place_audio_from_pool(&mut self.project, sample, lane, start, bpm) {
-                                Ok(index) => {
-                                    self.m_fit_audio_clip_to_grid(index);
-                                    self.arr.sel_clip = Some(index);
-                                    self.project.arrangement.tracks[lane].audio_brush = Some(sample);
-                                }
-                                Err(error) => self.arr.msg = error.into(),
-                            }
-                            return;
-                        }
-                        ui.data_mut(|d| {
-                            d.remove::<bool>(egui::Id::new("m_studio_full_view"));
-                            d.insert_temp(egui::Id::new("m_audio_clip_target"), (lane, start));
-                            d.insert_temp(egui::Id::new("m_browser_plugins"), false);
-                            d.insert_temp(egui::Id::new("m_browser_open"), true);
-                        });
+                self.m_insert_playlist_clip(ui.ctx(), lane, tick);
+            }
+        }
+    }
+
+    fn m_vertical_playlist(&mut self, ui: &mut Ui, select: bool, docked: bool) {
+        use crate::arrangement::{Clip, TrackKind};
+
+        let ctx = ui.ctx().clone();
+        let id = egui::Id::new("m_playlist_vertical_view");
+        let menu_id = egui::Id::new("m_playlist_clip_actions");
+        let lanes: Vec<_> = self.project.arrangement.tracks.iter().enumerate()
+            .filter(|(_, track)| !self.project.arrangement.groups.iter().any(|g| g.id == track.group && g.collapsed))
+            .map(|(lane, _)| lane).collect();
+        if lanes.is_empty() {
+            ui.label("Add a track or expand a group in the dock.");
+            return;
+        }
+        let (viewport, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
+        let grid = Rect::from_min_max((viewport.min + vec2(32.0, 28.0)).min(viewport.max), viewport.max);
+        if !grid.is_positive() { return; }
+        let mut size = ui.data(|d| d.get_temp::<egui::Vec2>(id.with("size")))
+            .unwrap_or(vec2((grid.width() / 3.0).clamp(66.0, 112.0), 74.0));
+        let (pinching, zoom) = grid_pinch(ui, id.with("pinch"), grid);
+        if let Some((axis, factor, _)) = zoom {
+            size[axis] = (size[axis] * factor).clamp(42.0, 200.0);
+            ui.data_mut(|d| d.insert_temp(id.with("size"), size));
+        }
+        let column = size.x;
+        let bar_height = size.y;
+        let scale = bar_height / TICKS_PER_BAR as f32;
+        let bars = self.project.arrangement.song_end_bar()
+            .max(if self.project.loop_on { self.project.loop_start.saturating_add(self.project.loop_bars) } else { 0 })
+            .saturating_add(8).max(16);
+        let snap = self.arr.snap.max(1);
+        let pos = self.shared.position.load(Ordering::Relaxed);
+        let (reveal_lane, reveal_tick) = ui.data_mut(|d| (
+            d.remove_temp::<usize>(egui::Id::new("m_playlist_reveal_track")),
+            d.remove_temp::<u32>(egui::Id::new("m_playlist_reveal_tick")),
+        ));
+        let mut scroll = mobile_scroll(egui::ScrollArea::both().id_salt(id))
+            .drag_to_scroll(!pinching && !select).auto_shrink([false, false]);
+        let old = ui.data(|d| d.get_temp::<egui::Vec2>(id.with("offset"))).unwrap_or_default();
+        if let Some(index) = reveal_lane.and_then(|lane| lanes.iter().position(|&v| v == lane)) {
+            let x = index as f32 * column;
+            if x < old.x || x + column > old.x + grid.width() {
+                scroll = scroll.horizontal_scroll_offset(x);
+            }
+        }
+        let follow = ui.data(|d| d.get_temp::<bool>(egui::Id::new("m_playlist_follow"))).unwrap_or(true);
+        if let Some(tick) = reveal_tick.or((follow && self.playing() && self.project.song_mode).then_some(pos)) {
+            let y = tick as f32 * scale;
+            if y < old.y || y > old.y + grid.height() - 16.0 {
+                scroll = scroll.vertical_scroll_offset(y);
+            }
+        }
+
+        let mut pick = None;
+        let mut open = None;
+        let mut move_clip = None;
+        let mut create = None;
+        let mut item_drop = None;
+        let mut fx_drop = None;
+        let mut child = ui.new_child(egui::UiBuilder::new().id_salt(id).max_rect(grid));
+        child.set_clip_rect(grid.intersect(ui.clip_rect()));
+        let out = scroll.show(&mut child, |ui| {
+            let (area, background) = ui.allocate_exact_size(vec2(column * lanes.len() as f32, bar_height * bars as f32),
+                if select { Sense::click_and_drag() } else { Sense::click() });
+            let p = ui.painter_at(area);
+            let visible = p.clip_rect();
+            let tick_at = |y: f32| ((y - area.top()).max(0.0) / scale) as u32;
+            let y_at = |tick: u32| area.top() + tick as f32 * scale;
+            let lane_at = |x: f32| lanes.get(((x - area.left()) / column).floor() as usize).copied();
+            let bounds = |i: usize, clip: Clip| Rect::from_min_size(
+                pos2(area.left() + i as f32 * column, y_at(clip.start)),
+                vec2(column, (clip.len as f32 * scale).max(5.0)));
+            for (i, &lane) in lanes.iter().enumerate() {
+                let rect = Rect::from_min_size(pos2(area.left() + i as f32 * column, area.top()), vec2(column, area.height()));
+                if !rect.intersects(visible) { continue; }
+                let base = if self.project.arrangement.kind(lane) == TrackKind::Audio {
+                    pick(0xFF232A2B, 0xFFDDEBED)
+                } else { pick(0xFF25282D, 0xFFE1E9F3) };
+                let fill = if self.arr.sel_lane == lane { tint(base, selected_fill(), 0.28) } else { base };
+                p.rect_filled(rect, 0.0, fill);
+                p.vline(rect.left(), rect.y_range(), Stroke::new(1.0, grid_line()));
+            }
+            let step = if snap == 1 { TICKS_PER_BAR } else { visible_grid_step(snap, scale) };
+            let first = tick_at(visible.top()).div_ceil(step) * step;
+            let last = tick_at(visible.bottom()).min(bars.saturating_mul(TICKS_PER_BAR));
+            for tick in (first..=last).step_by(step as usize) {
+                let major = tick % TICKS_PER_BAR == 0;
+                p.hline(area.x_range(), y_at(tick), Stroke::new(if major { 1.25 } else { 0.65 },
+                    if major { outline() } else { grid_line().gamma_multiply(0.72) }));
+            }
+            if self.project.loop_on {
+                let start = self.project.loop_start.saturating_mul(TICKS_PER_BAR);
+                let end = self.project.loop_start.saturating_add(self.project.loop_bars).saturating_mul(TICKS_PER_BAR);
+                p.rect_filled(Rect::from_min_max(pos2(area.left(), y_at(start)), pos2(area.right(), y_at(end))),
+                    0.0, p_accent().gamma_multiply(0.1));
+            }
+            let box_id = id.with("box_origin");
+            if select && !pinching && background.drag_started() {
+                if let Some(start) = ui.input(|i| i.pointer.press_origin()) {
+                    ui.data_mut(|d| d.insert_temp(box_id, start));
+                }
+            }
+            let selection_box = if select && !pinching && (background.dragged() || background.drag_stopped()) {
+                ui.data(|d| d.get_temp::<Pos2>(box_id)).zip(background.interact_pointer_pos())
+                    .map(|(a,b)| Rect::from_two_pos(a,b).intersect(area))
+            } else { None };
+            let mut selected = Vec::new();
+            for (index, &clip) in self.project.arrangement.clips.iter().enumerate() {
+                let Some(i) = lanes.iter().position(|&lane| lane == clip.lane) else { continue; };
+                let bounds_at = bounds(i, clip);
+                let clip_id = id.with(("clip", index));
+                if !bounds_at.intersects(visible) && !ctx.is_being_dragged(clip_id) { continue; }
+                let locked = self.project.arrangement.tracks[clip.lane].playlist_locked;
+                let hit = ui.interact(bounds_at, clip_id, if locked || pinching { Sense::hover() }
+                    else if select { Sense::click() } else { Sense::click_and_drag() });
+                let rect = bounds_at.shrink2(vec2(3.0, 1.0));
+                let pastel = if clip.audio { argb(0xFFD6EEF5) } else { argb(0xFFDED1F3) };
+                let fill = tint(lane_col(clip.lane), pastel, 0.38);
+                p.rect_filled(rect, 6.0, if clip.mute { tint(fill, card_fill(), 0.45) } else { fill });
+                if !locked && selection_box.is_some_and(|area| area.intersects(rect)) { selected.push(index); }
+                if self.arr.is_sel(index) || selected.last() == Some(&index) {
+                    p.rect_stroke(rect, 6.0, Stroke::new(1.7, p_accent()));
+                }
+                let pattern = (!clip.audio).then(|| self.project.patterns.get(clip.pattern)).flatten();
+                let name = if clip.audio { self.project.audio_pool.get(clip.pattern).map(|s| s.name.as_str()) }
+                    else { pattern.map(|p| p.name.as_str()) };
+                if let Some(name) = name.filter(|_| rect.height() >= 14.0) {
+                    fit_label(&p, rect.shrink2(vec2(5.0, 0.0)), rect.top() + 9.0, name, argb(0xFF202831), 11.0);
+                }
+                if let Some(pattern) = pattern.filter(|_| rect.height() > 27.0) {
+                    let inset = Rect::from_min_max(rect.min + vec2(6.0, 17.0), rect.max - vec2(8.0, 5.0));
+                    let marks = p.with_clip_rect(inset.intersect(visible));
+                    for note in pattern.notes.iter().filter(|note| !note.mute
+                        && (clip.offset..clip.offset.saturating_add(clip.len)).contains(&note.start)) {
+                        let y = inset.top() + (note.start - clip.offset) as f32 / clip.len.max(1) as f32 * inset.height();
+                        if !visible.y_range().contains(y) { continue; }
+                        let x = inset.left() + (note.pitch % 12) as f32 / 12.0 * inset.width();
+                        marks.line_segment([pos2(x, y), pos2(x + 7.0, y)],
+                            Stroke::new(1.6, Color32::from_black_alpha(145)));
                     }
                 }
+                if rect.height() > 10.0 {
+                    p.rect_filled(Rect::from_center_size(pos2(rect.center().x, rect.bottom() - 3.0), vec2(16.0, 2.0)),
+                        1.0, Color32::from_black_alpha(125));
+                }
+                if locked || pinching { continue; }
+                if select {
+                    if hit.clicked() { pick = Some(index); }
+                    continue;
+                }
+                if hit.long_touched() || hit.secondary_clicked() {
+                    ui.data_mut(|d| d.insert_temp(menu_id, (index, hit.interact_pointer_pos().unwrap_or(rect.center()))));
+                    pick = Some(index);
+                } else if hit.double_clicked() {
+                    open = Some(index);
+                } else if hit.clicked() {
+                    pick = Some(index);
+                }
+                let drag_id = clip_id.with("drag");
+                if hit.drag_started() {
+                    if let Some(origin) = ui.input(|i| i.pointer.press_origin()) {
+                        let resize = origin.y >= bounds_at.bottom() - bounds_at.height().min(18.0) * 0.55;
+                        ui.data_mut(|d| d.insert_temp(drag_id, (origin, origin, resize)));
+                    }
+                }
+                if hit.dragged() || hit.drag_stopped() {
+                    if let Some((origin, last, resize)) = ui.data(|d| d.get_temp::<(Pos2, Pos2, bool)>(drag_id)) {
+                        let point = hit.interact_pointer_pos().unwrap_or(last);
+                        let delta = (point.y - origin.y) / scale;
+                        let snap_tick = |tick: f32| ((tick.max(0.0) / snap as f32).round() as u32).saturating_mul(snap);
+                        let mut candidate = clip;
+                        if resize {
+                            candidate.len = snap_tick(clip.end_tick() as f32 + delta).saturating_sub(clip.start).max(1);
+                            candidate.fade_in = candidate.fade_in.min(candidate.len / 2);
+                            candidate.fade_out = candidate.fade_out.min(candidate.len / 2);
+                        } else {
+                            candidate.lane = lane_at(point.x).unwrap_or(clip.lane);
+                            candidate.start = snap_tick(clip.start as f32 + delta);
+                        }
+                        let valid = visible.contains(point) && !self.project.arrangement.tracks[candidate.lane].playlist_locked
+                            && self.project.arrangement.kind(candidate.lane) == self.project.arrangement.kind(clip.lane)
+                            && self.project.arrangement.can_place(&candidate, Some(index));
+                        if let Some(target) = lanes.iter().position(|&lane| lane == candidate.lane) {
+                            p.rect_stroke(bounds(target, candidate).shrink(2.0), 6.0,
+                                Stroke::new(2.0, if valid { p_accent() } else { RED }));
+                        }
+                        if hit.drag_stopped() {
+                            if valid && candidate != clip { move_clip = Some((index, candidate)); }
+                            ui.data_mut(|d| d.remove::<(Pos2, Pos2, bool)>(drag_id));
+                        } else {
+                            ui.data_mut(|d| d.insert_temp(drag_id, (origin, point, resize)));
+                        }
+                    }
+                }
+            }
+            if let Some(rect) = selection_box.filter(|rect| rect.is_positive()) {
+                p.rect_stroke(rect, 3.0, Stroke::new(1.2, p_accent()));
+                if background.drag_stopped() {
+                    self.arr.sel = selected.into_iter().collect();
+                    self.arr.sel_clip = None;
+                    ui.data_mut(|d| d.remove::<Pos2>(box_id));
+                }
+            } else if background.clicked() && !pinching && !select
+                && !ui.data(|d| d.get_temp::<bool>(egui::Id::new(CLIP_MENU_DISMISSED))).unwrap_or(false)
+            {
+                if let Some(point) = background.interact_pointer_pos() {
+                    create = lane_at(point.x).map(|lane| (lane, tick_at(point.y)));
+                }
+            }
+            if ui.rect_contains_pointer(area) && ui.input(|i| i.pointer.primary_released()) {
+                if let Some(point) = ctx.pointer_interact_pos() {
+                    if let Some(lane) = lane_at(point.x).filter(|&lane| !self.project.arrangement.tracks[lane].playlist_locked) {
+                        if let Some(kind) = egui::DragAndDrop::take_payload::<crate::fx::FxKind>(&ctx) {
+                            fx_drop = Some((*kind, lane));
+                        } else if let Some(item) = egui::DragAndDrop::take_payload::<browser::DragItem>(&ctx) {
+                            item_drop = Some((item, lane, tick_at(point.y) / snap * snap));
+                        }
+                    }
+                }
+            }
+            p.hline(area.x_range(), y_at(pos), Stroke::new(2.0, p_accent()));
+            area.min
+        });
+        ui.data_mut(|d| d.insert_temp(id.with("offset"), out.state.offset));
+
+        let header = Rect::from_min_max(viewport.min, pos2(viewport.right(), grid.top()));
+        let ruler = Rect::from_min_max(pos2(viewport.left(), grid.top()), pos2(grid.left(), grid.bottom()));
+        let p = ui.painter_at(header);
+        p.rect_filled(header, 0.0, glass_fill());
+        for (i, &lane) in lanes.iter().enumerate() {
+            let rect = Rect::from_min_size(pos2(out.inner.x + i as f32 * column, header.top()), vec2(column, header.height()))
+                .intersect(Rect::from_min_max(pos2(grid.left(), header.top()), header.max));
+            if rect.is_positive() {
+                p.rect_filled(rect.shrink(2.0), 5.0, if self.arr.sel_lane == lane { selected_fill() } else { card_fill() });
+                fit_label(&p, rect.shrink2(vec2(6.0, 0.0)), rect.center().y,
+                    &self.project.arrangement.tracks[lane].name, ink(), 11.0);
+            }
+        }
+        let p = ui.painter_at(ruler);
+        p.rect_filled(ruler, 0.0, bar_fill());
+        let first = ((ruler.top() - out.inner.y).max(0.0) / bar_height) as u32;
+        let last = (((ruler.bottom() - out.inner.y).max(0.0) / bar_height).ceil() as u32).min(bars);
+        for bar in first..last {
+            let y = out.inner.y + bar as f32 * bar_height;
+            p.hline(ruler.x_range(), y, Stroke::new(1.0, outline()));
+            p.text(pos2(ruler.center().x, y + 12.0), Align2::CENTER_CENTER, bar + 1, FontId::proportional(12.0), ink());
+        }
+        let head = out.inner.y + pos as f32 * scale;
+        if ruler.y_range().contains(head) {
+            p.add(Shape::convex_polygon(vec![pos2(ruler.right(), head), pos2(ruler.right() - 9.0, head - 5.0),
+                pos2(ruler.right() - 9.0, head + 5.0)], p_accent(), Stroke::NONE));
+        }
+        let seek = ui.interact(ruler, id.with("ruler"), Sense::click_and_drag()).on_hover_text("Tap to seek · Drag to loop");
+        if let Some(point) = seek.interact_pointer_pos().filter(|_| !pinching) {
+            let bar_at = |y: f32| (((y - out.inner.y).max(0.0) / bar_height) as u32).min(bars - 1);
+            if seek.dragged() {
+                if let Some(origin) = ui.input(|input| input.pointer.press_origin()) {
+                    let (a, b) = (bar_at(origin.y), bar_at(point.y));
+                    let start = a.min(b);
+                    let len = a.abs_diff(b) + 1;
+                    if !self.project.loop_on || self.project.loop_start != start || self.project.loop_bars != len {
+                        self.project.loop_on = true;
+                        self.project.loop_start = start;
+                        self.project.loop_bars = len;
+                        self.publish_edits();
+                    }
+                }
+            } else if seek.clicked() {
+                self.m_seek(&ctx, ((point.y - out.inner.y).max(0.0) / scale) as u32);
+            }
+        }
+        if !docked {
+            self.m_playlist_options(ui, Rect::from_min_size(header.min, vec2(32.0, 28.0)));
+        }
+        if let Some(index) = pick {
+            let clip = self.project.arrangement.clips[index];
+            self.arr.sel_lane = clip.lane;
+            if select && self.arr.is_sel(index) {
+                self.arr.sel.remove(&index);
+                if self.arr.sel_clip == Some(index) { self.arr.sel_clip = None; }
+            } else {
+                if select { self.arr.sel.insert(index); } else { self.arr.sel.clear(); }
+                self.arr.sel_clip = Some(index);
+                if clip.audio { self.project.arrangement.tracks[clip.lane].audio_brush = Some(clip.pattern); }
+            }
+        }
+        if let Some(index) = open { self.m_open_playlist_clip(&ctx, index); }
+        if let Some((index, clip)) = move_clip {
+            self.m_playlist_undo_step();
+            self.project.arrangement.clips[index] = clip;
+            self.arr.sel_lane = clip.lane;
+            self.arr.sel_clip = Some(index);
+            self.arr.sel.clear();
+        }
+        if let Some((lane, tick)) = create.filter(|&(lane, _)| !self.project.arrangement.tracks[lane].playlist_locked) {
+            self.arr.sel_lane = lane;
+            self.arr.sel_clip = None;
+            self.arr.sel.clear();
+            self.m_insert_playlist_clip(&ctx, lane, tick);
+        }
+        if let Some((item, lane, tick)) = item_drop { self.m_drop_browser_item(&item, lane, tick); }
+        if let Some((kind, lane)) = fx_drop { self.m_drop_effect(kind, lane); }
+        self.m_vertical_clip_actions(ui, menu_id, snap, select || pinching);
+        let options = egui::Id::new("m_playlist_track_names").with("track_modal");
+        if let Some(lane) = ui.data(|d| d.get_temp::<usize>(options)).filter(|&lane| lane < self.project.arrangement.tracks.len()) {
+            if !self.m_clip_piano_open(&ctx) && self.m_playlist_track_modal(&ctx, lane, options) {
+                self.arr.sel_lane = lane;
+                self.arr.sel_clip = None;
+                self.arr.sel.clear();
+                ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_track_sheet_open"), true));
+            }
+        }
+    }
+
+    fn m_vertical_clip_actions(&mut self, ui: &mut Ui, id: egui::Id, snap: u32, disabled: bool) {
+        use crate::arrangement::Clip;
+
+        let Some((index, anchor)) = ui.data(|d| d.get_temp::<(usize, Pos2)>(id)) else { return; };
+        let Some(clip) = self.project.arrangement.clips.get(index).copied().filter(|clip|
+            !disabled && !self.project.arrangement.tracks[clip.lane].playlist_locked)
+        else {
+            ui.data_mut(|d| d.remove::<(usize, Pos2)>(id));
+            return;
+        };
+        let longer = Clip { len: clip.len.saturating_add(snap), ..clip };
+        let shorter = Clip { len: clip.len.saturating_sub(snap).max(1), ..clip };
+        let actions = [
+            (if clip.audio { Icon::Wave } else { Icon::Keys }, "Open clip", true),
+            (Icon::Plus, "Extend by grid step", self.project.arrangement.can_place(&longer, Some(index))),
+            (Icon::Minus, "Shorten by grid step", shorter.len < clip.len),
+            (Icon::CloneClips, "Clone clip", true),
+            (Icon::Trash, "Delete clip", true),
+            (Icon::Settings, "MIDI clip settings", true),
+        ];
+        let actions = if clip.audio { &actions[..5] } else { &actions[..] };
+        let ctx = ui.ctx().clone();
+        if let Some(action) = playlist_clip_menu(&ctx, id, anchor, actions, true) {
+            ui.data_mut(|d| d.remove::<(usize, Pos2)>(id));
+            match action {
+                0 => self.m_open_playlist_clip(&ctx, index),
+                1 | 2 => {
+                    self.m_playlist_undo_step();
+                    self.project.arrangement.clips[index] = if action == 1 { longer } else { shorter };
+                }
+                3 => match arrangement_ui::duplicate_clip(&mut self.project, index) {
+                    Some(copy) => {
+                        self.m_playlist_undo_step();
+                        self.arr.sel_clip = Some(copy);
+                        self.arr.sel.clear();
+                        let start = self.project.arrangement.clips[copy].start;
+                        ui.data_mut(|d| d.insert_temp(egui::Id::new("m_playlist_reveal_tick"), start));
+                    }
+                    None => self.arr.msg = "No room for a copy on this track.".into(),
+                },
+                4 => {
+                    self.m_playlist_undo_step();
+                    self.project.arrangement.clips.remove(index);
+                    self.arr.sel_clip = None;
+                    self.arr.sel.clear();
+                }
+                5 => {
+                    self.m_open_playlist_clip(&ctx, index);
+                    ui.data_mut(|d| d.insert_temp(egui::Id::new("m_midi_clip_settings"), index));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn m_insert_playlist_clip(&mut self, ctx: &egui::Context, lane: usize, tick: u32) {
+        use crate::arrangement::TrackKind;
+        let snap = self.arr.snap.max(1);
+        let start = tick / snap * snap;
+        match self.project.arrangement.kind(lane) {
+            TrackKind::Midi => {
+                let duration = if snap == 1 { TICKS_PER_BAR } else { snap };
+                if arrangement_ui::new_midi_clip_at(&mut self.project, &mut self.arr, lane, start, duration) {
+                    let track = &mut self.project.arrangement.tracks[lane];
+                    if track.blank {
+                        track.blank = false;
+                        track.instrument = Some(Track::Synth);
+                    }
+                } else {
+                    self.arr.msg = "There is no room for a MIDI clip at this position.".into();
+                }
+            }
+            TrackKind::Audio => {
+                let sample = self.project.arrangement.tracks[lane].audio_brush.or_else(|| {
+                    self.project.arrangement.clips.iter().rev()
+                        .find(|clip| clip.audio && clip.lane == lane)
+                        .map(|clip| clip.pattern)
+                });
+                if let Some(sample) = sample.filter(|&sample| {
+                    self.project.audio_pool.get(sample).is_some_and(|entry| entry.data.is_some())
+                }) {
+                    let bpm = self.project.bpm;
+                    match arrangement_ui::place_audio_from_pool(&mut self.project, sample, lane, start, bpm) {
+                        Ok(index) => {
+                            self.m_fit_audio_clip_to_grid(index);
+                            self.arr.sel_clip = Some(index);
+                            self.project.arrangement.tracks[lane].audio_brush = Some(sample);
+                        }
+                        Err(error) => self.arr.msg = error.into(),
+                    }
+                    return;
+                }
+                ctx.data_mut(|d| {
+                    d.remove::<bool>(egui::Id::new("m_studio_full_view"));
+                    d.insert_temp(egui::Id::new("m_audio_clip_target"), (lane, start));
+                    d.insert_temp(egui::Id::new("m_browser_plugins"), false);
+                    d.insert_temp(egui::Id::new("m_browser_open"), true);
+                });
             }
         }
     }
