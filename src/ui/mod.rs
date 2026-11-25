@@ -800,6 +800,31 @@ impl VinteriaApp {
         );
 
         let progress = (elapsed / 0.48).clamp(0.0, 1.0);
+        if progress > 0.0 {
+            let inner_radius = radius - ring_width;
+            let level = inner_radius * (1.0 - 1.28 * progress);
+            let amplitude = inner_radius * 0.11 * progress.min(1.0) * (1.0 - 0.55 * progress);
+            let surface = egui::Color32::from_rgb(91, 75, 151);
+            let depth = egui::Color32::from_rgb(36, 33, 72);
+            let mut water = egui::Mesh::default();
+            const STRIPS: u32 = 64;
+            for i in 0..=STRIPS {
+                let x = 2.0 * i as f32 / STRIPS as f32 - 1.0;
+                let extent = inner_radius * (1.0 - x * x).max(0.0).sqrt();
+                let wave = (x * 4.2 - elapsed * 12.0).sin()
+                    + 0.28 * (x * 8.0 + elapsed * 8.0).sin();
+                let y = (level + amplitude * wave).clamp(-extent, extent);
+                water.colored_vertex(center + egui::vec2(x * inner_radius, y), surface);
+                water.colored_vertex(center + egui::vec2(x * inner_radius, extent), depth);
+                if i < STRIPS {
+                    let vertex = 2 * i;
+                    water.add_triangle(vertex, vertex + 1, vertex + 2);
+                    water.add_triangle(vertex + 2, vertex + 1, vertex + 3);
+                }
+            }
+            painter.add(egui::Shape::mesh(water));
+        }
+
         if progress >= 1.0 {
             painter.circle_stroke(center, radius, egui::Stroke::new(ring_width, accent));
         } else if progress > 0.0 {
