@@ -67,9 +67,9 @@ fn glass_fill() -> Color32 {
 
 fn paint_glass_sheen(painter: &Painter, highlight: Rect) {
     let mut sheen = egui::Mesh::default();
-    let bright = Color32::from_white_alpha(24);
+    let bright = Color32::from_white_alpha(9);
     sheen.colored_vertex(highlight.left_top(), bright);
-    sheen.colored_vertex(highlight.right_top(), Color32::from_white_alpha(8));
+    sheen.colored_vertex(highlight.right_top(), Color32::from_white_alpha(3));
     sheen.colored_vertex(highlight.right_bottom(), Color32::TRANSPARENT);
     sheen.colored_vertex(highlight.left_bottom(), Color32::TRANSPARENT);
     sheen.add_triangle(0, 1, 2);
@@ -605,6 +605,15 @@ const PLAYLIST_DOCK_PASS: &str = "m_playlist_dock_pass";
 const MIXER_SHEET: &str = "m_mixer_sheet_open";
 
 /// one line of the navigation drawer: icon + label, the active one on a filled pill
+fn option_row(ui: &mut Ui, label: &str, value: &str) -> Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 37.0), Sense::click());
+    let painter = ui.painter();
+    painter.rect_filled(rect, 8.0, if response.is_pointer_button_down_on() { selected_fill() } else { card_fill() });
+    painter.text(rect.left_center() + vec2(10.0, 0.0), Align2::LEFT_CENTER, label, FontId::proportional(14.0), ink());
+    painter.text(rect.right_center() - vec2(10.0, 0.0), Align2::RIGHT_CENTER, value, FontId::proportional(13.0), p_accent());
+    response
+}
+
 fn drawer_row(ui: &mut Ui, symbol: Icon, label: &str, active: bool) -> Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 48.0), Sense::click());
     let p = ui.painter();
@@ -613,8 +622,9 @@ fn drawer_row(ui: &mut Ui, symbol: Icon, label: &str, active: bool) -> Response 
     } else if resp.is_pointer_button_down_on() {
         p.rect_filled(rect, 12.0, card_fill());
     }
-    icon(p, symbol, rect.left_center() + vec2(26.0, 0.0), ink());
-    p.text(rect.left_center() + vec2(52.0, 0.0), Align2::LEFT_CENTER, label, FontId::proportional(16.0), ink());
+    let color = if matches!(symbol, Icon::Trash) { RED } else { ink() };
+    icon(p, symbol, rect.left_center() + vec2(26.0, 0.0), color);
+    p.text(rect.left_center() + vec2(52.0, 0.0), Align2::LEFT_CENTER, label, FontId::proportional(16.0), color);
     resp
 }
 const SEC_PIANO: usize = 2;
@@ -1729,7 +1739,7 @@ impl VinteriaApp {
             if options {
                 ui.spacing_mut().interact_size.y = 37.0;
                 ui.style_mut().override_font_id = Some(FontId::proportional(14.0));
-                return self.m_playlist_options_content(ui);
+                return self.m_playlist_options_content(ui, true);
             }
             mobile_scroll(egui::ScrollArea::vertical()).show(ui, |ui| {
                 for (index, (label, symbol)) in STUDIO_SECTIONS.into_iter().enumerate() {
@@ -1791,7 +1801,7 @@ impl VinteriaApp {
                                         self.publish_edits();
                                     }
                                 }
-                                sidebar_caption(ui, "Auto Play");
+                                sidebar_caption_color(ui, "Auto Play", if self.project.loop_on { p_accent() } else { muted() });
                                 ui.separator();
                                 self.m_playlist_tool_buttons(ui, true);
                             } else {
@@ -4168,7 +4178,7 @@ impl VinteriaApp {
                     });
             };
             let closed = if clip.audio && ctx.screen_rect().width() < ctx.screen_rect().height() {
-                mobile_left_editor(ctx, egui::Id::new("m_audio_clip_drawer"), title, controls)
+                mobile_left_editor(ctx, egui::Id::new("m_audio_clip_drawer"), title, 0.90, controls)
             } else {
                 mobile_editor_sheet(ctx, "m_clip_sheet_window", title, controls)
             };
@@ -5458,7 +5468,7 @@ impl VinteriaApp {
         trigger.set_clip_rect(rect.intersect(ui.clip_rect()));
         let button = egui::Button::new("").frame(false).min_size(rect.size());
         let menu = egui::menu::menu_custom_button(&mut trigger, button, |ui| {
-            self.m_playlist_options_content(ui);
+            self.m_playlist_options_content(ui, false);
         });
         let center = rect.center();
         let painter = trigger.painter();
@@ -5470,13 +5480,17 @@ impl VinteriaApp {
         menu.response.on_hover_text("Playlist options");
     }
 
-    fn m_playlist_options_content(&mut self, ui: &mut Ui) -> bool {
+    fn m_playlist_options_content(&mut self, ui: &mut Ui, sheet: bool) -> bool {
         let mut close = false;
         let selected = self.arr.sel_clip.filter(|&index| index < self.project.arrangement.clips.len());
+        let button = |ui: &Ui, label| {
+            let width = if sheet { ui.available_width() } else { 0.0 };
+            egui::Button::new(label).min_size(vec2(width, 0.0))
+        };
         ui.set_min_width(176.0);
         mobile_scroll(egui::ScrollArea::vertical()).max_height(ui.available_height().min((ui.ctx().screen_rect().height() * 0.50).min(330.0)))
             .show(ui, |ui| {
-                if ui.add_enabled(!self.undo.is_empty(), egui::Button::new("Undo")).clicked() {
+                if ui.add_enabled(!self.undo.is_empty(), button(ui, "Undo")).clicked() {
                     self.undo();
                     self.arr.sel_clip = None;
                     self.arr.sel.clear();
@@ -5488,18 +5502,40 @@ impl VinteriaApp {
                     if portrait_view(ui) {
                         let id = egui::Id::new("m_playlist_vertical");
                         let mut vertical = ui.data(|d| d.get_temp::<bool>(id)).unwrap_or(true);
-                        if ui.checkbox(&mut vertical, "Vertical timeline").changed() {
+                        let changed = if sheet {
+                            let state = if vertical { "On" } else { "Off" };
+                            if option_row(ui, "Vertical timeline", state).clicked() {
+                                vertical = !vertical;
+                                true
+                            } else {
+                                false
+                            }
+                        } else {
+                            ui.checkbox(&mut vertical, "Vertical timeline").changed()
+                        };
+                        if changed {
                             ui.data_mut(|d| d.insert_temp(id, vertical));
                         }
                     }
                     let snap = grid_label(self.arr.snap);
-                    egui::ComboBox::from_id_salt("playlist_grid").selected_text(format!("Grid · {snap}"))
-                        .show_ui(ui, |ui| {
-                            for (step, name) in GRID_VALUES.into_iter().chain([(1, "Off")]) {
-                                ui.selectable_value(&mut self.arr.snap, step, name);
-                            }
+                    let mut grid_picker = |ui: &mut Ui, selected: &str| {
+                        egui::ComboBox::from_id_salt("playlist_grid").selected_text(selected)
+                            .show_ui(ui, |ui| {
+                                for (step, name) in GRID_VALUES.into_iter().chain([(1, "Off")]) {
+                                    let color = if self.arr.snap == step { on_accent() } else { ink() };
+                                    ui.selectable_value(&mut self.arr.snap, step, RichText::new(name).color(color));
+                                }
+                            });
+                    };
+                    if sheet {
+                        ui.horizontal(|ui| {
+                            ui.label("Grid");
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| grid_picker(ui, snap));
                         });
-                    if self.project.loop_on && ui.button("Export loop · WAV").clicked() {
+                    } else {
+                        grid_picker(ui, &format!("Grid · {snap}"));
+                    }
+                    if self.project.loop_on && ui.add(button(ui, "Export loop · WAV")).clicked() {
                         let start = self.project.loop_start.saturating_mul(TICKS_PER_BAR);
                         let end = start.saturating_add(self.project.loop_bars.max(1).saturating_mul(TICKS_PER_BAR));
                         self.m_export.open = true;
@@ -5507,14 +5543,14 @@ impl VinteriaApp {
                         close = true;
                         ui.close_menu();
                     }
-                    if self.project.loop_on && ui.button("Clear loop").clicked() {
+                    if self.project.loop_on && ui.add(button(ui, "Clear loop")).clicked() {
                         self.project.loop_on = false;
                         self.publish_edits();
                         close = true;
                         ui.close_menu();
                     }
                     for (mute, label) in [(false, "Enable all tracks"), (true, "Disable all tracks")] {
-                        if ui.button(label).clicked() {
+                        if ui.add(button(ui, label)).clicked() {
                             self.m_playlist_undo_step();
                             for track in &mut self.project.arrangement.tracks {
                                 track.mute = mute;
@@ -5530,7 +5566,7 @@ impl VinteriaApp {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
                         let selection = self.arr.selection();
-                        if ui.add_enabled(!selection.is_empty(), egui::Button::new("Render selection")).clicked() {
+                        if ui.add_enabled(!selection.is_empty(), button(ui, "Render selection")).clicked() {
                             ui.data_mut(|d| d.insert_temp(egui::Id::new("render_selection_job"), selection));
                             close = true;
                             ui.close_menu();
@@ -5540,12 +5576,12 @@ impl VinteriaApp {
                         ui.label("Select a clip on the playlist.");
                         return;
                     };
-                    if ui.button("Open clip").clicked() {
+                    if ui.add(button(ui, "Open clip")).clicked() {
                         self.m_open_playlist_clip(ui.ctx(), index);
                         close = true;
                         ui.close_menu();
                     }
-                    if ui.button("Duplicate").clicked() {
+                    if ui.add(button(ui, "Duplicate")).clicked() {
                         if let Some(copy) = arrangement_ui::duplicate_clip(&mut self.project, index) {
                             self.arr.sel_clip = Some(copy);
                             self.arr.sel.clear();
@@ -5563,7 +5599,7 @@ impl VinteriaApp {
                     ] {
                         let resized = crate::arrangement::Clip { len, ..clip };
                         let valid = len != clip.len && self.project.arrangement.can_place(&resized, Some(index));
-                        if ui.add_enabled(valid, egui::Button::new(label)).clicked() {
+                        if ui.add_enabled(valid, button(ui, label)).clicked() {
                             self.project.arrangement.clips[index] = resized;
                             close = true;
                             ui.close_menu();
@@ -5571,7 +5607,7 @@ impl VinteriaApp {
                     }
                 });
                 egui::CollapsingHeader::new("Audio").show(ui, |ui| {
-                    if ui.button("Sounds & import").clicked() {
+                    if ui.add(button(ui, "Sounds & import")).clicked() {
                         ui.data_mut(|d| {
                             d.remove::<(usize, u32)>(egui::Id::new("m_audio_clip_target"));
                             d.insert_temp(egui::Id::new("m_browser_plugins"), false);
@@ -5581,13 +5617,13 @@ impl VinteriaApp {
                         ui.close_menu();
                     }
                     if let Some(index) = selected.filter(|&index| self.project.arrangement.clips[index].audio) {
-                        if ui.button("Audio clip settings").clicked() {
+                        if ui.add(button(ui, "Audio clip settings")).clicked() {
                             self.m_open_playlist_clip(ui.ctx(), index);
                             close = true;
                             ui.close_menu();
                         }
                     }
-                    if ui.button("Export WAV").clicked() {
+                    if ui.add(button(ui, "Export WAV")).clicked() {
                         self.m_export.open = true;
                         self.m_export.song = true;
                         close = true;
@@ -6749,7 +6785,7 @@ impl VinteriaApp {
             self.m_playlist_track_strip(ui);
             if !docked {
                 ui.separator();
-                self.m_playlist_options_content(ui);
+                self.m_playlist_options_content(ui, false);
             }
         });
         trigger.painter().rect_filled(corner, 0.0, if menu.response.hovered() { selected_fill() } else { bar_fill() });
@@ -6861,11 +6897,12 @@ impl VinteriaApp {
                 let hit = ui.interact(bounds_at, clip_id, if locked || pinching { Sense::hover() }
                     else if select { Sense::click() } else { Sense::click_and_drag() });
                 let rect = bounds_at.shrink2(vec2(3.0, 1.0));
-                let pastel = if clip.audio { argb(0xFFD6EEF5) } else { argb(0xFFDED1F3) };
-                let fill = tint(lane_col(clip.lane), pastel, 0.38);
+                let track_color = lane_col(clip.lane);
+                let fill = tint(card_fill(), track_color, 0.34);
+                let marks_color = tint(track_color, ink(), 0.52);
                 let fill = if clip.mute { tint(fill, card_fill(), 0.45) } else { fill };
                 p.rect_filled(rect, 6.0, fill);
-                clip_shine(&p, rect, lane_col(clip.lane), clip.mute);
+                clip_shine(&p, rect, track_color, clip.mute);
                 if !locked && selection_box.is_some_and(|area| area.intersects(rect)) { selected.push(index); }
                 if self.arr.is_sel(index) || selected.last() == Some(&index) {
                     p.rect_stroke(rect, 6.0, Stroke::new(1.7, p_accent()));
@@ -6878,7 +6915,7 @@ impl VinteriaApp {
                         .then(|| name.strip_prefix("MIDI clip ").filter(|n| n.parse::<usize>().is_ok()))
                         .flatten().map(|n| format!("MIDI {n}"));
                     fit_label(&p, rect.shrink2(vec2(4.0, 0.0)), rect.top() + 8.0,
-                        short.as_deref().unwrap_or(name), argb(0xFF202831), 10.0);
+                        short.as_deref().unwrap_or(name), ink(), 11.0);
                 }
                 if let Some(pattern) = pattern.filter(|_| rect.height() > 27.0) {
                     // mini notes: time runs down the clip, pitch across it, each note as long as it plays
@@ -6890,7 +6927,7 @@ impl VinteriaApp {
                             .fold((u8::MAX, 0u8), |(lo, hi), n| (lo.min(n.pitch), hi.max(n.pitch)));
                         let range = f32::from(hi.saturating_sub(lo)).max(11.0);
                         let marks = p.with_clip_rect(visible_marks);
-                        let ink_note = tint(lane_col(clip.lane), Color32::BLACK, 0.55);
+                        let ink_note = marks_color;
                         let y_of = |tick: u32| inset.top() + tick.saturating_sub(clip.offset) as f32 / clip.len.max(1) as f32 * inset.height();
                         let max_marks = (visible_marks.height().ceil() as usize).saturating_mul(3);
                         let notes = pattern.notes.iter().filter(|n| !n.mute && span.contains(&n.start)
@@ -6932,7 +6969,7 @@ impl VinteriaApp {
                             let clip_secs = clip.len as f32 / crate::sequencer::PPQ as f32 * 60.0 / bpm;
                             let secs_per_px = clip_secs / body.height().max(1.0);
                             let offset_secs = clip.offset as f32 / crate::sequencer::PPQ as f32 * 60.0 / clip_bpm;
-                            let wave = tint(lane_col(clip.lane), Color32::BLACK, 0.5);
+                            let wave = marks_color;
                             let painter = p.with_clip_rect(shown);
                             let mut y = shown.top();
                             while y < shown.bottom() {
@@ -6953,7 +6990,7 @@ impl VinteriaApp {
                 }
                 if rect.height() > 10.0 {
                     p.rect_filled(Rect::from_center_size(pos2(rect.center().x, rect.bottom() - 3.0), vec2(16.0, 2.0)),
-                        1.0, Color32::from_black_alpha(125));
+                        1.0, tint(fill, ink(), 0.46));
                 }
                 if locked || pinching {
                     ui.data_mut(|d| d.remove::<(Pos2, Pos2, bool)>(clip_id.with("drag")));
@@ -8195,14 +8232,17 @@ fn playlist_clip_menu(
     if portrait {
         let mut action = None;
         let drawer = id.with("left_drawer");
-        let close = mobile_left_editor(ctx, drawer, "Clip actions", |ui| {
+        let close = mobile_left_editor(ctx, drawer, "Clip actions", 0.78, |ui| {
             mobile_scroll(egui::ScrollArea::vertical()).show(ui, |ui| {
-                for (index, &(symbol, label, enabled)) in actions.iter().enumerate() {
+                for (index, &(symbol, label, enabled)) in actions.iter().enumerate().filter(|(index, _)| *index != 4).chain(actions.get(4).map(|action| (4, action))) {
                     let label = match index {
                         0 if actions.len() == 6 => "Piano Roll",
                         0 => "Audio clip settings",
                         _ => label,
                     };
+                    if matches!(symbol, Icon::Trash) {
+                        ui.separator();
+                    }
                     if ui.add_enabled_ui(enabled, |ui| drawer_row(ui, symbol, label, false)).inner.clicked() {
                         action = Some(index);
                     }
@@ -8362,7 +8402,7 @@ fn clip_shine(p: &Painter, rect: Rect, color: Color32, muted_clip: bool) {
     let body = rect.shrink2(vec2(1.0, 2.0));
     if body.is_positive() {
         let mut mesh = egui::Mesh::default();
-        let top = Color32::from_white_alpha(if muted_clip { 6 } else { 22 });
+        let top = Color32::from_white_alpha(if muted_clip { 3 } else { 9 });
         let bottom = Color32::from_black_alpha(if muted_clip { 8 } else { 26 });
         mesh.colored_vertex(body.left_top(), top);
         mesh.colored_vertex(body.right_top(), top);
@@ -8437,8 +8477,12 @@ fn set_drum_step_graph_value(step: &mut crate::sequencer::Step, graph: u8, value
 }
 
 fn sidebar_caption(ui: &mut Ui, label: &str) {
+    sidebar_caption_color(ui, label, muted());
+}
+
+fn sidebar_caption_color(ui: &mut Ui, label: &str, color: Color32) {
     let (rect, _) = ui.allocate_exact_size(vec2(TOUCH + 6.0, 12.0), Sense::hover());
-    ui.painter().text(rect.center(), Align2::CENTER_CENTER, label, FontId::proportional(9.0), muted());
+    ui.painter().text(rect.center(), Align2::CENTER_CENTER, label, FontId::proportional(9.0), color);
 }
 
 fn dock_icon(ui: &mut Ui, symbol: Icon, active: bool, label: &str) -> Response {
@@ -8466,9 +8510,9 @@ fn studio_icon(ui: &mut Ui, width: f32, symbol: Icon, active: bool, label: &str)
     response.on_hover_text(label)
 }
 
-fn mobile_left_editor(ctx: &egui::Context, id: egui::Id, title: &str, body: impl FnOnce(&mut Ui)) -> bool {
+fn mobile_left_editor(ctx: &egui::Context, id: egui::Id, title: &str, width_fraction: f32, body: impl FnOnce(&mut Ui)) -> bool {
     let screen = ctx.screen_rect();
-    let width = (screen.width() * 0.90).min(440.0);
+    let width = (screen.width() * width_fraction).min(440.0);
     let shown = ctx.animate_bool(id.with("animation"), true);
     let mut done = false;
     egui::Area::new(id.with("scrim")).order(egui::Order::Middle).fixed_pos(screen.min)

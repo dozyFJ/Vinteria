@@ -759,3 +759,10 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 
 - Portrait studio: Views and Playlist options open as bottom sheets. Clip actions open in a left sidebar.
 - Android handset verification pending.
+
+### Android 1.0.152
+
+- Portrait Playlist: subtler glass highlights and track-tinted clip bodies, with stronger note, waveform, and title contrast.
+- Playlist options: full-width actions, an explicit timeline state, and the current grid value on the right.
+- Clip actions: narrower sidebar and a separated red Delete action. Auto Play emphasizes its caption while active.
+- Android handset verification pending.
