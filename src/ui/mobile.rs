@@ -837,6 +837,11 @@ impl VinteriaApp {
                 painter.text(rect.center(), Align2::CENTER_CENTER, short, FontId::proportional(12.0), ink());
             }
         }
+        if self.m_tab == 1 && portrait && !full_view {
+            self.m_studio_bottom_sheet(ctx);
+        } else {
+            ctx.data_mut(|d| d.remove::<bool>(egui::Id::new("m_studio_bottom_sheet")));
+        }
         #[cfg(target_os = "android")]
         self.m_sync_orientation(ctx);
         let preview_id = egui::Id::new("m_piano_preview");
@@ -1703,15 +1708,30 @@ impl VinteriaApp {
         sidebar_caption(ui, "Next bar");
         let (name, symbol) = STUDIO_SECTIONS.get(self.m_sec).copied().unwrap_or(STUDIO_SECTIONS[0]);
         let views = dock_icon(ui, symbol, true, name);
-        let popup_id = views.id.with("views");
+        let sheet = egui::Id::new("m_studio_bottom_sheet");
         if views.clicked() {
-            ui.memory_mut(|memory| memory.toggle_popup(popup_id));
+            ctx.data_mut(|d| d.insert_temp(sheet, false));
         }
-        egui::popup::popup_above_or_below_widget(
-            ui, popup_id, &views, egui::AboveOrBelow::Below, egui::PopupCloseBehavior::CloseOnClickOutside,
-            |ui| {
-                mobile_visuals(ui);
-                ui.set_min_width(174.0);
+        sidebar_caption(ui, "Views");
+        if self.m_sec == SEC_PLAYLIST {
+            if dock_icon(ui, Icon::Settings, false, "Playlist options").clicked() {
+                ctx.data_mut(|d| d.insert_temp(sheet, true));
+            }
+            sidebar_caption(ui, "Options");
+        }
+    }
+
+    fn m_studio_bottom_sheet(&mut self, ctx: &egui::Context) {
+        let id = egui::Id::new("m_studio_bottom_sheet");
+        let Some(options) = ctx.data(|d| d.get_temp::<bool>(id)) else { return };
+        let (title, height) = if options { ("Playlist options", 420.0) } else { ("Views", 288.0) };
+        let close = mobile_bottom_sheet(ctx, id.with(options), title, height, |ui| {
+            if options {
+                ui.spacing_mut().interact_size.y = 37.0;
+                ui.style_mut().override_font_id = Some(FontId::proportional(14.0));
+                return self.m_playlist_options_content(ui);
+            }
+            mobile_scroll(egui::ScrollArea::vertical()).show(ui, |ui| {
                 for (index, (label, symbol)) in STUDIO_SECTIONS.into_iter().enumerate() {
                     if index == SEC_PIANO || matches!(symbol, Icon::Tracks) {
                         continue;
@@ -1719,16 +1739,15 @@ impl VinteriaApp {
                     let label = if label == "Steps" { "Drum Rack" } else { label };
                     if drawer_row(ui, symbol, label, index == self.m_sec).clicked() {
                         self.m_select_studio_section(ctx, index);
-                        ui.memory_mut(|memory| memory.close_popup());
+                        return true;
                     }
                 }
-            },
-        );
-        sidebar_caption(ui, "Views");
-        if self.m_sec == SEC_PLAYLIST {
-            dock_menu(ui, Icon::Settings, "Playlist options", false,
-                |ui| self.m_playlist_options_content(ui));
-            sidebar_caption(ui, "Options");
+                false
+            }).inner
+        });
+        if close {
+            ctx.data_mut(|d| d.remove::<bool>(id));
+            ctx.request_repaint();
         }
     }
 
@@ -5451,15 +5470,17 @@ impl VinteriaApp {
         menu.response.on_hover_text("Playlist options");
     }
 
-    fn m_playlist_options_content(&mut self, ui: &mut Ui) {
+    fn m_playlist_options_content(&mut self, ui: &mut Ui) -> bool {
+        let mut close = false;
         let selected = self.arr.sel_clip.filter(|&index| index < self.project.arrangement.clips.len());
         ui.set_min_width(176.0);
-        mobile_scroll(egui::ScrollArea::vertical()).max_height((ui.ctx().screen_rect().height() * 0.50).min(330.0))
+        mobile_scroll(egui::ScrollArea::vertical()).max_height(ui.available_height().min((ui.ctx().screen_rect().height() * 0.50).min(330.0)))
             .show(ui, |ui| {
                 if ui.add_enabled(!self.undo.is_empty(), egui::Button::new("Undo")).clicked() {
                     self.undo();
                     self.arr.sel_clip = None;
                     self.arr.sel.clear();
+                    close = true;
                     ui.close_menu();
                     return;
                 }
@@ -5483,11 +5504,13 @@ impl VinteriaApp {
                         let end = start.saturating_add(self.project.loop_bars.max(1).saturating_mul(TICKS_PER_BAR));
                         self.m_export.open = true;
                         self.m_start_export_range(false, Some((start, end)));
+                        close = true;
                         ui.close_menu();
                     }
                     if self.project.loop_on && ui.button("Clear loop").clicked() {
                         self.project.loop_on = false;
                         self.publish_edits();
+                        close = true;
                         ui.close_menu();
                     }
                     for (mute, label) in [(false, "Enable all tracks"), (true, "Disable all tracks")] {
@@ -5498,6 +5521,7 @@ impl VinteriaApp {
                                 track.solo = false;
                             }
                             self.publish_edits();
+                            close = true;
                             ui.close_menu();
                         }
                     }
@@ -5508,6 +5532,7 @@ impl VinteriaApp {
                         let selection = self.arr.selection();
                         if ui.add_enabled(!selection.is_empty(), egui::Button::new("Render selection")).clicked() {
                             ui.data_mut(|d| d.insert_temp(egui::Id::new("render_selection_job"), selection));
+                            close = true;
                             ui.close_menu();
                         }
                     }
@@ -5517,6 +5542,7 @@ impl VinteriaApp {
                     };
                     if ui.button("Open clip").clicked() {
                         self.m_open_playlist_clip(ui.ctx(), index);
+                        close = true;
                         ui.close_menu();
                     }
                     if ui.button("Duplicate").clicked() {
@@ -5526,6 +5552,7 @@ impl VinteriaApp {
                         } else {
                             self.arr.msg = "No room to duplicate this clip.".into();
                         }
+                        close = true;
                         ui.close_menu();
                     }
                     let clip = self.project.arrangement.clips[index];
@@ -5538,6 +5565,7 @@ impl VinteriaApp {
                         let valid = len != clip.len && self.project.arrangement.can_place(&resized, Some(index));
                         if ui.add_enabled(valid, egui::Button::new(label)).clicked() {
                             self.project.arrangement.clips[index] = resized;
+                            close = true;
                             ui.close_menu();
                         }
                     }
@@ -5549,21 +5577,25 @@ impl VinteriaApp {
                             d.insert_temp(egui::Id::new("m_browser_plugins"), false);
                             d.insert_temp(egui::Id::new("m_browser_open"), true);
                         });
+                        close = true;
                         ui.close_menu();
                     }
                     if let Some(index) = selected.filter(|&index| self.project.arrangement.clips[index].audio) {
                         if ui.button("Audio clip settings").clicked() {
                             self.m_open_playlist_clip(ui.ctx(), index);
+                            close = true;
                             ui.close_menu();
                         }
                     }
                     if ui.button("Export WAV").clicked() {
                         self.m_export.open = true;
                         self.m_export.song = true;
+                        close = true;
                         ui.close_menu();
                     }
                 });
             });
+        close
     }
 
     fn m_open_playlist_clip(&mut self, ctx: &egui::Context, index: usize) {
@@ -8159,24 +8191,42 @@ impl VinteriaApp {
 fn playlist_clip_menu(
     ctx: &egui::Context, id: egui::Id, anchor: Pos2, actions: &[(Icon, &str, bool)], portrait: bool,
 ) -> Option<usize> {
+    let cancel = usize::MAX;
+    if portrait {
+        let mut action = None;
+        let drawer = id.with("left_drawer");
+        let close = mobile_left_editor(ctx, drawer, "Clip actions", |ui| {
+            mobile_scroll(egui::ScrollArea::vertical()).show(ui, |ui| {
+                for (index, &(symbol, label, enabled)) in actions.iter().enumerate() {
+                    let label = match index {
+                        0 if actions.len() == 6 => "Piano Roll",
+                        0 => "Audio clip settings",
+                        _ => label,
+                    };
+                    if ui.add_enabled_ui(enabled, |ui| drawer_row(ui, symbol, label, false)).inner.clicked() {
+                        action = Some(index);
+                    }
+                }
+            });
+        });
+        if action.is_some() {
+            ctx.animate_bool(drawer.with("animation"), false);
+        }
+        return action.or_else(|| close.then_some(cancel));
+    }
+
     let screen = ctx.screen_rect();
     let gap = 2.0;
     let pad = 4.0;
-    let columns = if portrait { 3 } else { actions.len() + 1 };
-    let rows = if portrait { actions.len().div_ceil(columns) } else { 1 };
-    let count = columns as f32;
-    let header = if portrait { 44.0 } else { 0.0 };
-    let button_width = ((screen.width() - 8.0 - (count - 1.0) * gap - pad * 2.0) / count)
-        .clamp(1.0, if portrait { 86.0 } else { 44.0 });
-    let button_height = if portrait { 52.0 } else { 44.0 };
-    let size = vec2(count * button_width + (count - 1.0) * gap + pad * 2.0,
-        header + rows as f32 * (button_height + gap) - gap + pad * 2.0);
+    let count = (actions.len() + 1) as f32;
+    let button_width = ((screen.width() - 8.0 - (count - 1.0) * gap - pad * 2.0) / count).clamp(1.0, 44.0);
+    let button_height = 44.0;
+    let size = vec2(count * button_width + (count - 1.0) * gap + pad * 2.0, button_height + pad * 2.0);
     let above = anchor.y - size.y - 14.0;
     let top = if above >= screen.top() + 4.0 { above } else { anchor.y + 14.0 };
     let min = pos2(anchor.x - size.x * 0.5, top)
         .clamp(screen.min + vec2(4.0, 4.0), (screen.max - size - vec2(4.0, 4.0)).max(screen.min + vec2(4.0, 4.0)));
     let bounds = Rect::from_min_size(min, size);
-    let cancel = usize::MAX;
     let mut action = ctx.input(|input| input.key_pressed(egui::Key::Escape).then_some(cancel));
     // no full-screen catcher: a press outside the bar closes it and still reaches whatever is under the finger
     // (an invisible catcher in the same layer order could end up above the bar and swallow every tap)
@@ -8191,8 +8241,7 @@ fn playlist_clip_menu(
             p.rect_filled(area, 14.0, glass_fill());
             p.rect_stroke(area, 14.0, Stroke::new(1.0, glass_edge()));
             let slot = |index: usize| Rect::from_min_size(
-                pos2(area.left() + pad + (index % columns) as f32 * (button_width + gap),
-                    area.top() + pad + header + (index / columns) as f32 * (button_height + gap)),
+                pos2(area.left() + pad + index as f32 * (button_width + gap), area.top() + pad),
                 vec2(button_width, button_height));
             for (index, &(symbol, label, enabled)) in actions.iter().enumerate() {
                 let rect = slot(index);
@@ -8202,39 +8251,14 @@ fn playlist_clip_menu(
                     p.rect_filled(rect, 9.0, selected_fill());
                 }
                 let color = if !enabled { muted().gamma_multiply(0.55) } else if index == 4 { RED } else { ink() };
-                if portrait {
-                    if !hit.hovered() {
-                        p.rect_filled(rect.shrink(1.0), 10.0, card_fill());
-                    }
-                    icon(p, symbol, pos2(rect.center().x, rect.top() + 17.0), color);
-                    let caption = match index {
-                        0 if actions.len() == 6 => "Piano Roll",
-                        0 => "Audio",
-                        1 => "Extend",
-                        2 => "Shorten",
-                        3 => "Clone",
-                        4 => "Delete",
-                        _ => "Settings",
-                    };
-                    p.text(pos2(rect.center().x, rect.bottom() - 11.0), Align2::CENTER_CENTER,
-                        caption, FontId::proportional(11.0), color);
-                } else {
-                    icon(p, symbol, rect.center(), color);
-                }
+                icon(p, symbol, rect.center(), color);
                 if hit.clicked() && enabled {
                     action = Some(index);
                 }
             }
-            let close = if portrait {
-                p.text(pos2(area.left() + 12.0, area.top() + pad + header * 0.5), Align2::LEFT_CENTER,
-                    "Clip actions", FontId::proportional(14.0), ink());
-                Rect::from_min_size(pos2(area.right() - pad - 44.0, area.top() + pad), vec2(44.0, header))
-            } else {
-                let close = slot(actions.len());
-                let x = close.left() - gap * 0.5 - 0.5;
-                p.line_segment([pos2(x, close.top() + 8.0), pos2(x, close.bottom() - 8.0)], Stroke::new(1.0, outline()));
-                close
-            };
+            let close = slot(actions.len());
+            let x = close.left() - gap * 0.5 - 0.5;
+            p.line_segment([pos2(x, close.top() + 8.0), pos2(x, close.bottom() - 8.0)], Stroke::new(1.0, outline()));
             if ui.interact(close, id.with("close"), Sense::click()).on_hover_text("Close clip actions").clicked() {
                 action = Some(cancel);
             }
@@ -8485,6 +8509,39 @@ fn mobile_left_editor(ctx: &egui::Context, id: egui::Id, title: &str, body: impl
         ctx.animate_bool(id.with("animation"), false);
     }
     done
+}
+
+fn mobile_bottom_sheet(ctx: &egui::Context, id: egui::Id, title: &str, height: f32, body: impl FnOnce(&mut Ui) -> bool) -> bool {
+    let screen = ctx.screen_rect();
+    let height = height.min(screen.height() * 0.70);
+    let shown = ctx.animate_bool(id.with("animation"), true);
+    let mut close = ctx.input(|input| input.key_pressed(egui::Key::Escape));
+    egui::Area::new(id.with("scrim")).order(egui::Order::Middle).fixed_pos(screen.min)
+        .movable(false).show(ctx, |ui| {
+            let (rect, hit) = ui.allocate_exact_size(screen.size(), Sense::click());
+            ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha((120.0 * shown) as u8));
+            close |= hit.clicked();
+        });
+    egui::Area::new(id).order(egui::Order::Foreground).movable(false).constrain(false)
+        .fixed_pos(pos2(screen.left(), screen.bottom() - height * shown)).show(ctx, |ui| {
+            let (rect, _) = ui.allocate_exact_size(vec2(screen.width(), height), Sense::click());
+            let corners = egui::Rounding { nw: 18.0, ne: 18.0, ..Default::default() };
+            ui.painter().rect_filled(rect, corners, glass_fill());
+            ui.painter().rect_stroke(rect, corners, Stroke::new(1.0, glass_edge()));
+            let mut content = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink(10.0)));
+            content.set_clip_rect(rect.intersect(screen));
+            mobile_visuals(&mut content);
+            content.horizontal(|ui| {
+                close |= p_button(ui, "Done", true, vec2(57.0, 36.0)).clicked();
+                ui.label(RichText::new(title).size(17.0).strong());
+            });
+            content.separator();
+            close |= body(&mut content);
+        });
+    if close {
+        ctx.animate_bool(id.with("animation"), false);
+    }
+    close
 }
 
 fn mobile_editor_sheet(ctx: &egui::Context, id: &'static str, title: &str, body: impl FnOnce(&mut Ui)) -> bool {

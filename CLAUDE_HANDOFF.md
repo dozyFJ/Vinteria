@@ -754,3 +754,8 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 
 - Plugin Store: tap a built-in instrument to add it to a new or selected MIDI track. Tap an effect to add it to the selected track’s mixer insert. Both open the corresponding track settings page.
 - Android handset verification pending.
+
+### Android 1.0.151
+
+- Portrait studio: Views and Playlist options open as bottom sheets. Clip actions open in a left sidebar.
+- Android handset verification pending.
