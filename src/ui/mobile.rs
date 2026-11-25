@@ -4092,7 +4092,7 @@ impl VinteriaApp {
                     if dock_icon(ui, Icon::Stop, false, "Stop all clips").clicked() {
                         self.shared.send(Cmd::StopAllClips);
                     }
-                    egui::ComboBox::from_id_salt(track_id).width(76.0)
+                    egui::ComboBox::from_id_salt(track_id).width(64.0)
                         .selected_text(format!("Tracks {}–{}", track_bank * BANK + 1, ((track_bank + 1) * BANK).min(lanes)))
                         .show_ui(ui, |ui| {
                             for bank in 0..track_banks {
@@ -4100,7 +4100,7 @@ impl VinteriaApp {
                                 ui.selectable_value(&mut track_bank, bank, label);
                             }
                         });
-                    egui::ComboBox::from_id_salt(scene_id).width(79.0)
+                    egui::ComboBox::from_id_salt(scene_id).width(64.0)
                         .selected_text(format!("Scenes {}–{}", scene_bank * BANK + 1,
                             ((scene_bank + 1) * BANK).min(self.project.session.scenes)))
                         .show_ui(ui, |ui| {
@@ -4142,31 +4142,31 @@ impl VinteriaApp {
         let first_scene = scene_bank * BANK;
         let track_end = (first_track + BANK).min(lanes);
         let scene_end = (first_scene + BANK).min(self.project.session.scenes);
-        let gap = 6.0;
-        let ruler_width = 42.0;
-        let header = 44.0;
-        let width = ui.available_width();
-        let pad_width = ((width - ruler_width - gap * BANK as f32) / BANK as f32).max(38.0);
-        let visible_height = ui.available_height();
-        let pad_height = ((visible_height - header - gap * BANK as f32) / BANK as f32).clamp(49.0, 104.0);
+        let gap = 4.0;
+        let ruler_width = 34.0;
+        let header = 34.0;
+        let columns = BANK as f32;
+        let width_limit = (ui.available_width() - ruler_width) / columns - gap;
+        let height_limit = (ui.available_height() - header) / columns - gap;
+        let pad_size = width_limit.min(height_limit).clamp(44.0, 74.0);
         let beat = TICKS_PER_BAR / 4;
         let phase = (self.shared.position.load(Ordering::Relaxed) % beat) as f32 / beat as f32;
         let mut animate = false;
         let source = self.arr.sel_clip.and_then(|index| self.project.arrangement.clips.get(index)).copied();
         mobile_scroll(egui::ScrollArea::both()).id_salt("m_session_pad_matrix").auto_shrink([false, false]).show(ui, |ui| {
-            let matrix_width = ruler_width + (pad_width + gap) * BANK as f32;
-            let matrix_height = header + (pad_height + gap) * (scene_end - first_scene) as f32;
+            let matrix_width = ruler_width + (pad_size + gap) * BANK as f32;
+            let matrix_height = header + (pad_size + gap) * (scene_end - first_scene) as f32;
             let (area, _) = ui.allocate_exact_size(vec2(matrix_width, matrix_height), Sense::hover());
             let p = ui.painter_at(area);
             p.rect_filled(area, 12.0, p_bg());
-            let scene_left = area.left() + BANK as f32 * (pad_width + gap);
-            let x_at = |lane: usize| area.left() + (lane - first_track) as f32 * (pad_width + gap);
+            let scene_left = area.left() + BANK as f32 * (pad_size + gap);
+            let x_at = |lane: usize| area.left() + (lane - first_track) as f32 * (pad_size + gap);
             for lane in first_track..track_end {
                 let track = &self.project.arrangement.tracks[lane];
-                let rect = Rect::from_min_size(pos2(x_at(lane), area.top()), vec2(pad_width, header - gap));
+                let rect = Rect::from_min_size(pos2(x_at(lane), area.top()), vec2(pad_size, header - gap));
                 let color = lane_col(lane);
                 p.rect_filled(rect, 9.0, if lane == self.arr.sel_lane { selected_fill() } else { glass_fill() });
-                let stop = Rect::from_min_size(rect.right_top() - vec2(25.0, 0.0), vec2(25.0, rect.height()));
+                let stop = Rect::from_min_size(rect.right_top() - vec2(20.0, 0.0), vec2(20.0, rect.height()));
                 let active = self.project.session.clips.iter().filter(|clip| clip.lane == lane).any(|clip| {
                     let code = clip.code();
                     self.shared.session_run[lane].load(Ordering::Relaxed) == code
@@ -4190,8 +4190,8 @@ impl VinteriaApp {
             }
 
             for scene in first_scene..scene_end {
-                let y = area.top() + header + (scene - first_scene) as f32 * (pad_height + gap);
-                let scene_pad = Rect::from_min_size(pos2(scene_left, y), vec2(ruler_width, pad_height));
+                let y = area.top() + header + (scene - first_scene) as f32 * (pad_size + gap);
+                let scene_pad = Rect::from_min_size(pos2(scene_left, y), vec2(ruler_width, pad_size));
                 let scene_has_clips = self.project.session.clips.iter().any(|clip| clip.scene == scene);
                 let hit = ui.interact(scene_pad, ui.id().with(("session_scene", scene)),
                     if scene_has_clips { Sense::click() } else { Sense::hover() });
@@ -4200,17 +4200,17 @@ impl VinteriaApp {
                 } else { bar_fill() });
                 p.rect_stroke(scene_pad, 12.0, Stroke::new(1.0, outline()));
                 control_state(&p, scene_pad, 9.0, &hit, ink());
-                icon(&p, Icon::Play, scene_pad.center() - vec2(0.0, 10.0),
+                icon(&p, Icon::Play, scene_pad.center() - vec2(0.0, 8.0),
                     if scene_has_clips { p_accent() } else { muted() });
-                p.text(scene_pad.center() + vec2(0.0, 13.0), Align2::CENTER_CENTER, scene + 1,
-                    FontId::proportional(12.0), ink());
+                p.text(scene_pad.center() + vec2(0.0, 9.0), Align2::CENTER_CENTER, scene + 1,
+                    FontId::proportional(10.0), ink());
                 if hit.on_hover_text("Launch scene").clicked() {
                     for clip in self.project.session.clips.iter().filter(|clip| clip.scene == scene) {
                         self.shared.send(Cmd::LaunchClip { lane: clip.lane, pattern: clip.pattern, audio: clip.audio });
                     }
                 }
                 for lane in first_track..track_end {
-                    let pad = Rect::from_min_size(pos2(x_at(lane), y), vec2(pad_width, pad_height));
+                    let pad = Rect::from_min_size(pos2(x_at(lane), y), vec2(pad_size, pad_size));
                     let hit = ui.interact(pad, ui.id().with(("session_pad", lane, scene)), Sense::click());
                     let clip = self.project.session.get(lane, scene).copied();
                     let audio_lane = self.project.arrangement.tracks[lane].kind == TrackKind::Audio;
