@@ -2368,7 +2368,127 @@ impl VinteriaApp {
         let mut step_edit = None;
         let mut hit_lane = None;
         let mut toggle = None;
-        {
+        if tab == 0 && portrait_view(ui) {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 3.0;
+                let width = ((ui.available_width() - 12.0) / 5.0).max(27.0);
+                if p_button(ui, "Graph", graph_open, vec2(width, 30.0))
+                    .on_hover_text("Step parameters").clicked()
+                {
+                    graph_open = !graph_open;
+                }
+                for (index, label) in ["Vel", "Pan", "Pitch", "Chance"].into_iter().enumerate() {
+                    if p_button(ui, label, graph_open && graph == index as u8, vec2(width, 30.0)).clicked() {
+                        graph = index as u8;
+                        graph_open = true;
+                    }
+                }
+            });
+            let width = ui.available_width();
+            let ruler_width = 27.0;
+            let graph_width = if graph_open { (width * 0.16).clamp(32.0, 52.0) } else { 0.0 };
+            let cell_width = ((width - ruler_width - graph_width) / NUM_DRUMS as f32).max(1.0);
+            let cell_x = |left: f32, lane: usize| left + ruler_width + lane as f32 * cell_width;
+            let (header, _) = ui.allocate_exact_size(vec2(width, 34.0), Sense::hover());
+            let p = ui.painter_at(header);
+            p.rect_filled(header, 0.0, bar_fill());
+            p.text(pos2(header.left() + ruler_width * 0.5, header.center().y),
+                Align2::CENTER_CENTER, "#", FontId::proportional(11.0), muted());
+            for (lane, &name) in DRUM_NAMES.iter().enumerate() {
+                let rect = Rect::from_min_size(pos2(cell_x(header.left(), lane), header.top()), vec2(cell_width, header.height()));
+                let color = lane_col(lane);
+                if lane == selected {
+                    p.rect_filled(rect, 0.0, selected_fill());
+                }
+                p.vline(rect.left(), rect.y_range(), Stroke::new(1.0, outline()));
+                p.hline(rect.x_range(), rect.bottom() - 1.0, Stroke::new(if lane == selected { 2.0 } else { 1.0 }, color));
+                fit_label(&p, rect.shrink2(vec2(3.0, 0.0)), rect.center().y, name, ink(), 10.0);
+                let sample = self.project.drum_samples[lane].as_ref().map_or("Built-in", |sample| sample.name.as_str());
+                let hit = ui.interact(rect, ui.id().with(("vertical_drum_header", lane)), Sense::click())
+                    .on_hover_text(format!("{name} · {sample}"));
+                if hit.secondary_clicked() {
+                    sound_menu = Some(lane);
+                } else if hit.clicked() {
+                    selected = lane;
+                    self.shared.send(Cmd::DrumHit { lane, vel: 112 });
+                }
+            }
+            if graph_open {
+                let graph_header = Rect::from_min_max(
+                    pos2(cell_x(header.left(), NUM_DRUMS), header.top()), header.max);
+                p.vline(graph_header.left(), graph_header.y_range(), Stroke::new(1.0, outline()));
+                fit_label(&p, graph_header.shrink2(vec2(3.0, 0.0)), graph_header.top() + 10.0,
+                    DRUM_NAMES[selected], lane_col(selected), 10.0);
+                fit_label(&p, graph_header.shrink2(vec2(3.0, 0.0)), graph_header.top() + 23.0,
+                    ["Vel", "Pan", "Pitch", "Chance"][usize::from(graph)], muted(), 9.0);
+            }
+            let row_height = 36.0;
+            ui.scope(|ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                mobile_scroll(egui::ScrollArea::vertical()).id_salt("vertical_drum_steps")
+                    .auto_shrink([false, false]).show_rows(ui, row_height, len.div_ceil(stride), |ui, rows| {
+                        for row in rows {
+                            let step = row * stride;
+                            let (rect, _) = ui.allocate_exact_size(vec2(width, row_height), Sense::hover());
+                            let p = ui.painter_at(rect);
+                            let bar_start = step % 16 == 0;
+                            let beat_start = step % 4 == 0;
+                            let running = playing && play_step / stride == row;
+                            let shade = if running { selected_fill() } else if (step / 4) % 2 == 0 { card_fill() } else { bar_fill() };
+                            p.rect_filled(rect, 0.0, shade);
+                            let ruler = Rect::from_min_size(rect.min, vec2(ruler_width, row_height));
+                            p.rect_filled(ruler, 0.0, if running { selected_fill() } else { bar_fill() });
+                            p.text(ruler.center(), Align2::CENTER_CENTER, step + 1,
+                                FontId::proportional(10.0), if running || beat_start { ink() } else { muted() });
+                            p.hline(rect.x_range(), rect.top(), Stroke::new(if bar_start { 1.6 } else { 0.8 },
+                                if beat_start { outline() } else { grid_line() }));
+                            for lane in 0..NUM_DRUMS {
+                                let cell = Rect::from_min_size(pos2(cell_x(rect.left(), lane), rect.top()), vec2(cell_width, row_height));
+                                p.vline(cell.left(), cell.y_range(), Stroke::new(1.0, grid_line()));
+                                let st = self.project.patterns[pi].drums[lane][step];
+                                if st.on {
+                                    let note = cell.shrink2(vec2(3.0, 5.0));
+                                    let color = lane_col(lane).linear_multiply(0.50 + 0.50 * f32::from(st.vel) / 127.0);
+                                    p.rect_filled(note, 5.0, color);
+                                    if st.is_smart() {
+                                        p.circle_filled(note.right_center() - vec2(5.0, 0.0), 2.0, Color32::from_black_alpha(160));
+                                    }
+                                }
+                                let hit = ui.interact(cell.intersect(ui.clip_rect()),
+                                    ui.id().with(("vertical_drum_step", lane, step)), Sense::click());
+                                if hit.secondary_clicked() {
+                                    step_edit = Some((pi, lane, step));
+                                } else if hit.clicked() {
+                                    toggle = Some((lane, step));
+                                }
+                            }
+                            if graph_open {
+                                let plot = Rect::from_min_max(pos2(cell_x(rect.left(), NUM_DRUMS), rect.top()), rect.max);
+                                p.vline(plot.left(), plot.y_range(), Stroke::new(1.0, outline()));
+                                let st = &mut self.project.patterns[pi].drums[selected][step];
+                                let sense = if st.on { Sense::click_and_drag() } else { Sense::hover() };
+                                let hit = ui.interact(plot.intersect(ui.clip_rect()), ui.id().with(("vertical_drum_value", step)), sense);
+                                let inner = plot.shrink2(vec2(4.0, 10.0));
+                                if hit.double_clicked() {
+                                    set_drum_step_graph_value(st, graph, if graph == 0 { 100.0 / 127.0 } else if graph == 3 { 1.0 } else { 0.5 });
+                                } else if let Some(point) = hit.interact_pointer_pos().filter(|_| hit.dragged() || hit.clicked()) {
+                                    set_drum_step_graph_value(st, graph, ((point.x - inner.left()) / inner.width()).clamp(0.0, 1.0));
+                                }
+                                let (value, bipolar) = drum_step_graph_value(st, graph);
+                                let start = if bipolar { inner.center().x } else { inner.left() };
+                                let end = inner.left() + inner.width() * value;
+                                let bar = Rect::from_min_max(pos2(start.min(end), inner.top()), pos2(start.max(end) + 1.0, inner.bottom()));
+                                if st.on {
+                                    p.rect_filled(bar, 2.0, lane_col(selected));
+                                }
+                            }
+                            if running {
+                                p.hline(rect.x_range(), rect.bottom() - 1.0, Stroke::new(2.0, p_accent()));
+                            }
+                        }
+                    });
+            });
+        } else {
             // own layout instead of a ScrollArea: a sideways swipe on the steps scrolls them, a tap hits exactly the
             // cell under the finger (the ScrollArea's own drag shifted taps by a step)
             let total_h = NUM_DRUMS as f32 * row_h + 36.0 + graph_h + 12.0;
@@ -2544,12 +2664,7 @@ impl VinteriaApp {
                     p.rect_filled(cell, 2.0, if (s / 4) % 2 == 0 { card_fill().gamma_multiply(0.6) } else { card_fill().gamma_multiply(0.4) });
                     let st = &mut self.project.patterns[pi].drums[selected][s];
                     // value as 0..1 and whether it is drawn from the middle line
-                    let (t, mid) = match graph {
-                        0 => (st.vel as f32 / 127.0, false),
-                        1 => ((st.pan as f32 + 100.0) / 200.0, true),
-                        2 => ((st.pitch as f32 + 24.0) / 48.0, true),
-                        _ => (st.prob as f32 / 100.0, false),
-                    };
+                    let (t, mid) = drum_step_graph_value(st, graph);
                     let fill = if st.on { col } else { muted().gamma_multiply(0.35) };
                     let y_at = |t: f32| cell.bottom() - t.clamp(0.0, 1.0) * cell.height();
                     let bar = if mid {
@@ -2563,12 +2678,7 @@ impl VinteriaApp {
                     if (hit.dragged() || hit.clicked()) && st.on {
                         if let Some(point) = hit.interact_pointer_pos() {
                             let t = ((cell.bottom() - point.y) / cell.height()).clamp(0.0, 1.0);
-                            match graph {
-                                0 => st.vel = (t * 127.0).round().max(1.0) as u8,
-                                1 => st.pan = (t * 200.0 - 100.0).round() as i8,
-                                2 => st.pitch = (t * 48.0 - 24.0).round() as i8,
-                                _ => st.prob = (t * 100.0).round().max(1.0) as u8,
-                            }
+                            set_drum_step_graph_value(st, graph, t);
                         }
                     }
                     if hit.double_clicked() && st.on {
@@ -8046,6 +8156,24 @@ fn paint_dock_icon(ui: &Ui, response: &Response, symbol: Icon, active: bool) {
     p.rect_filled(rect, radius, if active { p_accent() } else { card_fill() });
     control_state(p, rect, radius, response, color);
     icon(p, symbol, rect.center(), color);
+}
+
+fn drum_step_graph_value(step: &crate::sequencer::Step, graph: u8) -> (f32, bool) {
+    match graph {
+        0 => (f32::from(step.vel) / 127.0, false),
+        1 => ((f32::from(step.pan) + 100.0) / 200.0, true),
+        2 => ((f32::from(step.pitch) + 24.0) / 48.0, true),
+        _ => (f32::from(step.prob) / 100.0, false),
+    }
+}
+
+fn set_drum_step_graph_value(step: &mut crate::sequencer::Step, graph: u8, value: f32) {
+    match graph {
+        0 => step.vel = (value * 127.0).round().max(1.0) as u8,
+        1 => step.pan = (value * 200.0 - 100.0).round() as i8,
+        2 => step.pitch = (value * 48.0 - 24.0).round() as i8,
+        _ => step.prob = (value * 100.0).round().max(1.0) as u8,
+    }
 }
 
 fn sidebar_caption(ui: &mut Ui, label: &str) {
