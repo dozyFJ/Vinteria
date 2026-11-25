@@ -1072,7 +1072,7 @@ impl VinteriaApp {
                                     ui.vertical(|ui| {
                                         for (row, path) in paths.iter().enumerate() {
                                             let name = path.file_stem().and_then(|name| name.to_str()).unwrap_or("Project");
-                                            if Self::m_home_tile(ui, vec2(tile_width, 68.0), Icon::Folder,
+                                            if Self::m_navigation_tile(ui, vec2(tile_width, 68.0), Icon::Folder,
                                                 name, lane_col(column * 2 + row)).clicked()
                                             {
                                                 recent = Some(path.clone());
@@ -1091,20 +1091,20 @@ impl VinteriaApp {
                 let sounds_width = (width * 0.55).floor();
                 let side_width = width - sounds_width;
                 ui.horizontal_top(|ui| {
-                    if Self::m_home_tile(ui, vec2(sounds_width, 128.0 + gap.y), Icon::Wave,
+                    if Self::m_navigation_tile(ui, vec2(sounds_width, 128.0 + gap.y), Icon::Wave,
                         "Sounds", p_accent()).clicked()
                     {
                         self.m_tab = 0;
                         self.m_sec = 3;
                     }
                     ui.vertical(|ui| {
-                        if Self::m_home_tile(ui, vec2(side_width, 64.0), Icon::Layout,
+                        if Self::m_navigation_tile(ui, vec2(side_width, 64.0), Icon::Layout,
                             "Templates", lane_col(2)).clicked()
                         {
                             self.m_tab = 0;
                             self.m_sec = 2;
                         }
-                        if Self::m_home_tile(ui, vec2(side_width, 64.0), Icon::Plug,
+                        if Self::m_navigation_tile(ui, vec2(side_width, 64.0), Icon::Plug,
                             "Plugin Store", lane_col(3)).clicked()
                         {
                             self.m_tab = 5;
@@ -1121,7 +1121,7 @@ impl VinteriaApp {
             });
     }
 
-    fn m_home_tile(ui: &mut Ui, size: egui::Vec2, symbol: Icon, title: &str, accent: Color32) -> egui::Response {
+    fn m_navigation_tile(ui: &mut Ui, size: egui::Vec2, symbol: Icon, title: &str, accent: Color32) -> egui::Response {
         let (rect, response) = ui.allocate_exact_size(size, Sense::click());
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 13.0, tint(card_fill(), accent, 0.12));
@@ -2051,12 +2051,28 @@ impl VinteriaApp {
                         let blank = if backups { "No backups yet." } else { "No projects yet." };
                         ui.label(RichText::new(blank).color(muted()));
                     }
-                    for path in items {
-                        let name = path.file_stem().and_then(|name| name.to_str()).unwrap_or("Project");
-                        let name = if backups && name == "_autosave" { "Autosave" } else { name };
-                        let button = egui::Button::new(name).truncate();
-                        if ui.add_sized([ui.available_width(), TOUCH], button).clicked() {
-                            open = Some(path);
+                    if section == 0 {
+                        let width = ((ui.available_width() - ui.spacing().item_spacing.x) * 0.5).max(1.0);
+                        for (row, paths) in items.chunks(2).enumerate() {
+                            ui.horizontal(|ui| {
+                                for (column, path) in paths.iter().enumerate() {
+                                    let name = path.file_stem().and_then(|name| name.to_str()).unwrap_or("Project");
+                                    if Self::m_navigation_tile(ui, vec2(width, 72.0), Icon::Folder,
+                                        name, lane_col(row * 2 + column)).clicked()
+                                    {
+                                        open = Some(path.clone());
+                                    }
+                                }
+                            });
+                        }
+                    } else {
+                        for path in items {
+                            let name = path.file_stem().and_then(|name| name.to_str()).unwrap_or("Project");
+                            let name = if backups && name == "_autosave" { "Autosave" } else { name };
+                            let button = egui::Button::new(name).truncate();
+                            if ui.add_sized([ui.available_width(), TOUCH], button).clicked() {
+                                open = Some(path);
+                            }
                         }
                     }
                 }
