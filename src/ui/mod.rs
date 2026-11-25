@@ -783,7 +783,7 @@ impl VinteriaApp {
             }
         }
         let elapsed = self.splash.get_or_insert_with(web_time::Instant::now).elapsed().as_secs_f32();
-        if elapsed >= 0.86 {
+        if elapsed >= 1.50 {
             return false;
         }
 
