@@ -207,6 +207,18 @@ const PRESETS: &[Preset] = &[
     Preset { cat: "Strings", name: "PWM Strings", engine: Track::Analog, key: "PWM Strings" },
     Preset { cat: "Bell", name: "Bell", engine: Track::Synth, key: "Bell" },
     Preset { cat: "Bell", name: "Init Wavetable", engine: Track::Wavetable, key: "Init" },
+    Preset { cat: "Bass", name: "Velvet Sub", engine: Track::Synth, key: "Velvet Sub" },
+    Preset { cat: "Bass", name: "Rubber Bass", engine: Track::Synth, key: "Rubber Bass" },
+    Preset { cat: "Bass", name: "Twin Saw Bass", engine: Track::Synth, key: "Twin Saw Bass" },
+    Preset { cat: "Lead", name: "Pulse Runner", engine: Track::Synth, key: "Pulse Runner" },
+    Preset { cat: "Lead", name: "Octave Signal", engine: Track::Synth, key: "Octave Signal" },
+    Preset { cat: "Pad", name: "Polar Haze", engine: Track::Synth, key: "Polar Haze" },
+    Preset { cat: "Pad", name: "Tidal Pad", engine: Track::Synth, key: "Tidal Pad" },
+    Preset { cat: "Keys", name: "Late Night Keys", engine: Track::Synth, key: "Late Night Keys" },
+    Preset { cat: "Keys", name: "Soft Organ", engine: Track::Synth, key: "Soft Organ" },
+    Preset { cat: "Pluck", name: "Glass Pluck", engine: Track::Synth, key: "Glass Pluck" },
+    Preset { cat: "House", name: "Club Stab", engine: Track::Synth, key: "Club Stab" },
+    Preset { cat: "Bell", name: "Ice Chime", engine: Track::Synth, key: "Ice Chime" },
 ];
 
 /// Names of the presets that belong to one instrument (for the Channel Rack menu).
@@ -380,11 +392,16 @@ fn synth_panel(ui: &mut Ui, project: &mut Project) {
             row(ui, |ui| {
                 ui.label(egui::RichText::new("POLY SYNTH").color(TEAL()).strong().size(15.0));
                 ui.label(egui::RichText::new("16 voices").color(DIM()));
-                for name in ["Init", "Pluck", "Pad", "Lead", "Bell"] {
-                    if ui.small_button(name).clicked() {
-                        *p = SynthParams::preset(name);
-                    }
-                }
+                ui.menu_button("Presets", |ui| {
+                    egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+                        for preset in PRESETS.iter().filter(|preset| preset.engine == Track::Synth) {
+                            if ui.button(preset.name).clicked() {
+                                *p = SynthParams::preset(preset.key);
+                                ui.close_menu();
+                            }
+                        }
+                    });
+                });
             });
             section_label(ui, "OSCILLATOR");
             row(ui, |ui| {

@@ -118,6 +118,157 @@ impl SynthParams {
                 p.osc2_mix = 0.35;
                 p.lp_cutoff = 12000.0;
             }
+            "Velvet Sub" => {
+                p.wave = Wave::Sine;
+                p.semitones = -12.0;
+                p.attack = 0.015;
+                p.decay = 0.42;
+                p.sustain = 0.82;
+                p.release = 0.16;
+                p.hp_cutoff = 20.0;
+                p.lp_cutoff = 460.0;
+                p.osc2_mix = 0.0;
+            }
+            "Rubber Bass" => {
+                p.wave = Wave::Square;
+                p.attack = 0.003;
+                p.decay = 0.19;
+                p.sustain = 0.45;
+                p.release = 0.09;
+                p.lp_cutoff = 630.0;
+                p.lp_res = 0.57;
+                p.lfo_target = LfoTarget::Cutoff;
+                p.lfo_depth = 0.28;
+                p.lfo_rate = 3.2;
+                p.osc2_mix = 0.16;
+            }
+            "Twin Saw Bass" => {
+                p.wave = Wave::Saw;
+                p.attack = 0.009;
+                p.decay = 0.32;
+                p.sustain = 0.77;
+                p.release = 0.13;
+                p.lp_cutoff = 1100.0;
+                p.lp_res = 0.22;
+                p.osc2_detune = 23.0;
+                p.osc2_mix = 0.92;
+                p.volume = 0.58;
+            }
+            "Pulse Runner" => {
+                p.wave = Wave::Square;
+                p.attack = 0.007;
+                p.decay = 0.24;
+                p.sustain = 0.73;
+                p.release = 0.17;
+                p.lp_cutoff = 4300.0;
+                p.hp_cutoff = 155.0;
+                p.osc2_mix = 0.23;
+                p.lfo_depth = 0.055;
+                p.lfo_rate = 5.9;
+            }
+            "Octave Signal" => {
+                p.wave = Wave::Triangle;
+                p.attack = 0.021;
+                p.decay = 0.35;
+                p.sustain = 0.7;
+                p.release = 0.28;
+                p.lp_cutoff = 6400.0;
+                p.hp_cutoff = 125.0;
+                p.osc2_detune = 1200.0;
+                p.osc2_mix = 0.43;
+                p.lfo_depth = 0.07;
+                p.lfo_rate = 4.1;
+            }
+            "Polar Haze" => {
+                p.wave = Wave::Saw;
+                p.attack = 0.87;
+                p.decay = 0.61;
+                p.sustain = 0.82;
+                p.release = 1.75;
+                p.lp_cutoff = 1350.0;
+                p.hp_cutoff = 175.0;
+                p.osc2_detune = 17.0;
+                p.osc2_mix = 0.78;
+                p.lfo_target = LfoTarget::Cutoff;
+                p.lfo_depth = 0.28;
+                p.lfo_rate = 0.31;
+                p.volume = 0.48;
+            }
+            "Tidal Pad" => {
+                p.wave = Wave::Triangle;
+                p.attack = 0.36;
+                p.decay = 0.86;
+                p.sustain = 0.68;
+                p.release = 1.3;
+                p.lp_cutoff = 2700.0;
+                p.osc2_detune = 1200.0;
+                p.osc2_mix = 0.22;
+                p.lfo_target = LfoTarget::Amp;
+                p.lfo_depth = 0.38;
+                p.lfo_rate = 1.65;
+                p.volume = 0.54;
+            }
+            "Late Night Keys" => {
+                p.wave = Wave::Triangle;
+                p.attack = 0.012;
+                p.decay = 0.62;
+                p.sustain = 0.24;
+                p.release = 0.33;
+                p.lp_cutoff = 2450.0;
+                p.hp_cutoff = 95.0;
+                p.osc2_detune = 5.0;
+                p.osc2_mix = 0.2;
+            }
+            "Soft Organ" => {
+                p.wave = Wave::Sine;
+                p.attack = 0.016;
+                p.decay = 0.15;
+                p.sustain = 0.91;
+                p.release = 0.13;
+                p.lp_cutoff = 5200.0;
+                p.osc2_detune = 1200.0;
+                p.osc2_mix = 0.55;
+                p.lfo_target = LfoTarget::Amp;
+                p.lfo_depth = 0.17;
+                p.lfo_rate = 4.4;
+            }
+            "Glass Pluck" => {
+                p.wave = Wave::Triangle;
+                p.attack = 0.002;
+                p.decay = 0.26;
+                p.sustain = 0.03;
+                p.release = 0.22;
+                p.lp_cutoff = 7900.0;
+                p.hp_cutoff = 180.0;
+                p.osc2_detune = 1200.0;
+                p.osc2_mix = 0.57;
+            }
+            "Club Stab" => {
+                p.wave = Wave::Saw;
+                p.attack = 0.003;
+                p.decay = 0.31;
+                p.sustain = 0.09;
+                p.release = 0.15;
+                p.lp_cutoff = 3100.0;
+                p.lp_res = 0.48;
+                p.hp_cutoff = 205.0;
+                p.osc2_detune = 12.0;
+                p.osc2_mix = 0.7;
+                p.volume = 0.62;
+            }
+            "Ice Chime" => {
+                p.wave = Wave::Sine;
+                p.attack = 0.002;
+                p.decay = 1.05;
+                p.sustain = 0.015;
+                p.release = 0.95;
+                p.lp_cutoff = 9600.0;
+                p.hp_cutoff = 240.0;
+                p.osc2_detune = 700.0;
+                p.osc2_mix = 0.72;
+                p.lfo_depth = 0.018;
+                p.lfo_rate = 3.9;
+            }
             _ => {}
         }
         p
