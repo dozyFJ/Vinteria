@@ -6125,6 +6125,10 @@ impl VinteriaApp {
             ui.label("Add a track or expand a group in the dock.");
             return;
         }
+        let mut columns = vec![None; self.project.arrangement.tracks.len()];
+        for (column, &lane) in lanes.iter().enumerate() {
+            columns[lane] = Some(column);
+        }
         let (viewport, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
         let option_height = if docked { 0.0 } else { 30.0 };
         let grid = Rect::from_min_max((viewport.min + vec2(32.0, option_height)).min(viewport.max), viewport.max);
@@ -6220,7 +6224,7 @@ impl VinteriaApp {
             } else { None };
             let mut selected = Vec::new();
             for (index, &clip) in self.project.arrangement.clips.iter().enumerate() {
-                let Some(i) = lanes.iter().position(|&lane| lane == clip.lane) else { continue; };
+                let Some(i) = columns.get(clip.lane).copied().flatten() else { continue; };
                 let bounds_at = bounds(i, clip);
                 let clip_id = id.with(("clip", index));
                 if !bounds_at.intersects(visible) && !ctx.is_being_dragged(clip_id) { continue; }
@@ -6243,14 +6247,22 @@ impl VinteriaApp {
                 }
                 if let Some(pattern) = pattern.filter(|_| rect.height() > 27.0) {
                     let inset = Rect::from_min_max(rect.min + vec2(6.0, 17.0), rect.max - vec2(8.0, 5.0));
-                    let marks = p.with_clip_rect(inset.intersect(visible));
-                    for note in pattern.notes.iter().filter(|note| !note.mute
-                        && (clip.offset..clip.offset.saturating_add(clip.len)).contains(&note.start)) {
-                        let y = inset.top() + (note.start - clip.offset) as f32 / clip.len.max(1) as f32 * inset.height();
-                        if !visible.y_range().contains(y) { continue; }
-                        let x = inset.left() + (note.pitch % 12) as f32 / 12.0 * inset.width();
-                        marks.line_segment([pos2(x, y), pos2(x + 7.0, y)],
-                            Stroke::new(1.6, Color32::from_black_alpha(145)));
+                    let visible_marks = inset.intersect(visible);
+                    if visible_marks.is_positive() {
+                        let time_at = |y: f32| (y - inset.top()) / inset.height() * clip.len as f32;
+                        let first = clip.offset.saturating_add(time_at(visible_marks.top()).floor() as u32);
+                        let last = clip.offset.saturating_add(time_at(visible_marks.bottom()).ceil() as u32)
+                            .min(clip.offset.saturating_add(clip.len));
+                        let marks = p.with_clip_rect(visible_marks);
+                        // Bound the work for a small preview, even for a dense MIDI import.
+                        let max_marks = (visible_marks.height().ceil() as usize).saturating_mul(3);
+                        let notes = pattern.notes.iter().filter(|note| !note.mute && (first..last).contains(&note.start));
+                        for note in notes.take(max_marks) {
+                            let y = inset.top() + (note.start - clip.offset) as f32 / clip.len.max(1) as f32 * inset.height();
+                            let x = inset.left() + (note.pitch % 12) as f32 / 12.0 * inset.width();
+                            marks.line_segment([pos2(x, y), pos2(x + 7.0, y)],
+                                Stroke::new(1.6, Color32::from_black_alpha(145)));
+                        }
                     }
                 }
                 if rect.height() > 10.0 {
@@ -6294,7 +6306,7 @@ impl VinteriaApp {
                         let valid = visible.contains(point) && !self.project.arrangement.tracks[candidate.lane].playlist_locked
                             && self.project.arrangement.kind(candidate.lane) == self.project.arrangement.kind(clip.lane)
                             && self.project.arrangement.can_place(&candidate, Some(index));
-                        if let Some(target) = lanes.iter().position(|&lane| lane == candidate.lane) {
+                        if let Some(target) = columns[candidate.lane] {
                             p.rect_stroke(bounds(target, candidate).shrink(2.0), 6.0,
                                 Stroke::new(2.0, if valid { p_accent() } else { RED }));
                         }

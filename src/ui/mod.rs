@@ -2278,6 +2278,8 @@ impl eframe::App for VinteriaApp {
         }
         // every track with a built-in synth plays its own copy of the plugin's settings
         self.project.adopt_track_params();
+        // Reclaim retired snapshots on the UI thread, including on mobile.
+        self.shared.drain_garbage();
         // phones get their own layout (Pulse style); the PC keeps the AOS desktop
         if self.is_mobile() {
             self.hub_open = false;
@@ -2339,7 +2341,6 @@ impl eframe::App for VinteriaApp {
                 apply_visuals(ctx);
             }
         }
-        self.shared.drain_garbage();
         // debugging aid: `SYNTH_VIZ=<template 0..5> synthesia.exe` opens the visualizer and starts playback
         static VIZ_ONCE: std::sync::Once = std::sync::Once::new();
         VIZ_ONCE.call_once(|| {

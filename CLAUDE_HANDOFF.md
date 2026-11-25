@@ -703,3 +703,8 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 
 - Remove duplicate track headers above the portrait vertical timeline. Track cards remain in the strip above the dock. Full view keeps a small space for its Playlist options button.
 - Native Android layout verification is pending.
+
+### Android 1.0.121
+
+- Drain retired audio project snapshots in the mobile update loop. Vertical Playlist uses direct track-column lookup and limits MIDI thumbnail drawing to visible, distinguishable marks.
+- The reported Android freeze has not been reproduced locally. Native-device verification is pending.
