@@ -373,7 +373,8 @@ mod io {
     impl CallbackCore {
         fn new(shared: Arc<Shared>, sr: f32) -> Self {
             let mut engine = Engine::new(sr);
-            engine.live_loop = true;
+            // Android songs play once unless the user enables a loop.
+            engine.live_loop = !cfg!(target_os = "android");
             #[cfg(target_os = "android")]
             {
                 // +3 dB on Android playback, before the master limiter.

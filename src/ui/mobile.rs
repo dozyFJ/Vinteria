@@ -1898,10 +1898,6 @@ impl VinteriaApp {
         if self.playing() || paused != Some(key) {
             // a different thing (or nothing) was paused: start fresh from the beginning
             self.shared.send(Cmd::Stop);
-            if song {
-                let start = if self.project.loop_on { self.project.loop_start * TICKS_PER_BAR } else { 0 };
-                ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_playlist_reveal_tick"), start));
-            }
         }
         self.project.song_mode = song;
         if !song && pattern < self.project.patterns.len() {
@@ -4850,7 +4846,6 @@ impl VinteriaApp {
     }
 
     fn m_playlist_options_content(&mut self, ui: &mut Ui) {
-        let follow_id = egui::Id::new("m_playlist_follow");
         let selected = self.arr.sel_clip.filter(|&index| index < self.project.arrangement.clips.len());
         ui.set_min_width(176.0);
         mobile_scroll(egui::ScrollArea::vertical()).max_height((ui.ctx().screen_rect().height() * 0.50).min(330.0))
@@ -4899,10 +4894,6 @@ impl VinteriaApp {
                             self.publish_edits();
                             ui.close_menu();
                         }
-                    }
-                    let mut follow = ui.data(|d| d.get_temp::<bool>(follow_id)).unwrap_or(true);
-                    if ui.checkbox(&mut follow, "Follow playhead").changed() {
-                        ui.data_mut(|d| d.insert_temp(follow_id, follow));
                     }
                 });
                 egui::CollapsingHeader::new("Clips").show(ui, |ui| {
@@ -5137,31 +5128,15 @@ impl VinteriaApp {
         };
         let follow_id = egui::Id::new("m_playlist_offset_x");
         let shown_x = ui.data(|d| d.get_temp::<f32>(follow_id)).unwrap_or(0.0);
-        let head_id = follow_id.with("transport");
-        let (previous_tick, was_playing) = ui.data_mut(|d| {
-            let previous = d.get_temp::<(u32, bool)>(head_id).unwrap_or((pos, false));
-            d.insert_temp(head_id, (pos, playing));
-            previous
-        });
         let (rewind, reveal_tick) = ui.data_mut(|d| (
             d.remove_temp::<bool>(egui::Id::new("playlist_return_to_start")).unwrap_or(false),
             d.remove_temp::<u32>(egui::Id::new("m_playlist_reveal_tick")),
         ));
-        let paused = ui.data(|d| d.get_temp::<(bool, usize)>(egui::Id::new(Self::M_PAUSED_AT))).is_some();
-        let ended = was_playing && !playing && pos == 0 && !paused;
-        let x_at = |tick| tick as f32 / TICKS_PER_BAR as f32 * bar_w;
-        let head_x = x_at(pos);
-        let follow_at = shown_x + grid.width() * 0.85;
-        let browsing = ui.input(|input| input.pointer.any_down() || input.smooth_scroll_delta.x != 0.0);
-        let follow = playing && !pinching && !browsing
-            && ui.data(|d| d.get_temp::<bool>(egui::Id::new("m_playlist_follow"))).unwrap_or(true);
-        let crossed_right = x_at(previous_tick) >= shown_x && x_at(previous_tick) <= follow_at && head_x > follow_at;
-        let looped_left = pos < previous_tick && head_x < shown_x;
-        let scroll = if rewind || ended {
+        let scroll = if rewind {
             scroll.horizontal_scroll_offset(0.0)
         } else if let Some(tick) = reveal_tick {
-            let x = x_at(tick);
-            if tick == 0 || x < shown_x || x > follow_at {
+            let x = tick as f32 / TICKS_PER_BAR as f32 * bar_w;
+            if x < shown_x || x > shown_x + grid.width() * 0.85 {
                 scroll.horizontal_scroll_offset((x - grid.width() * 0.15).max(0.0))
             } else {
                 scroll
@@ -5170,8 +5145,6 @@ impl VinteriaApp {
             let anchor = center.x - grid.left();
             let offset = (shown_x + anchor) * bar_w / previous_bar_w - anchor;
             scroll.horizontal_scroll_offset(offset.max(0.0))
-        } else if follow && (crossed_right || looped_left) {
-            scroll.horizontal_scroll_offset((head_x - grid.width() * 0.15).max(0.0))
         } else {
             scroll
         };
@@ -6148,9 +6121,10 @@ impl VinteriaApp {
             .saturating_add(8).max(16);
         let snap = self.arr.snap.max(1);
         let pos = self.shared.position.load(Ordering::Relaxed);
-        let (reveal_lane, reveal_tick) = ui.data_mut(|d| (
+        let (reveal_lane, reveal_tick, rewind) = ui.data_mut(|d| (
             d.remove_temp::<usize>(egui::Id::new("m_playlist_reveal_track")),
             d.remove_temp::<u32>(egui::Id::new("m_playlist_reveal_tick")),
+            d.remove_temp::<bool>(egui::Id::new("playlist_return_to_start")).unwrap_or(false),
         ));
         let mut scroll = mobile_scroll(egui::ScrollArea::both().id_salt(id))
             .drag_to_scroll(!pinching && !select).auto_shrink([false, false]);
@@ -6161,8 +6135,9 @@ impl VinteriaApp {
                 scroll = scroll.horizontal_scroll_offset(x);
             }
         }
-        let follow = ui.data(|d| d.get_temp::<bool>(egui::Id::new("m_playlist_follow"))).unwrap_or(true);
-        if let Some(tick) = reveal_tick.or((follow && self.playing() && self.project.song_mode).then_some(pos)) {
+        if rewind {
+            scroll = scroll.vertical_scroll_offset(0.0);
+        } else if let Some(tick) = reveal_tick {
             let y = tick as f32 * scale;
             if y < old.y || y > old.y + grid.height() - 16.0 {
                 scroll = scroll.vertical_scroll_offset(y);

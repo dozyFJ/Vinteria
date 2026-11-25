@@ -708,3 +708,8 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 
 - Drain retired audio project snapshots in the mobile update loop. Vertical Playlist uses direct track-column lookup and limits MIDI thumbnail drawing to visible, distinguishable marks.
 - The reported Android freeze has not been reproduced locally. Native-device verification is pending.
+
+### Android 1.0.122
+
+- Mobile Playlist no longer follows the playhead in either orientation. Manual Stop and Return to start can still reset the view.
+- Android song playback stops and returns the playhead to the start at the end unless an explicit loop is enabled. Native Android playback verification is pending.
