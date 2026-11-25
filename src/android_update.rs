@@ -66,6 +66,13 @@ pub(crate) struct Updater {
 }
 
 impl Updater {
+    pub(crate) fn play_startup_sound(&self) {
+        let _ = with_activity(&self.app, |env, activity| {
+            env.call_method(activity, "playStartupSound", "()V", &[])?;
+            Ok(())
+        });
+    }
+
     pub(crate) fn new(app: AndroidApp) -> Self {
         Self {
             app,

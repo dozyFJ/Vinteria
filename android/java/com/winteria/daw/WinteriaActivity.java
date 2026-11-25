@@ -6,6 +6,9 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.database.Cursor;
 import android.net.Uri;
+import android.media.AudioAttributes;
+import android.media.AudioManager;
+import android.media.MediaPlayer;
 import android.provider.DocumentsContract;
 import android.provider.OpenableColumns;
 
@@ -48,6 +51,42 @@ public final class WinteriaActivity extends NativeActivity {
             }
         });
         super.onCreate(state);
+    }
+
+    public void playStartupSound() {
+        runOnUiThread(() -> {
+            if (isFinishing() || isDestroyed()) {
+                return;
+            }
+            MediaPlayer player = null;
+            try {
+                AudioManager manager = getSystemService(AudioManager.class);
+                if (manager == null || manager.getRingerMode() != AudioManager.RINGER_MODE_NORMAL) {
+                    return;
+                }
+                int sound = getResources().getIdentifier("winteria_startup", "raw", getPackageName());
+                if (sound == 0) {
+                    return;
+                }
+                AudioAttributes attributes = new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build();
+                player = MediaPlayer.create(this, sound, attributes, AudioManager.AUDIO_SESSION_ID_GENERATE);
+                if (player != null) {
+                    player.setOnCompletionListener(MediaPlayer::release);
+                    player.setOnErrorListener((failedPlayer, what, extra) -> {
+                        failedPlayer.release();
+                        return true;
+                    });
+                    player.start();
+                }
+            } catch (RuntimeException ignored) {
+                if (player != null) {
+                    player.release();
+                }
+            }
+        });
     }
 
     private static final int REQUEST_MICROPHONE = 430;

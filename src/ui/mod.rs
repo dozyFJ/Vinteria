@@ -777,6 +777,11 @@ impl VinteriaApp {
 
     #[cfg(target_os = "android")]
     fn splash_ui(&mut self, ctx: &egui::Context) -> bool {
+        if self.splash.is_none() {
+            if let Some(android) = &self.android_updater {
+                android.play_startup_sound();
+            }
+        }
         let elapsed = self.splash.get_or_insert_with(web_time::Instant::now).elapsed().as_secs_f32();
         if elapsed >= 0.86 {
             return false;
