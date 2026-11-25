@@ -6,9 +6,12 @@ use crate::piano_roll::{Note, Track};
 use crate::project::{MasterFx, Project};
 use crate::sequencer::*;
 
-pub const TEMPLATES: [(&str, fn() -> Project); 37] = [
+pub const TEMPLATES: [(&str, fn() -> Project); 40] = [
     ("Drift Phonk Hard (cowbell)", drift_hard),
     ("Phonk House 2 (cowbell)", phonk_house_2),
+    ("Neon Garage · House Phonk", neon_garage),
+    ("Night Oversteer · Drift Phonk", night_oversteer),
+    ("Glass Rain · Melodic Type Beat", glass_rain),
     ("Dubstep (wobble)", dubstep),
     ("Pop (bright)", pop_beat),
     ("Melodic Type Beat", melodic_beat),
@@ -890,6 +893,84 @@ fn house_style(sp: HouseSpec) -> Project {
     clips(&mut p, &[(0, 4), (1, 8), (2, 4), (1, 8), (2, 2), (1, 4)]);
     apply_mix(&mut p, "Club");
     p
+}
+
+fn neon_garage() -> Project {
+    house_style(HouseSpec {
+        name: "Neon Garage · House Phonk",
+        bpm: 130.0,
+        hook: [(0, 1, 78), (3, 1, 81), (5, 1, 76), (8, 2, 73), (11, 1, 76), (14, 2, 78),
+            (16, 1, 76), (18, 1, 78), (21, 1, 81), (24, 2, 80), (27, 1, 76), (30, 2, 73)],
+        bass: [30, 30, 33, 37, 28, 28, 32, 35],
+        chord_a: [54, 57, 61],
+        chord_b: [52, 56, 59],
+        pump_drive: 3.6,
+    })
+}
+
+fn oversteer_drums(pat: &mut Pattern, full: bool) {
+    steps(pat, 0, &[0, 3, 7, 10, 14, 16, 19, 23, 26, 29], 124);
+    steps(pat, 1, &[4, 12, 20, 28], 115);
+    steps(pat, 2, &[4, 12, 20, 28], 94);
+    steps(pat, 3, &range(0, 32, 2), 74);
+    steps(pat, 4, &[6, 15, 22, 31], 85);
+    if full {
+        steps(pat, 3, &[13, 15, 25, 27, 29, 30, 31], 83);
+    }
+}
+
+fn night_oversteer() -> Project {
+    style_project(Style {
+        name: "Night Oversteer · Drift Phonk",
+        bpm: 160.0,
+        swing: 0.05,
+        drums: oversteer_drums,
+        sub: &[(0, 4, 37, false), (6, 4, 37, false), (11, 4, 40, true),
+            (16, 6, 33, false), (23, 3, 40, true), (27, 4, 35, false)],
+        lead_track: Track::Analog,
+        lead: &[(0, 1, 73), (2, 1, 76), (5, 1, 80), (7, 1, 76), (9, 1, 74), (12, 2, 73),
+            (16, 1, 69), (19, 1, 73), (21, 1, 76), (24, 2, 74), (27, 1, 71), (30, 2, 73)],
+        counter_track: Track::Synth,
+        counter: &[(6, 2, 61), (14, 1, 64), (22, 2, 57), (30, 2, 61)],
+        chord_a: [49, 52, 56],
+        chord_b: [45, 49, 52],
+        setup: |p| {
+            p.analog = cowbell();
+            p.synth = crate::instruments::SynthParams::preset("Pluck");
+            p.wt = WavetableParams { volume: 0.42, ..WavetableParams::preset("Vowel Pad") };
+            p.bass = Bass808Params { drive: 6.0, glide_ms: 58.0, decay: 0.55, sustain: 0.4,
+                release: 0.14, pitch_drop: 8.0, tone: 2900.0, volume: 0.82, ..Bass808Params::default() };
+        },
+        mix: "Phonk",
+        delay: (0.5, 0.24, 0.17),
+    })
+}
+
+fn glass_rain() -> Project {
+    style_project(Style {
+        name: "Glass Rain · Melodic Type Beat",
+        bpm: 138.0,
+        swing: 0.07,
+        drums: melodic_drums,
+        sub: &[(0, 6, 35, false), (7, 6, 35, false), (13, 3, 38, true),
+            (16, 6, 31, false), (23, 5, 31, false), (28, 4, 33, true)],
+        lead_track: Track::Synth,
+        lead: &[(0, 3, 78), (4, 2, 74), (7, 3, 71), (11, 2, 73), (14, 2, 74),
+            (16, 3, 79), (21, 2, 74), (24, 3, 71), (28, 2, 69), (30, 2, 66)],
+        counter_track: Track::Analog,
+        counter: &[(4, 6, 62), (12, 4, 66), (20, 8, 59), (29, 3, 62)],
+        chord_a: [59, 62, 66],
+        chord_b: [55, 59, 62],
+        setup: |p| {
+            p.synth = crate::instruments::SynthParams::preset("Bell");
+            p.analog = AnalogParams::preset("Soft Keys");
+            p.wt = WavetableParams { volume: 0.48, ..WavetableParams::preset("Vowel Pad") };
+            p.bass = Bass808Params { drive: 2.8, glide_ms: 85.0, decay: 0.95, sustain: 0.54,
+                release: 0.16, tone: 2350.0, volume: 0.82, ..Bass808Params::default() };
+        },
+        mix: "Trap",
+        delay: (0.75, 0.37, 0.25),
+    })
 }
 
 fn club_drums(pat: &mut Pattern, full: bool) {

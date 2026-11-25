@@ -1469,17 +1469,17 @@ impl VinteriaApp {
                 }
                 let tick = self.shared.position.load(Ordering::Relaxed);
                 let bar = tick / TICKS_PER_BAR;
-                let bars = if playlist {
-                    self.project.arrangement.song_end_bar().max(1)
-                } else {
-                    self.project.patterns.get(self.project.current_pattern)
-                        .map_or(1, |p| u32::from(p.length_steps).div_ceil(16).max(1))
-                };
+                let bars = self.m_studio_transport_bars();
                 let end = bars * TICKS_PER_BAR;
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
-                    let reserve = if playlist { 46.0 } else { 0.0 };
-                    let space = (ui.available_width() - reserve).max(12.0);
+                    let playing = self.m_transport_playing(ctx);
+                    if dock_icon(ui, if playing { Icon::Pause } else { Icon::Play }, true,
+                        if playing { "Pause" } else { "Play" }).clicked()
+                    {
+                        self.m_toggle_play(ctx);
+                    }
+                    let space = ui.available_width().max(12.0);
                     let (rect, scrub) = ui.allocate_exact_size(vec2(space, 44.0), Sense::click_and_drag());
                     let track = Rect::from_center_size(rect.center(), vec2((rect.width() - 14.0).max(1.0), 5.0));
                     let head = track.left() + track.width() * (tick as f32 / end as f32).clamp(0.0, 1.0);
@@ -1493,46 +1493,6 @@ impl VinteriaApp {
                         self.m_seek(ctx, ((fraction * end as f32) as u32).min(end - 1));
                     }
                     scrub.on_hover_text(format!("Bar {} of {bars}", bar.saturating_add(1).min(bars)));
-                    if playlist {
-                        dock_menu(ui, Icon::Settings, "Playlist options", false,
-                            |ui| self.m_playlist_options_content(ui));
-                    }
-                });
-                ui.separator();
-                ui.horizontal(|ui| {
-                    let space = ((ui.available_width() - 5.0 * TOUCH) / 6.0).max(0.0);
-                    ui.spacing_mut().item_spacing.x = space;
-                    ui.add_space(space);
-                    let playing = self.m_transport_playing(ctx);
-                    if dock_icon(ui, if playing { Icon::Pause } else { Icon::Play }, true,
-                        if playing { "Pause" } else { "Play" }).clicked()
-                    {
-                        self.m_toggle_play(ctx);
-                    }
-                    if dock_icon(ui, Icon::Stop, false, "Stop").clicked() {
-                        self.m_stop(ctx);
-                    }
-                    if dock_icon(ui, Icon::Rewind, false, "Previous bar").clicked() {
-                        let previous = if tick % TICKS_PER_BAR == 0 { bar.saturating_sub(1) } else { bar };
-                        self.m_seek(ctx, previous * TICKS_PER_BAR);
-                    }
-                    if dock_icon(ui, Icon::Forward, false, "Next bar").clicked() {
-                        self.m_seek(ctx, (bar + 1).min(bars - 1) * TICKS_PER_BAR);
-                    }
-                    let (name, symbol) = STUDIO_SECTIONS.get(self.m_sec).copied().unwrap_or(STUDIO_SECTIONS[0]);
-                    dock_menu(ui, symbol, name, true, |ui| {
-                        ui.set_min_width(174.0);
-                        for (index, (label, symbol)) in STUDIO_SECTIONS.into_iter().enumerate() {
-                            if index == SEC_PIANO || matches!(symbol, Icon::Tracks) {
-                                continue;
-                            }
-                            let label = if label == "Steps" { "Drum Rack" } else { label };
-                            if drawer_row(ui, symbol, label, index == self.m_sec).clicked() {
-                                self.m_select_studio_section(ctx, index);
-                                ui.close_menu();
-                            }
-                        }
-                    });
                 });
             });
         ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_studio_transport_rect"), dock.response.rect));
@@ -1602,6 +1562,48 @@ impl VinteriaApp {
         ctx.request_repaint();
     }
 
+    fn m_studio_transport_bars(&self) -> u32 {
+        if self.m_sec == SEC_PLAYLIST {
+            self.project.arrangement.song_end_bar().max(1)
+        } else {
+            self.project.patterns.get(self.project.current_pattern)
+                .map_or(1, |p| u32::from(p.length_steps).div_ceil(16).max(1))
+        }
+    }
+
+    fn m_studio_sidebar_transport(&mut self, ui: &mut Ui, ctx: &egui::Context) {
+        if dock_icon(ui, Icon::Stop, false, "Stop").clicked() {
+            self.m_stop(ctx);
+        }
+        let tick = self.shared.position.load(Ordering::Relaxed);
+        let bar = tick / TICKS_PER_BAR;
+        if dock_icon(ui, Icon::Rewind, false, "Previous bar").clicked() {
+            let previous = if tick % TICKS_PER_BAR == 0 { bar.saturating_sub(1) } else { bar };
+            self.m_seek(ctx, previous * TICKS_PER_BAR);
+        }
+        if dock_icon(ui, Icon::Forward, false, "Next bar").clicked() {
+            self.m_seek(ctx, (bar + 1).min(self.m_studio_transport_bars() - 1) * TICKS_PER_BAR);
+        }
+        let (name, symbol) = STUDIO_SECTIONS.get(self.m_sec).copied().unwrap_or(STUDIO_SECTIONS[0]);
+        dock_menu(ui, symbol, name, true, |ui| {
+            ui.set_min_width(174.0);
+            for (index, (label, symbol)) in STUDIO_SECTIONS.into_iter().enumerate() {
+                if index == SEC_PIANO || matches!(symbol, Icon::Tracks) {
+                    continue;
+                }
+                let label = if label == "Steps" { "Drum Rack" } else { label };
+                if drawer_row(ui, symbol, label, index == self.m_sec).clicked() {
+                    self.m_select_studio_section(ctx, index);
+                    ui.close_menu();
+                }
+            }
+        });
+        if self.m_sec == SEC_PLAYLIST {
+            dock_menu(ui, Icon::Settings, "Playlist options", false,
+                |ui| self.m_playlist_options_content(ui));
+        }
+    }
+
     fn m_studio_portrait_sidebar(&mut self, ctx: &egui::Context) {
         let drawer = egui::Id::new("m_studio_project_drawer");
         egui::SidePanel::right("m_studio_portrait_sidebar")
@@ -1620,6 +1622,8 @@ impl VinteriaApp {
                                 d.remove::<bool>(egui::Id::new("m_browser_open"));
                             });
                         }
+                        self.m_studio_sidebar_transport(ui, ctx);
+                        ui.separator();
                         if self.m_sec == SEC_PLAYLIST {
                             self.m_studio_browser_button(ui, ctx, TOUCH);
                             if studio_icon(ui, TOUCH, Icon::Repeat, self.project.loop_on,
@@ -3086,18 +3090,38 @@ impl VinteriaApp {
             let mut commit_group = false;
             if !selecting || pinching {
                 ui.data_mut(|d| {
-                    d.remove::<(Pos2, Pos2, bool)>(drag_id);
+                    d.remove::<(Pos2, Pos2, bool, bool)>(drag_id);
                     if !selecting {
                         d.remove::<Vec<usize>>(selected_id);
                     }
                 });
             } else {
-                let mut drag = ui.data(|d| d.get_temp::<(Pos2, Pos2, bool)>(drag_id));
+                let mut drag = ui.data(|d| d.get_temp::<(Pos2, Pos2, bool, bool)>(drag_id));
                 let note_at = |point: Pos2| notes.iter().enumerate().rev().find(|(_, note)| {
                     editable(note) && body(note.len, note.pitch, note.start).expand(1.0).contains(point)
                 }).map(|(index, _)| index);
                 let point = resp.interact_pointer_pos();
-                if resp.drag_started() {
+                let (raw_point, released, cancelled) = ui.input(|input| (
+                    input.pointer.interact_pos(),
+                    input.pointer.primary_released(),
+                    input.key_pressed(egui::Key::Escape) || input.events.iter().any(|event| {
+                        matches!(event, egui::Event::Touch { phase: egui::TouchPhase::Cancel, .. })
+                    }),
+                ));
+                if cancelled {
+                    drag = None;
+                } else if resp.long_touched() {
+                    // egui clears its drag candidate on long touch. Keep the selected note's grab
+                    // until this finger moves or releases so a deliberate hold can start a move.
+                    if let Some(origin) = ui.input(|input| input.pointer.press_origin()).or(point) {
+                        if let Some(index) = note_at(origin) {
+                            if !selected.contains(&index) {
+                                selected = vec![index];
+                            }
+                            drag = Some((origin, origin, true, true));
+                        }
+                    }
+                } else if resp.drag_started() {
                     if let Some(origin) = ui.input(|input| input.pointer.press_origin()).or(point) {
                         let moving = if let Some(index) = note_at(origin) {
                             if !selected.contains(&index) {
@@ -3107,11 +3131,14 @@ impl VinteriaApp {
                         } else {
                             false
                         };
-                        drag = Some((origin, origin, moving));
+                        drag = Some((origin, origin, moving, false));
                     }
                 }
-                if let Some((origin, last, moving)) = drag.filter(|_| resp.dragged() || resp.drag_stopped()) {
-                    let point = point.unwrap_or(last).clamp(p.clip_rect().min, p.clip_rect().max);
+                if let Some((origin, last, moving, held)) = drag.filter(|&(_, _, _, held)| {
+                    held || resp.dragged() || resp.drag_stopped()
+                }) {
+                    let stopped = if held { released } else { resp.drag_stopped() };
+                    let point = point.or(raw_point).unwrap_or(last).clamp(p.clip_rect().min, p.clip_rect().max);
                     if moving && !selected.is_empty() {
                         let mut min_start = editable_end;
                         let mut max_end = clip_start;
@@ -3131,7 +3158,7 @@ impl VinteriaApp {
                         let semitones = ((origin.y - point.y) / row_h).round() as i32;
                         group_delta = (units.clamp(-left, right) * step,
                             semitones.clamp(-i32::from(min_pitch), i32::from(high_pitch - max_pitch)));
-                        commit_group = resp.drag_stopped() && !selected.is_empty() && group_delta != (0, 0);
+                        commit_group = stopped && !selected.is_empty() && group_delta != (0, 0);
                     } else {
                         let area = Rect::from_two_pos(origin, point);
                         selected = notes.iter().enumerate().filter(|(_, note)| {
@@ -3140,7 +3167,8 @@ impl VinteriaApp {
                         p.rect_filled(area, 3.0, p_accent().gamma_multiply(0.18));
                         p.rect_stroke(area, 3.0, Stroke::new(1.2, p_accent()));
                     }
-                    drag = (!resp.drag_stopped()).then_some((origin, point, moving));
+                    drag = (!stopped && ui.input(|input| input.pointer.primary_down()))
+                        .then_some((origin, point, moving, held));
                 } else if resp.clicked() && !select_all {
                     selected = point.and_then(note_at).into_iter().collect();
                     drag = None;
@@ -3152,7 +3180,7 @@ impl VinteriaApp {
                     if let Some(drag) = drag {
                         d.insert_temp(drag_id, drag);
                     } else {
-                        d.remove::<(Pos2, Pos2, bool)>(drag_id);
+                        d.remove::<(Pos2, Pos2, bool, bool)>(drag_id);
                     }
                 });
             }
