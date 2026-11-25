@@ -552,6 +552,19 @@ fn track_settings(ui: &mut Ui, p: &mut Project, lane: usize, mobile: bool, mut e
     });
         });
 }
+fn track_settings_section(ui: &mut Ui, title: &str, content: impl FnOnce(&mut Ui)) {
+    let width = (ui.available_width() - 22.0).max(0.0);
+    egui::Frame::none().fill(PANEL2()).rounding(12.0).stroke(Stroke::new(1.0, border()))
+        .inner_margin(10.0).show(ui, |ui| {
+            ui.set_width(width);
+            ui.spacing_mut().slider_width = (width * 0.5).max(44.0);
+            ui.label(RichText::new(title).small().strong().color(DIM()));
+            ui.add_space(4.0);
+            content(ui);
+        });
+    ui.add_space(6.0);
+}
+
 pub(super) fn mobile_track_settings(
     ui: &mut Ui,
     project: &mut Project,
@@ -612,26 +625,80 @@ pub(super) fn mobile_track_settings(
     egui::ScrollArea::vertical().id_salt(("mobile_track_page", lane, page))
         .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
         .auto_shrink([false, false]).show(ui, |ui| match page {
-            0 if kind == TrackKind::Audio => {
-                let sample = state.sel_clip.and_then(|index| project.arrangement.clips.get(index))
-                    .filter(|clip| clip.audio && clip.lane == lane).map(|clip| clip.pattern)
-                    .or(project.arrangement.tracks[lane].audio_brush);
-                if landscape {
-                    super::track_ui::sample_panel(ui, project, lane, sample, false, shared);
-                } else {
-                    card_ui(ui, (ui.available_width() - 22.0).max(0.0), |ui| {
-                        ui.label(RichText::new("Track sample").strong());
-                        super::track_ui::sample_panel(ui, project, lane, sample, false, shared);
-                    });
-                }
-            }
             0 => {
-                let sampler = &project.arrangement.tracks[lane].sampler;
-                if let Some(sample) = sampler.sample.as_ref().filter(|_| project.arrangement.tracks[lane].instrument == Some(Track::Sampler)) {
-                    super::track_ui::sample_waveform(ui, sample, project.bpm, shared);
-                    ui.add_space(8.0);
+                let clip = state.sel_clip.filter(|&index| {
+                    project.arrangement.clips.get(index)
+                        .is_some_and(|clip| clip.lane == lane && clip.audio == (kind == TrackKind::Audio))
+                });
+                if kind == TrackKind::Audio {
+                    let clip = clip.or_else(|| project.arrangement.clips.iter()
+                        .position(|clip| clip.audio && clip.lane == lane));
+                    track_settings_section(ui, "Source", |ui| {
+                        let name = clip.and_then(|i| project.audio_pool.get(project.arrangement.clips[i].pattern))
+                            .map_or("No audio clip", |sample| sample.name.as_str());
+                        ui.label(RichText::new(name).strong().size(17.0));
+                        if let Some(i) = clip {
+                            ui.menu_button("Replace sample", |ui| {
+                                if let Some(path) = super::arrangement_ui::sample_picker(ui, library) {
+                                    if let Ok(data) = library.get(&path) {
+                                        let name = path.file_stem().map(|s| s.to_string_lossy()).unwrap_or_default();
+                                        let sample = project.pool_index(&name, &path.to_string_lossy(), data);
+                                        project.arrangement.clips[i].pattern = sample;
+                                        state.sel_sample = Some(sample);
+                                    }
+                                    ui.close_menu();
+                                }
+                            });
+                        }
+                    });
+                    track_settings_section(ui, "Playback", |ui| {
+                        let track = &mut project.arrangement.tracks[lane];
+                        ui.horizontal_wrapped(|ui| {
+                            super::widgets::knob(ui, "Track level", &mut track.volume, 0.0, 1.5, false,
+                                |value| format!("{:+.1} dB", super::widgets::db(value)));
+                            if let Some(i) = clip {
+                                let clip = &mut project.arrangement.clips[i];
+                                super::widgets::knob(ui, "Clip gain", &mut clip.gain, 0.0, 2.0, false,
+                                    |value| format!("{:+.1} dB", super::widgets::db(value)));
+                                ui.toggle_value(&mut clip.reverse, "Reverse");
+                            }
+                        });
+                        if let Some(i) = clip {
+                            let clip = &mut project.arrangement.clips[i];
+                            ui.add(egui::Slider::new(&mut clip.pitch, -24..=24).text("Clip pitch").suffix(" st"));
+                            let max_fade = clip.len / 2;
+                            ui.add(egui::Slider::new(&mut clip.fade_in, 0..=max_fade).text("Fade in").show_value(false));
+                            ui.add(egui::Slider::new(&mut clip.fade_out, 0..=max_fade).text("Fade out").show_value(false));
+                        } else {
+                            ui.add(egui::Slider::new(&mut track.transpose, -24..=24).text("Pitch").suffix(" st"));
+                        }
+                    });
+                    if let Some(sample) = clip.and_then(|i| project.audio_pool.get(project.arrangement.clips[i].pattern)) {
+                        track_settings_section(ui, "Waveform", |ui| {
+                            super::track_ui::sample_waveform(ui, sample, project.bpm, shared);
+                        });
+                    }
+                } else {
+                    show(ui, project, state, detail, plugin_window, library, playhead, 3);
+                    track_settings_section(ui, "Playback", |ui| {
+                        let track = &mut project.arrangement.tracks[lane];
+                        ui.horizontal_wrapped(|ui| {
+                            super::widgets::knob(ui, "Track level", &mut track.volume, 0.0, 1.5, false,
+                                |value| format!("{:+.1} dB", super::widgets::db(value)));
+                            ui.add(egui::Slider::new(&mut track.transpose, -24..=24).text("Transpose").suffix(" st"));
+                        });
+                        if let Some(i) = clip {
+                            let clip = &mut project.arrangement.clips[i];
+                            ui.add(egui::Slider::new(&mut clip.pitch, -24..=24).text("Clip transpose").suffix(" st"));
+                        }
+                    });
+                    let track = &project.arrangement.tracks[lane];
+                    if let Some(sample) = track.sampler.sample.as_ref().filter(|_| track.instrument == Some(Track::Sampler)) {
+                        track_settings_section(ui, "Waveform", |ui| {
+                            super::track_ui::sample_waveform(ui, sample, project.bpm, shared);
+                        });
+                    }
                 }
-                show(ui, project, state, detail, plugin_window, library, playhead, 3);
             }
             1 => {
                 let track = &mut project.arrangement.tracks[lane];

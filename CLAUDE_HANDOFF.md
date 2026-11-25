@@ -723,3 +723,7 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 
 - Make Track settings explicit in the Audio and MIDI card actions menu, and open it directly with a double tap on a portrait track card. It opens on Sample or Instrument by default.
 - Native Android interaction testing is pending.
+
+### Android 1.0.125
+
+- Rebuild the mobile Track settings source page around source, playback and waveform sections. Audio exposes sample replacement, gain, reverse, pitch and fades. MIDI retains instrument selection and adds track playback controls above the Sampler waveform.
