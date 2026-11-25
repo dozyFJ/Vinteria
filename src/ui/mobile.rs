@@ -1121,7 +1121,7 @@ impl VinteriaApp {
             });
     }
 
-    fn m_home_tile(ui: &mut Ui, size: Vec2, symbol: Icon, title: &str, accent: Color32) -> egui::Response {
+    fn m_home_tile(ui: &mut Ui, size: egui::Vec2, symbol: Icon, title: &str, accent: Color32) -> egui::Response {
         let (rect, response) = ui.allocate_exact_size(size, Sense::click());
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 13.0, tint(card_fill(), accent, 0.12));
