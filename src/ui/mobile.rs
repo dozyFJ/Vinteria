@@ -6116,7 +6116,7 @@ impl VinteriaApp {
             }
         }
 
-        let mut pick = None;
+        let mut picked_clip = None;
         let mut open = None;
         let mut move_clip = None;
         let mut create = None;
@@ -6210,16 +6210,16 @@ impl VinteriaApp {
                 }
                 if locked || pinching { continue; }
                 if select {
-                    if hit.clicked() { pick = Some(index); }
+                    if hit.clicked() { picked_clip = Some(index); }
                     continue;
                 }
                 if hit.long_touched() || hit.secondary_clicked() {
                     ui.data_mut(|d| d.insert_temp(menu_id, (index, hit.interact_pointer_pos().unwrap_or(rect.center()))));
-                    pick = Some(index);
+                    picked_clip = Some(index);
                 } else if hit.double_clicked() {
                     open = Some(index);
                 } else if hit.clicked() {
-                    pick = Some(index);
+                    picked_clip = Some(index);
                 }
                 let drag_id = clip_id.with("drag");
                 if hit.drag_started() {
@@ -6337,7 +6337,7 @@ impl VinteriaApp {
         if !docked {
             self.m_playlist_options(ui, Rect::from_min_size(header.min, vec2(32.0, 28.0)));
         }
-        if let Some(index) = pick {
+        if let Some(index) = picked_clip {
             let clip = self.project.arrangement.clips[index];
             self.arr.sel_lane = clip.lane;
             if select && self.arr.is_sel(index) {
