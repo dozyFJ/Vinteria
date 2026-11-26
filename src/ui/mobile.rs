@@ -5958,23 +5958,11 @@ impl VinteriaApp {
         let playing = self.playing() && self.project.song_mode;
         let mut active_lanes = vec![None; tracks];
         if playing {
-            for clip in self.project.arrangement.clips.iter().filter(|clip| {
-                !clip.mute && (clip.start..clip.end_tick()).contains(&pos)
-            }) {
-                let active = if clip.audio {
-                    !self.project.arrangement.muted(clip.lane)
-                } else {
-                    !self.project.arrangement.silent(clip.lane) && self.project.patterns.get(clip.pattern)
-                        .is_some_and(|pattern| {
-                            let tick = (pos - clip.start + clip.offset) % pattern.len_ticks().max(1);
-                            let step = (tick / TICKS_PER_STEP) as usize;
-                            pattern.notes.iter().any(|note| !note.mute && note.chance > 0
-                                && (note.start..note.start.saturating_add(note.len)).contains(&tick))
-                                || pattern.drums.iter().any(|lane| lane.get(step).is_some_and(|cell| cell.on))
-                        })
-                };
-                if let Some(lane) = active_lanes.get_mut(clip.lane).filter(|_| active) {
-                    *lane = Some((pos - clip.start) as f32 / clip.len.max(1) as f32);
+            for clip in &self.project.arrangement.clips {
+                if let Some(progress) = playlist_clip_playback(&self.project, clip, pos) {
+                    if let Some(lane) = active_lanes.get_mut(clip.lane) {
+                        *lane = Some(progress);
+                    }
                 }
             }
         }
@@ -6237,12 +6225,8 @@ impl VinteriaApp {
                 let fill = tint(col, pastel, if MobileTheme::current() == MobileTheme::Day { 0.42 } else { 0.38 });
                 let fill = if c.mute { tint(fill, card_fill(), 0.45) } else { fill };
                 p.rect_filled(r, 5.0, fill);
-                if playing && !c.mute && active_lanes[c.lane].is_some() && (c.start..c.end_tick()).contains(&pos) {
-                    let progress = (pos - c.start) as f32 / c.len.max(1) as f32;
-                    let x = r.left() + r.width() * progress;
-                    let played = Rect::from_min_max(r.min, pos2(x, r.bottom()));
-                    p.rect_filled(played, 3.0, Color32::from_white_alpha(39));
-                    p.vline(x, r.y_range(), Stroke::new(1.5, Color32::from_white_alpha(190)));
+                if let Some(progress) = playing.then(|| playlist_clip_playback(&self.project, c, pos)).flatten() {
+                    paint_playlist_playback(&p, r, col, progress, pos, false);
                 }
                 if r.is_positive() {
                     let fade_y = r.top() + 2.0;
@@ -7063,6 +7047,7 @@ impl VinteriaApp {
             .saturating_add(8).max(16);
         let snap = self.arr.snap.max(1);
         let pos = self.shared.position.load(Ordering::Relaxed);
+        let playing = self.playing() && self.project.song_mode;
         let (reveal_lane, reveal_tick, rewind) = ui.data_mut(|d| (
             d.remove_temp::<usize>(egui::Id::new("m_playlist_reveal_track")),
             d.remove_temp::<u32>(egui::Id::new("m_playlist_reveal_tick")),
@@ -7155,6 +7140,9 @@ impl VinteriaApp {
                 let fill = if clip.mute { tint(fill, card_fill(), 0.45) } else { fill };
                 p.rect_filled(rect, 6.0, fill);
                 clip_shine(&p, rect, track_color, clip.mute);
+                if let Some(progress) = playing.then(|| playlist_clip_playback(&self.project, &clip, pos)).flatten() {
+                    paint_playlist_playback(&p, rect, track_color, progress, pos, true);
+                }
                 if !locked && selection_box.is_some_and(|area| area.intersects(rect)) { selected.push(index); }
                 if self.arr.is_sel(index) || selected.last() == Some(&index) {
                     p.rect_stroke(rect, 6.0, Stroke::new(1.7, p_accent()));
@@ -8643,6 +8631,52 @@ pub(super) fn mobile_action(ui: &mut Ui, title: &str, what: &str) -> Response {
     fit_label(p, text, card.top() + 37.0, what, muted(), 11.0);
     p.text(card.right_center() - vec2(12.0, 0.0), Align2::RIGHT_CENTER, "›", FontId::proportional(20.0), muted());
     response
+}
+
+fn playlist_clip_playback(project: &Project, clip: &crate::arrangement::Clip, tick: u32) -> Option<f32> {
+    if clip.mute || clip.gain <= 0.0 || !(clip.start..clip.end_tick()).contains(&tick) {
+        return None;
+    }
+    let track = project.arrangement.tracks.get(clip.lane)?;
+    if track.volume <= 0.0 {
+        return None;
+    }
+
+    let active = if clip.audio {
+        !project.arrangement.muted(clip.lane)
+            && project.audio_pool.get(clip.pattern).is_some_and(|sample| sample.data.is_some())
+    } else {
+        !project.arrangement.silent(clip.lane) && project.patterns.get(clip.pattern).is_some_and(|pattern| {
+            let local = (tick - clip.start).saturating_add(clip.offset) % pattern.len_ticks().max(1);
+            let step = (local / TICKS_PER_STEP) as usize;
+            pattern.notes.iter().any(|note| !note.mute && note.vel > 0 && note.chance > 0
+                && (note.start..note.start.saturating_add(note.len)).contains(&local))
+                || pattern.drums.iter().any(|lane| lane.get(step).is_some_and(|cell| cell.on && cell.vel > 0 && cell.prob > 0))
+        })
+    };
+    active.then(|| (tick - clip.start) as f32 / clip.len.max(1) as f32)
+}
+
+/// Beat-synced highlight and clip progress, painted under the clip contents.
+fn paint_playlist_playback(painter: &Painter, rect: Rect, color: Color32, progress: f32, tick: u32, vertical: bool) {
+    if !rect.is_positive() {
+        return;
+    }
+    let beat = crate::sequencer::PPQ;
+    let phase = (tick % beat) as f32 / beat as f32;
+    let pulse = (1.0 - phase).powi(2);
+    let signal = tint(color, ink(), 0.38);
+    let alpha = (18.0 + pulse * 28.0).round() as u8;
+    painter.rect_filled(rect, 5.0, signal.gamma_multiply(f32::from(alpha) / 255.0));
+    painter.rect_stroke(rect.shrink(0.6), 5.0, Stroke::new(1.4 + pulse * 0.8, signal));
+    let progress_color = signal.gamma_multiply(0.66);
+    if vertical {
+        let y = egui::lerp(rect.y_range(), progress);
+        painter.hline(rect.shrink(4.0).x_range(), y, Stroke::new(1.5, progress_color));
+    } else {
+        let x = egui::lerp(rect.x_range(), progress);
+        painter.vline(x, rect.shrink(4.0).y_range(), Stroke::new(1.5, progress_color));
+    }
 }
 
 /// Clip / step body polish: a light-to-dark sheen down the body and a track-colour edge on the left.

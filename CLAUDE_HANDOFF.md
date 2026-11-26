@@ -821,3 +821,8 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 
 - Graphite Silver now uses brighter silver controls, cooler slate panels, clearer text and more visible selection and grid colors.
 - Android handset verification pending.
+
+### Android 1.0.163
+
+- Mobile Playlist clips highlight and pulse in sync with the beat. Both orientations show progress, and muted clips and inactive MIDI steps stay unlit.
+- Android handset verification pending.
