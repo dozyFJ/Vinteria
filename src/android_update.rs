@@ -143,7 +143,8 @@ impl Updater {
                 return Ok(None);
             }
             let value = jni::objects::JString::from(value);
-            Ok(Some(env.get_string(&value)?.into()))
+            let result = env.get_string(&value)?.into();
+            Ok(Some(result))
         }).ok().flatten()
     }
 
