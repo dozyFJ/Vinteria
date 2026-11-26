@@ -131,30 +131,11 @@ fn p_bg() -> Color32 {
 fn bar_fill() -> Color32 {
     mobile_color(0xFF1C1A2A, 0xFF24272B, 0xFFF5F8FC)
 }
-// A lightly translucent tint gives controls a frosted surface without blurring the grid.
-fn glass_fill() -> Color32 {
-    mobile_color(0xF02D2648, 0xEB353B42, 0xF2FAFCFF)
+fn surface_fill() -> Color32 {
+    mobile_color(0xFF2D2648, 0xFF353B42, 0xFFFAFCFF)
 }
 
-fn paint_glass_sheen(painter: &Painter, highlight: Rect) {
-    let mut sheen = egui::Mesh::default();
-    let bright = Color32::from_white_alpha(9);
-    sheen.colored_vertex(highlight.left_top(), bright);
-    sheen.colored_vertex(highlight.right_top(), Color32::from_white_alpha(3));
-    sheen.colored_vertex(highlight.right_bottom(), Color32::TRANSPARENT);
-    sheen.colored_vertex(highlight.left_bottom(), Color32::TRANSPARENT);
-    sheen.add_triangle(0, 1, 2);
-    sheen.add_triangle(0, 2, 3);
-    painter.add(Shape::mesh(sheen));
-}
-
-fn mobile_glass_chrome(ui: &Ui) {
-    let rect = ui.max_rect();
-    let size = vec2(rect.width(), rect.height().min(26.0));
-    paint_glass_sheen(ui.painter(), Rect::from_min_size(rect.min, size));
-}
-
-fn glass_edge() -> Color32 {
+fn surface_edge() -> Color32 {
     mobile_color(0xFF75669D, 0xFF74808C, 0xFFA2B3CA)
 }
 
@@ -832,6 +813,17 @@ impl VinteriaApp {
             let poll = egui::Id::new("m_sound_import_poll");
             let now = ctx.input(|i| i.time);
             let due = now - ctx.data(|d| d.get_temp::<f64>(poll)).unwrap_or(f64::MIN) > 0.5;
+            if due {
+                if let Some(result) = self.android_updater.as_ref().and_then(|android| android.take_project_import_result()) {
+                    let status = match result.split_once('\n') {
+                        Some((name, path)) => self.m_finish_project_import(name, std::path::Path::new(path)),
+                        None if result == "Project import canceled." => Ok(result),
+                        None => Err(result),
+                    };
+                    self.hub_cache = None;
+                    ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_project_import_status"), status));
+                }
+            }
             if ctx.data(|d| d.get_temp::<bool>(pending)).unwrap_or(false) || due {
                 ctx.data_mut(|d| d.insert_temp(poll, now));
                 if let Some(status) = self.android_updater.as_ref().and_then(|android| android.take_sound_import_status()) {
@@ -977,9 +969,8 @@ impl VinteriaApp {
     // ───────────────────── shell: header and section navigation ─────────────────────
 
     fn mobile_header(&mut self, ctx: &egui::Context) {
-        let resp = egui::TopBottomPanel::top("m_header").show_separator_line(false).frame(Frame::none().fill(glass_fill()).inner_margin(Margin::symmetric(14.0, 10.0))).show(ctx, |ui| {
+        let resp = egui::TopBottomPanel::top("m_header").show_separator_line(false).frame(Frame::none().fill(surface_fill()).inner_margin(Margin::symmetric(14.0, 10.0))).show(ctx, |ui| {
             mobile_visuals(ui);
-            mobile_glass_chrome(ui);
             let t = self.m_tab;
             ui.horizontal(|ui| {
                 ui.set_min_height(TOUCH);
@@ -1035,10 +1026,9 @@ impl VinteriaApp {
 
     fn m_studio_sidebar(&mut self, ctx: &egui::Context) {
         egui::SidePanel::left("m_studio_sidebar").resizable(false).exact_width(52.0)
-            .frame(Frame::none().fill(glass_fill()).inner_margin(Margin::symmetric(4.0, 5.0)))
+            .frame(Frame::none().fill(surface_fill()).inner_margin(Margin::symmetric(4.0, 5.0)))
             .show(ctx, |ui| {
                 mobile_visuals(ui);
-                mobile_glass_chrome(ui);
                 let width = ui.available_width();
                 if self.m_studio_exit(ui, ctx, width) {
                     return;
@@ -1093,11 +1083,10 @@ impl VinteriaApp {
     /// automation, render, export, sections), so the Playlist needs no right-hand drawer.
     fn m_landscape_playlist_dock(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("m_playlist_dock").show_separator_line(false).exact_height(58.0)
-            .frame(Frame::none().fill(glass_fill()).stroke(Stroke::new(1.0, glass_edge()))
+            .frame(Frame::none().fill(surface_fill()).stroke(Stroke::new(1.0, surface_edge()))
                 .inner_margin(Margin { left: 6.0, right: 6.0, top: 4.0, bottom: 4.0 }))
             .show(ctx, |ui| {
                 mobile_visuals(ui);
-                mobile_glass_chrome(ui);
                 mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_playlist_dock_scroll")
                     .auto_shrink([false, true]).show(ui, |ui| {
                         ui.horizontal(|ui| {
@@ -1150,10 +1139,9 @@ impl VinteriaApp {
 
     fn m_hub_navigation(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("m_hub_nav").show_separator_line(false)
-            .frame(Frame::none().fill(glass_fill()).inner_margin(Margin { left: 8.0, right: 8.0, top: 6.0, bottom: 10.0 }))
+            .frame(Frame::none().fill(surface_fill()).inner_margin(Margin { left: 8.0, right: 8.0, top: 6.0, bottom: 10.0 }))
             .show(ctx, |ui| {
                 mobile_visuals(ui);
-                mobile_glass_chrome(ui);
                 ui.horizontal(|ui| {
                     let width = (ui.available_width() - 2.0 * ui.spacing().item_spacing.x) / 3.0;
                     let current = if matches!(self.m_tab, 0 | 5) { self.m_tab } else { 4 };
@@ -1289,9 +1277,6 @@ impl VinteriaApp {
         let surface = tint(card_fill(), accent, if featured { 0.34 } else { 0.24 });
         painter.rect_filled(rect, 13.0, surface);
         painter.rect_stroke(rect, 13.0, Stroke::new(1.0, tint(outline(), accent, 0.50)));
-        let sheen = Rect::from_min_size(rect.left_top() + vec2(12.0, 2.0),
-            vec2((rect.width() - 24.0).max(0.0), 24.0));
-        paint_glass_sheen(&painter, sheen);
         control_state(&painter, rect, 13.0, &response, ink());
         let badge_size = if featured { 44.0 } else { 32.0 };
         let icon_center = rect.left_top() + vec2(11.0 + badge_size * 0.5, 10.0 + badge_size * 0.5);
@@ -1543,7 +1528,7 @@ impl VinteriaApp {
                     let p = ui.painter();
                     let color = lane_col(lane);
                     p.rect_filled(card, 11.0, if on { selected_fill() } else { card_fill() });
-                    p.rect_stroke(card, 11.0, Stroke::new(1.0, if on { color } else { glass_edge() }));
+                    p.rect_stroke(card, 11.0, Stroke::new(1.0, if on { color } else { surface_edge() }));
                     let grip = Rect::from_min_size(card.min, vec2(19.0, card.height()));
                     p.rect_filled(Rect::from_min_size(card.min + vec2(5.0, 10.0), vec2(4.0, 28.0)), 2.0, color);
                     let name = Rect::from_min_max(card.min + vec2(16.0, 3.0), card.max - vec2(28.0, 20.0));
@@ -1600,7 +1585,7 @@ impl VinteriaApp {
                 let (card, hit) = ui.allocate_exact_size(vec2(82.0, 48.0), Sense::click());
                 let p = ui.painter();
                 p.rect_filled(card, 11.0, if self.arr.auto_master { selected_fill() } else { card_fill() });
-                p.rect_stroke(card, 11.0, Stroke::new(1.0, glass_edge()));
+                p.rect_stroke(card, 11.0, Stroke::new(1.0, surface_edge()));
                 p.text(card.center() - vec2(0.0, 7.0), Align2::CENTER_CENTER,
                     "Master", FontId::proportional(12.0), ink());
                 let meter = Rect::from_center_size(card.center() + vec2(0.0, 11.0), vec2(61.0, 4.0));
@@ -1699,11 +1684,10 @@ impl VinteriaApp {
     fn m_studio_transport_dock(&mut self, ctx: &egui::Context) {
         let playlist = self.m_sec == SEC_PLAYLIST;
         let dock = egui::TopBottomPanel::bottom("m_studio_transport_dock").show_separator_line(false)
-            .frame(Frame::none().fill(glass_fill()).stroke(Stroke::new(1.0, glass_edge()))
+            .frame(Frame::none().fill(surface_fill()).stroke(Stroke::new(1.0, surface_edge()))
                 .inner_margin(Margin { left: 8.0, right: 8.0, top: 4.0, bottom: 10.0 }))
             .show(ctx, |ui| {
                 mobile_visuals(ui);
-                mobile_glass_chrome(ui);
                 let vertical_playlist = playlist && portrait_view(ui) && !self.arr.auto_edit
                     && ui.data(|d| d.get_temp::<bool>(egui::Id::new("m_playlist_vertical")).unwrap_or(true));
                 if playlist && !vertical_playlist {
@@ -1897,11 +1881,10 @@ impl VinteriaApp {
         let drawer = egui::Id::new("m_studio_project_drawer");
         egui::SidePanel::right("m_studio_portrait_sidebar")
             .resizable(false).exact_width(TOUCH + 14.0).show_separator_line(false)
-            .frame(Frame::none().fill(glass_fill()).stroke(Stroke::new(1.0, glass_edge()))
+            .frame(Frame::none().fill(surface_fill()).stroke(Stroke::new(1.0, surface_edge()))
                 .inner_margin(Margin::symmetric(3.0, 4.0)))
             .show(ctx, |ui| {
                 mobile_visuals(ui);
-                mobile_glass_chrome(ui);
                 mobile_scroll(egui::ScrollArea::vertical()).id_salt("m_studio_sidebar_tools")
                     .auto_shrink([false, false]).show(ui, |ui| {
                         ui.vertical_centered(|ui| {
@@ -1970,7 +1953,7 @@ impl VinteriaApp {
             .fixed_pos(pos2(screen.left() - (1.0 - shown) * width, screen.top()))
             .show(ctx, |ui| {
                 let corners = egui::Rounding { ne: 18.0, se: 18.0, ..Default::default() };
-                Frame::none().fill(glass_fill()).stroke(Stroke::new(1.0, glass_edge()))
+                Frame::none().fill(surface_fill()).stroke(Stroke::new(1.0, surface_edge()))
                     .rounding(corners).inner_margin(Margin::symmetric(10.0, 10.0)).show(ui, |ui| {
                         mobile_visuals(ui);
                         let content_width = (width - 22.0).max(1.0);
@@ -2353,6 +2336,43 @@ impl VinteriaApp {
         ui.add_space(8.0);
     }
 
+    #[cfg(target_os = "android")]
+    fn m_finish_project_import(&mut self, name: &str, staged: &std::path::Path) -> Result<String, String> {
+        use std::io;
+
+        let result = (|| {
+            let (_, warnings) = Project::load(staged)?;
+            let dir = staged.parent().ok_or("Missing project folder")?;
+            let name = std::path::Path::new(name);
+            let stem = name.file_stem().and_then(|stem| stem.to_str()).ok_or("Invalid project name")?;
+            let ext = name.extension().and_then(|ext| ext.to_str()).ok_or("Missing project extension")?;
+            let mut input = std::fs::File::open(staged).map_err(|error| error.to_string())?;
+            for index in 1.. {
+                let filename = if index == 1 { format!("{stem}.{ext}") } else { format!("{stem} {index}.{ext}") };
+                let dest = dir.join(&filename);
+                let output = std::fs::OpenOptions::new().write(true).create_new(true).open(&dest);
+                let mut output = match output {
+                    Ok(file) => file,
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => return Err(error.to_string()),
+                };
+                if let Err(error) = io::copy(&mut input, &mut output).and_then(|_| output.sync_all()) {
+                    drop(output);
+                    let _ = std::fs::remove_file(&dest);
+                    return Err(error.to_string());
+                }
+                return Ok(if warnings.is_empty() {
+                    format!("Imported {filename}")
+                } else {
+                    format!("Imported {filename}. {} audio reference(s) could not be loaded.", warnings.len())
+                });
+            }
+            unreachable!()
+        })();
+        let _ = std::fs::remove_file(staged);
+        result.map_err(|error| format!("Import failed: {error}"))
+    }
+
     fn m_projects(&mut self, ui: &mut Ui) {
         let mut open = None;
         let mut template = None;
@@ -2373,6 +2393,24 @@ impl VinteriaApp {
                     }
                 }
                 section => {
+                    #[cfg(target_os = "android")]
+                    if section == 0 {
+                        if p_button(ui, "Import project", false, vec2(ui.available_width(), TOUCH)).clicked() {
+                            let result = self.android_updater.as_ref().ok_or_else(|| "Android file picker is unavailable.".to_owned())
+                                .and_then(|android| {
+                                    let dir = hub_dir().canonicalize().map_err(|error| error.to_string())?;
+                                    android.choose_project(&dir.to_string_lossy())
+                                });
+                            ui.data_mut(|d| d.insert_temp(egui::Id::new("m_project_import_status"), result.map(|_| "Choose a project file…".to_owned())));
+                        }
+                        if let Some(status) = ui.data(|d| d.get_temp::<Result<String, String>>(egui::Id::new("m_project_import_status"))) {
+                            match status {
+                                Ok(text) => ui.label(RichText::new(text).color(muted())),
+                                Err(text) => ui.colored_label(RED, text),
+                            };
+                        }
+                        ui.add_space(8.0);
+                    }
                     if section == 0 && (self.m_needs_project_save() || project_error.is_some()) {
                         self.m_unsaved_project_actions(ui);
                     }
@@ -2457,6 +2495,10 @@ impl VinteriaApp {
             return self.m_save_project_to_list(ctx);
         }
         self.hub_cache = None;
+        self.arr = arrangement_ui::ArrState::new();
+        if self.status.starts_with("Opened with warnings:") {
+            self.arr.msg.clone_from(&self.status);
+        }
         ctx.data_mut(|d| d.remove::<String>(egui::Id::new("m_project_save_error")));
         true
     }
@@ -3265,8 +3307,8 @@ impl VinteriaApp {
         } else {
             let area = ui.available_rect_before_wrap();
             let sidebar = Rect::from_min_max(pos2(area.right() - toolbar_width, area.top()), area.max);
-            ui.painter().rect_filled(sidebar, 10.0, glass_fill());
-            ui.painter().rect_stroke(sidebar, 10.0, Stroke::new(1.0, glass_edge()));
+            ui.painter().rect_filled(sidebar, 10.0, surface_fill());
+            ui.painter().rect_stroke(sidebar, 10.0, Stroke::new(1.0, surface_edge()));
             let mut side = ui.new_child(egui::UiBuilder::new().id_salt("piano_toolbar").max_rect(sidebar.shrink(2.0)));
             side.set_clip_rect(sidebar.intersect(ui.clip_rect()));
             side.set_width(sidebar.width() - 4.0);
@@ -4541,8 +4583,8 @@ impl VinteriaApp {
                 if portrait {
                     let header = Rect::from_min_size(rect.min, vec2(rect.width(), 62.0));
                     let header_corners = egui::Rounding { ne: 18.0, ..Default::default() };
-                    ui.painter().rect_filled(header, header_corners, glass_fill());
-                    ui.painter().hline(header.x_range(), header.bottom(), Stroke::new(1.0, glass_edge()));
+                    ui.painter().rect_filled(header, header_corners, surface_fill());
+                    ui.painter().hline(header.x_range(), header.bottom(), Stroke::new(1.0, surface_edge()));
                     let mut head = ui.new_child(egui::UiBuilder::new().id_salt("track_drawer_header")
                         .max_rect(header.shrink2(vec2(9.0, 8.0))));
                     head.set_clip_rect(header.intersect(screen));
@@ -4785,7 +4827,7 @@ impl VinteriaApp {
         let mut scene_bank = ui.data(|d| d.get_temp::<usize>(scene_id)).unwrap_or(0).min(scene_banks - 1);
         let mut add = false;
         let mut remove = false;
-        Frame::none().fill(glass_fill()).stroke(Stroke::new(1.0, glass_edge())).rounding(13.0)
+        Frame::none().fill(surface_fill()).stroke(Stroke::new(1.0, surface_edge())).rounding(13.0)
             .inner_margin(Margin::symmetric(6.0, 4.0)).show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     if dock_icon(ui, Icon::Stop, false, "Stop all clips").clicked() {
@@ -4864,7 +4906,7 @@ impl VinteriaApp {
                 let track = &self.project.arrangement.tracks[lane];
                 let rect = Rect::from_min_size(pos2(x_at(lane), area.top()), vec2(pad_size, header - gap));
                 let color = lane_col(lane);
-                p.rect_filled(rect, 9.0, if lane == self.arr.sel_lane { selected_fill() } else { glass_fill() });
+                p.rect_filled(rect, 9.0, if lane == self.arr.sel_lane { selected_fill() } else { surface_fill() });
                 let stop = Rect::from_min_size(rect.right_top() - vec2(20.0, 0.0), vec2(20.0, rect.height()));
                 let active = self.project.session.clips.iter().filter(|clip| clip.lane == lane).any(|clip| {
                     let code = clip.code();
@@ -4962,7 +5004,7 @@ impl VinteriaApp {
                                 self.project.arrangement.tracks[lane].audio_brush
                                     .filter(|&sample| sample < self.project.audio_pool.len())
                             } else { Some(self.project.current_pattern).filter(|&pattern| pattern < self.project.patterns.len()) });
-                        p.rect_filled(pad, 12.0, glass_fill());
+                        p.rect_filled(pad, 12.0, surface_fill());
                         p.rect_stroke(pad, 12.0, Stroke::new(1.0, grid_line()));
                         if assign.is_some() {
                             control_state(&p, pad, 9.0, &hit, ink());
@@ -5863,7 +5905,7 @@ impl VinteriaApp {
                 .fixed_pos(pos2(viewport.left() + 8.0, (viewport.bottom() - 58.0).max(viewport.top())))
                 .show(ui.ctx(), |ui| {
                     mobile_visuals(ui);
-                    Frame::none().fill(glass_fill()).stroke(Stroke::new(1.0, glass_edge()))
+                    Frame::none().fill(surface_fill()).stroke(Stroke::new(1.0, surface_edge()))
                         .rounding(14.0).inner_margin(Margin::symmetric(5.0, 3.0)).show(ui, |ui| {
                             ui.horizontal(|ui| self.m_playlist_tool_buttons(ui, false));
                         });
@@ -6418,8 +6460,8 @@ impl VinteriaApp {
         let offset_y = scroll.state.offset.y;
         let timeline = Rect::from_min_max(pos2(grid.left(), viewport.top()), pos2(grid.right(), grid.top()));
         let painter = ui.painter_at(timeline);
-        painter.rect_filled(timeline, 0.0, glass_fill());
-        painter.line_segment([timeline.left_bottom(), timeline.right_bottom()], Stroke::new(1.0, glass_edge()));
+        painter.rect_filled(timeline, 0.0, surface_fill());
+        painter.line_segment([timeline.left_bottom(), timeline.right_bottom()], Stroke::new(1.0, surface_edge()));
         let ruler_response = ui.interact(timeline, egui::Id::new("m_playlist_seek_ruler"), Sense::click_and_drag())
             .on_hover_text("Tap to seek · Drag to loop");
         let tick_at = |x: f32| {
@@ -7662,8 +7704,8 @@ impl VinteriaApp {
             area.anchor(Align2::CENTER_BOTTOM, [0.0, -8.0])
         };
         area.show(ctx, |ui| {
-                let fill = if landscape { p_bg() } else { glass_fill() };
-                let edge = if landscape { outline() } else { glass_edge() };
+                let fill = if landscape { p_bg() } else { surface_fill() };
+                let edge = if landscape { outline() } else { surface_edge() };
                 Frame::none().fill(fill).stroke(Stroke::new(1.0, edge)).rounding(if landscape { 16.0 } else { 22.0 })
                     .inner_margin(12.0).show(ui, |ui| {
                         mobile_visuals(ui);
@@ -8474,8 +8516,8 @@ fn playlist_clip_menu(
         .movable(false).show(ctx, |ui| {
             let (area, _) = ui.allocate_exact_size(bounds.size(), Sense::click());
             let p = ui.painter();
-            p.rect_filled(area, 14.0, glass_fill());
-            p.rect_stroke(area, 14.0, Stroke::new(1.0, glass_edge()));
+            p.rect_filled(area, 14.0, surface_fill());
+            p.rect_stroke(area, 14.0, Stroke::new(1.0, surface_edge()));
             let slot = |index: usize| Rect::from_min_size(
                 pos2(area.left() + pad + index as f32 * (button_width + gap), area.top() + pad),
                 vec2(button_width, button_height));
@@ -8724,14 +8766,12 @@ fn mobile_side_editor(ctx: &egui::Context, id: egui::Id, title: &str, side: egui
             let (rect, _) = ui.allocate_exact_size(vec2(width, screen.height()), Sense::click());
             let corners = if right { egui::Rounding { nw: 18.0, sw: 18.0, ..Default::default() } }
                 else { egui::Rounding { ne: 18.0, se: 18.0, ..Default::default() } };
-            ui.painter().rect_filled(rect, corners, mobile_color(0xF2191628, 0xF2202226, 0xF2EAF0F6));
-            ui.painter().rect_stroke(rect, corners, Stroke::new(1.0, glass_edge().gamma_multiply(0.7)));
+            ui.painter().rect_filled(rect, corners, mobile_color(0xFF191628, 0xFF202226, 0xFFEAF0F6));
+            ui.painter().rect_stroke(rect, corners, Stroke::new(1.0, surface_edge().gamma_multiply(0.7)));
             let header = Rect::from_min_size(rect.min, vec2(width, 54.0));
             let header_corners = egui::Rounding { sw: 0.0, se: 0.0, ..corners };
-            ui.painter().rect_filled(header, header_corners, glass_fill());
-            let highlight = Rect::from_min_size(header.min + vec2(if right { 18.0 } else { 0.0 }, 2.0), vec2(width - 18.0, 28.0));
-            paint_glass_sheen(ui.painter(), highlight);
-            ui.painter().hline(header.x_range(), header.bottom(), Stroke::new(1.0, glass_edge()));
+            ui.painter().rect_filled(header, header_corners, surface_fill());
+            ui.painter().hline(header.x_range(), header.bottom(), Stroke::new(1.0, surface_edge()));
             let mut head = ui.new_child(egui::UiBuilder::new().id_salt("header")
                 .max_rect(header.shrink2(vec2(9.0, 8.0))));
             head.set_clip_rect(header.intersect(screen));

@@ -28,10 +28,14 @@ public final class WinteriaActivity extends NativeActivity {
     private static final int PICK_SOUNDS = 4501;
     private static final int PICK_PACK_ZIP = 4502;
     private static final int PICK_PACK_DIR = 4503;
+    private static final int PICK_PROJECT = 4504;
+    private static final long MAX_PROJECT_SIZE = 128L * 1024 * 1024;
     private static final long MAX_WAV_SIZE = 64L * 1024 * 1024;
     private static final long MAX_PACK_SIZE = 2L * 1024 * 1024 * 1024;
     private static final int MAX_PACK_FILES = 5000;
     private volatile String importStatus;
+    private volatile String projectImportResult;
+    private File projectImportDirectory;
     private boolean importPending;
 
     @Override
@@ -117,6 +121,100 @@ public final class WinteriaActivity extends NativeActivity {
         }
     }
 
+    public void chooseProject(String directory) {
+        runOnUiThread(() -> {
+            projectImportResult = null;
+            if (importPending) {
+                projectImportResult = "Another file import is already open.";
+                return;
+            }
+            Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            picker.setType("*/*");
+            picker.addCategory(Intent.CATEGORY_OPENABLE);
+            try {
+                projectImportDirectory = new File(directory);
+                startActivityForResult(picker, PICK_PROJECT);
+                importPending = true;
+            } catch (RuntimeException failure) {
+                projectImportDirectory = null;
+                projectImportResult = "Could not open the Android file picker.";
+            }
+        });
+    }
+
+    public synchronized String takeProjectImportResult() {
+        String result = projectImportResult;
+        projectImportResult = null;
+        return result;
+    }
+
+    private void onProjectPicked(int result, Intent data) {
+        File directory = projectImportDirectory;
+        projectImportDirectory = null;
+        Uri uri = data == null ? null : data.getData();
+        if (result != RESULT_OK || uri == null) {
+            importPending = false;
+            projectImportResult = "Project import canceled.";
+            return;
+        }
+        if (directory == null) {
+            importPending = false;
+            projectImportResult = "The project folder is unavailable. Choose the file again.";
+            return;
+        }
+        new Thread(() -> {
+            String outcome;
+            try {
+                outcome = stageProject(uri, directory);
+            } catch (IOException | RuntimeException failure) {
+                outcome = "Import failed: " + String.valueOf(failure.getMessage()).replace('\n', ' ');
+            }
+            final String completed = outcome;
+            runOnUiThread(() -> {
+                importPending = false;
+                synchronized (this) {
+                    projectImportResult = completed;
+                }
+            });
+        }, "winteria-project-import").start();
+    }
+
+    private String stageProject(Uri uri, File directory) throws IOException {
+        String display = displayName(uri);
+        int dot = display.lastIndexOf('.');
+        String ext = dot < 0 ? "" : display.substring(dot + 1).toLowerCase(Locale.ROOT);
+        if (!ext.equals("wd") && !ext.equals("vpd") && !ext.equals("synthesia")) {
+            throw new IOException("Choose a .wd, .vpd or .synthesia project.");
+        }
+        String name = safeName(display.substring(0, dot), "Project") + "." + ext;
+        File staged = File.createTempFile(".project-import-", ".tmp", directory);
+        boolean copied = false;
+        try {
+            try (InputStream source = getContentResolver().openInputStream(uri);
+                 FileOutputStream output = new FileOutputStream(staged)) {
+                if (source == null) {
+                    throw new IOException("Could not read the project document.");
+                }
+                byte[] buffer = new byte[32768];
+                long total = 0;
+                int length;
+                while ((length = source.read(buffer)) != -1) {
+                    total += length;
+                    if (total > MAX_PROJECT_SIZE) {
+                        throw new IOException("The project exceeds the 128 MB import limit.");
+                    }
+                    output.write(buffer, 0, length);
+                }
+            }
+            copied = true;
+            return name + "\n" + staged.getAbsolutePath();
+        } finally {
+            if (!copied) {
+                staged.delete();
+            }
+        }
+    }
+
     public void chooseSounds() {
         runOnUiThread(() -> {
             if (importPending) {
@@ -173,6 +271,10 @@ public final class WinteriaActivity extends NativeActivity {
     @Override
     protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
+        if (request == PICK_PROJECT) {
+            onProjectPicked(result, data);
+            return;
+        }
         if (request == PICK_PACK_ZIP || request == PICK_PACK_DIR) {
             onPackPicked(request == PICK_PACK_DIR, result, data);
             return;

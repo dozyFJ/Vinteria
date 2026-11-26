@@ -793,3 +793,10 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 
 - Added Winteria as the default mobile theme, using the launcher's violet ring, liquid fill and dark background. Graphite Silver and Day remain selectable.
 - Android handset verification pending.
+
+### Android 1.0.158
+
+- Mobile surfaces are opaque with no glass sheen.
+- Projects can import editable .wd, .vpd and .synthesia files from the Android file picker. Imports keep the original and receive a distinct name if necessary.
+- Built-in project folders remain discoverable with a sync folder configured, and their projects save beside their linked media.
+- Android handset verification pending.

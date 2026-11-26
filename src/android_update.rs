@@ -128,6 +128,25 @@ impl Updater {
         }).map_err(|error| error.to_string())
     }
 
+    pub(crate) fn choose_project(&self, directory: &str) -> Result<(), String> {
+        with_activity(&self.app, |env, activity| {
+            let path = env.new_string(directory)?;
+            env.call_method(activity, "chooseProject", "(Ljava/lang/String;)V", &[JValue::Object(&path)])?;
+            Ok(())
+        }).map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn take_project_import_result(&self) -> Option<String> {
+        with_activity(&self.app, |env, activity| {
+            let value = env.call_method(activity, "takeProjectImportResult", "()Ljava/lang/String;", &[])?.l()?;
+            if value.is_null() {
+                return Ok(None);
+            }
+            let value = jni::objects::JString::from(value);
+            Ok(Some(env.get_string(&value)?.into()))
+        }).ok().flatten()
+    }
+
     pub(crate) fn choose_sounds(&self) -> Result<(), String> {
         with_activity(&self.app, |env, activity| {
             env.call_method(activity, "chooseSounds", "()V", &[])?;

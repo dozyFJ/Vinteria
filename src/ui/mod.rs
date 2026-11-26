@@ -127,6 +127,11 @@ fn process_memory_mb() -> f32 {
     0.0
 }
 
+fn default_hub_dir() -> PathBuf {
+    let base = std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+    base.join("Documents").join("Winteria Projects")
+}
+
 /// Folder where the hub keeps its projects.
 fn hub_dir() -> PathBuf {
     // a chosen sync folder (a cloud-drive / Syncthing folder shared by the PC and the phone) wins
@@ -136,8 +141,7 @@ fn hub_dir() -> PathBuf {
             return p;
         }
     }
-    let base = std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
-    let d = base.join("Documents").join("Winteria Projects");
+    let d = default_hub_dir();
     let _ = std::fs::create_dir_all(&d);
     d
 }
@@ -157,20 +161,22 @@ fn set_sync_folder(p: Option<&std::path::Path>) {
 /// Every project the hub knows: the hub folder, the Documents folder and the recent list, newest first.
 fn hub_projects(recent: &[PathBuf]) -> Vec<(PathBuf, std::time::SystemTime, u64)> {
     let hub = hub_dir();
-    // Discover legacy projects in place, including those not in the recent list.
-    let legacy = hub.parent().filter(|_| hub.ends_with("Winteria Projects"))
-        .map(|parent| parent.join("SYNTHESIA Projects"));
+    // Keep the built-in folders visible even after the user picks a sync folder.
+    let original = default_hub_dir();
+    let legacy = original.with_file_name("SYNTHESIA Projects");
     #[cfg(target_arch = "wasm32")]
     {
         let mut projects = crate::web::projects(&hub);
-        if let Some(dir) = &legacy {
-            projects.extend(crate::web::projects(dir));
-            projects.sort_by_key(|(_, saved, _)| std::cmp::Reverse(*saved));
+        for dir in [&original, &legacy] {
+            if dir != &hub {
+                projects.extend(crate::web::projects(dir));
+            }
         }
+        projects.sort_by_key(|(_, saved, _)| std::cmp::Reverse(*saved));
         return projects;
     }
     let mut files: Vec<PathBuf> = Vec::new();
-    for dir in [Some(hub.clone()), legacy, hub.parent().map(|p| p.to_path_buf())].into_iter().flatten() {
+    for dir in [Some(hub.as_path()), Some(original.as_path()), Some(legacy.as_path()), hub.parent(), original.parent()].into_iter().flatten() {
         if let Ok(rd) = std::fs::read_dir(dir) {
             for e in rd.flatten() {
                 let p = e.path();
@@ -964,14 +970,17 @@ impl VinteriaApp {
         }
     }
 
-    /// Save into the hub folder: a new project gets a free name there, a project that already lives there keeps its file.
+    /// Save an open project in place, or give a new project a free name in the hub folder.
     fn save_to_hub(&mut self) -> bool {
         let dir = hub_dir();
         let stem: String = self.project.name.chars().map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' { c } else { '_' }).collect();
         let stem = if stem.trim().is_empty() { "Project".to_string() } else { stem };
         let mut path = dir.join(format!("{stem}.wd"));
         match &self.path {
-            Some(p) if p.parent() == Some(dir.as_path()) => path = p.clone(),
+            // Keep existing projects beside their media, including those in the old SYNTHESIA folder.
+            Some(p) if p.parent().is_some_and(|parent| parent == dir
+                || parent == default_hub_dir()
+                || parent == default_hub_dir().with_file_name("SYNTHESIA Projects")) => path = p.clone(),
             _ => {
                 let mut n = 2;
                 #[cfg(target_arch = "wasm32")]
