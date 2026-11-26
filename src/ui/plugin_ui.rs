@@ -206,7 +206,7 @@ fn graph(ui: &mut Ui, slot: &FxSlot) {
 }
 
 /// Small peak indicator next to the header (driven by the slot's wet level setting, not the audio thread).
-fn header(ui: &mut Ui, slot: &mut FxSlot, mobile: bool) -> bool {
+fn header(ui: &mut Ui, slot: &mut FxSlot, actions: Option<impl FnOnce(&mut Ui)>) -> bool {
     let compact = ui.available_width() < 350.0;
     ui.horizontal_wrapped(|ui| {
         super::widgets::led_tip(ui, &mut slot.on, "Enable / bypass");
@@ -217,8 +217,10 @@ fn header(ui: &mut Ui, slot: &mut FxSlot, mobile: bool) -> bool {
                 ui.label(RichText::new("WINTERIA").small().color(CYAN()));
             }
         }
-        if mobile {
-            return super::mobile::p_button(ui, "Presets", false, vec2(82.0, 32.0)).clicked();
+        if let Some(actions) = actions {
+            let presets = super::mobile::p_button(ui, "Presets", false, vec2(82.0, 32.0)).clicked();
+            ui.menu_button("...", actions).response.on_hover_text("Device actions");
+            return presets;
         }
         let presets = slot.kind.presets();
         let width = if compact { 72.0 } else { 120.0 };
@@ -235,15 +237,16 @@ fn header(ui: &mut Ui, slot: &mut FxSlot, mobile: bool) -> bool {
 
 /// The template. Draws header, graph, knobs and the dry/wet row for one slot.
 pub fn plugin_grid(ui: &mut Ui, slot: &mut FxSlot) {
-    plugin_grid_inner(ui, slot, false);
+    plugin_grid_inner(ui, slot, None::<fn(&mut Ui)>);
 }
 
-pub(super) fn mobile_plugin_grid(ui: &mut Ui, slot: &mut FxSlot) -> bool {
-    plugin_grid_inner(ui, slot, true)
+pub(super) fn mobile_plugin_grid(ui: &mut Ui, slot: &mut FxSlot, actions: impl FnOnce(&mut Ui)) -> bool {
+    plugin_grid_inner(ui, slot, Some(actions))
 }
 
-fn plugin_grid_inner(ui: &mut Ui, slot: &mut FxSlot, mobile: bool) -> bool {
-    let presets = header(ui, slot, mobile);
+fn plugin_grid_inner(ui: &mut Ui, slot: &mut FxSlot, actions: Option<impl FnOnce(&mut Ui)>) -> bool {
+    let mobile = actions.is_some();
+    let presets = header(ui, slot, actions);
     ui.add_space(4.0);
     graph(ui, slot);
     ui.add_space(6.0);

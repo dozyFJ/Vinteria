@@ -837,3 +837,8 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 - Effect preset menus use the mobile bottom sheet. Filter type labels reflect the filter mode, and the device distinguishes FX Mix from Slot mix.
 - Piano Roll now fits about one bar in portrait, shows beat guides when snap is Off, and gives short notes a separate resize edge. Ctrl/Cmd+A selects all editable notes and arrow keys nudge the selection.
 - Android handset verification pending.
+
+### Android 1.0.166
+
+- Moved mobile device actions into an explicit button so the full-card context menu no longer intercepts taps on effect controls or presets.
+- Android handset verification pending.

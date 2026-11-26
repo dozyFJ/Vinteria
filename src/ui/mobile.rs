@@ -4566,6 +4566,7 @@ impl VinteriaApp {
     fn m_track_sheet(&mut self, ctx: &egui::Context) {
         let id = egui::Id::new("m_track_sheet_open");
         let animation = id.with("animation");
+        let presets = egui::Id::new(devices_ui::EFFECT_PRESETS);
         let open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
         let shown = ctx.animate_bool(animation, open);
         if !open {
@@ -4648,7 +4649,6 @@ impl VinteriaApp {
                     &mut detail, &mut self.plugin_window, &mut self.lib, &self.shared);
             });
         let picker = egui::Id::new(devices_ui::EFFECT_PICKER);
-        let presets = egui::Id::new(devices_ui::EFFECT_PRESETS);
         let target = ctx.data(|d| d.get_temp::<devices_ui::EffectPresetTarget>(presets))
             .filter(|target| target.0 == self.arr.sel_lane);
         let picking = target.is_some() || ctx.data(|d| d.get_temp::<usize>(picker)) == Some(self.arr.sel_lane);

@@ -231,9 +231,14 @@ fn show(ui: &mut Ui, p: &mut Project, st: &mut ArrState, dc: &mut DetailCtx, plu
                         // Ableton style: a click on the device's strip folds it into a narrow vertical bar, a click on the bar opens it again
                         let fold_id = egui::Id::new(("device_folded", lane, i, k));
                         let folded = ui.data(|d| d.get_temp::<bool>(fold_id)).unwrap_or(false);
+                        let mut actions = |ui: &mut Ui| {
+                            if ui.button("Clear device").clicked() { clear = Some(k); ui.close_menu(); }
+                            if ui.add_enabled(k > 0, egui::Button::new(if mobile_effects { "Move up" } else { "Move left" })).clicked() { swap = Some((k - 1, k)); ui.close_menu(); }
+                            if ui.add_enabled(k + 1 < len, egui::Button::new(if mobile_effects { "Move down" } else { "Move right" })).clicked() { swap = Some((k, k + 1)); ui.close_menu(); }
+                        };
                         let response = if mobile_effects {
                             card_ui(ui, (ui.available_width() - 22.0).max(0.0), |ui| {
-                                if super::plugin_ui::mobile_plugin_grid(ui, slot) {
+                                if super::plugin_ui::mobile_plugin_grid(ui, slot, &mut actions) {
                                     ui.data_mut(|d| d.insert_temp(egui::Id::new(EFFECT_PRESETS), (lane, i, k, slot.kind)));
                                 }
                             })
@@ -261,11 +266,9 @@ fn show(ui: &mut Ui, p: &mut Project, st: &mut ArrState, dc: &mut DetailCtx, plu
                             if t.on_hover_text("Fold the device into a narrow bar").clicked() { ui.data_mut(|d| d.insert_temp(fold_id, true)); }
                             r
                         };
-                        response.context_menu(|ui| {
-                            if ui.button("Clear device").clicked() { clear = Some(k); ui.close_menu(); }
-                            if ui.add_enabled(k > 0, egui::Button::new(if mobile_effects { "Move up" } else { "Move left" })).clicked() { swap = Some((k - 1, k)); ui.close_menu(); }
-                            if ui.add_enabled(k + 1 < len, egui::Button::new(if mobile_effects { "Move down" } else { "Move right" })).clicked() { swap = Some((k, k + 1)); ui.close_menu(); }
-                        });
+                        if !mobile_effects {
+                            response.context_menu(actions);
+                        }
                     });
                 }
                 if let Some(k) = clear { chain[k] = FxSlot::empty(); }
