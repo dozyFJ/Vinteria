@@ -805,3 +805,8 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 
 - Added Dark Graphite with muted warm-white controls and Toxic Dark with lime accents. Existing mobile themes and preferences remain available.
 - Android handset verification pending.
+
+### Android 1.0.160
+
+- Added 18 factory sounds across Wavetable, Analog and 808 Bass. The sounds are available in the preset browser and in instrument editors.
+- Android handset verification pending.

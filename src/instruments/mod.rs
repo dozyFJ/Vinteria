@@ -308,3 +308,50 @@ impl Default for Bass808Params {
         }
     }
 }
+
+impl Bass808Params {
+    pub fn preset(name: &str) -> Self {
+        let base = Self { glide_ms: 40.0, decay: 1.2, sustain: 0.5, release: 0.2,
+            pitch_drop: 8.0, tone: 2400.0, drive: 3.0, ..Self::default() };
+        match name {
+            "808 Dirty" => Self { drive: 8.0, tone: 3500.0, ..base },
+            "808 Drift" => Self {
+                drive: 5.2, glide_ms: 120.0, decay: 1.0,
+                sustain: 0.64, release: 0.29, pitch_drop: 13.0,
+                pitch_time_ms: 27.0, tone: 2900.0, volume: 0.77,
+                ..Self::default()
+            },
+            "808 Soft Floor" => Self {
+                drive: 1.1, glide_ms: 80.0, decay: 1.8,
+                sustain: 0.78, release: 0.35, pitch_drop: 1.5,
+                pitch_time_ms: 22.0, tone: 1300.0, volume: 0.83,
+                ..Self::default()
+            },
+            "808 Short Knock" => Self {
+                drive: 2.0, glide_ms: 28.0, decay: 0.25,
+                sustain: 0.08, release: 0.075, pitch_drop: 18.0,
+                pitch_time_ms: 34.0, tone: 3600.0, volume: 0.83,
+                ..Self::default()
+            },
+            "808 Tape Long" => Self {
+                drive: 3.1, glide_ms: 145.0, decay: 2.4,
+                sustain: 0.82, release: 0.54, pitch_drop: 4.0,
+                pitch_time_ms: 31.0, tone: 1850.0, volume: 0.75,
+                ..Self::default()
+            },
+            "808 Brick" => Self {
+                drive: 9.0, glide_ms: 67.0, decay: 0.76,
+                sustain: 0.56, release: 0.16, pitch_drop: 17.0,
+                pitch_time_ms: 49.0, tone: 4200.0, volume: 0.69,
+                ..Self::default()
+            },
+            "808 Glide Bow" => Self {
+                attack: 0.052, drive: 1.8, glide_ms: 205.0,
+                decay: 1.5, sustain: 0.72, release: 0.43,
+                pitch_drop: 0.0, tone: 1550.0, volume: 0.81,
+                ..Self::default()
+            },
+            _ => base,
+        }
+    }
+}

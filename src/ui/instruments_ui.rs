@@ -219,6 +219,24 @@ const PRESETS: &[Preset] = &[
     Preset { cat: "Pluck", name: "Glass Pluck", engine: Track::Synth, key: "Glass Pluck" },
     Preset { cat: "House", name: "Club Stab", engine: Track::Synth, key: "Club Stab" },
     Preset { cat: "Bell", name: "Ice Chime", engine: Track::Synth, key: "Ice Chime" },
+    Preset { cat: "Pluck", name: "Glass Current", engine: Track::Wavetable, key: "Glass Current" },
+    Preset { cat: "Pad", name: "Aurora Choir", engine: Track::Wavetable, key: "Aurora Choir" },
+    Preset { cat: "Bell", name: "Drift Cowbell", engine: Track::Wavetable, key: "Drift Cowbell" },
+    Preset { cat: "Bass", name: "Neon Reese", engine: Track::Wavetable, key: "Neon Reese" },
+    Preset { cat: "Lead", name: "Orbital Lead", engine: Track::Wavetable, key: "Orbital Lead" },
+    Preset { cat: "House", name: "Afterhours Chord", engine: Track::Wavetable, key: "Afterhours Chord" },
+    Preset { cat: "Keys", name: "Tape Keys", engine: Track::Analog, key: "Tape Keys" },
+    Preset { cat: "House", name: "Basement Acid", engine: Track::Analog, key: "Basement Acid" },
+    Preset { cat: "Lead", name: "Silk Brass", engine: Track::Analog, key: "Silk Brass" },
+    Preset { cat: "Strings", name: "Velvet Strings", engine: Track::Analog, key: "Velvet Strings" },
+    Preset { cat: "Pluck", name: "Circuit Pulse", engine: Track::Analog, key: "Circuit Pulse" },
+    Preset { cat: "Bass", name: "Low Orbit", engine: Track::Analog, key: "Low Orbit" },
+    Preset { cat: "Bass", name: "808 Drift", engine: Track::Bass808, key: "808 Drift" },
+    Preset { cat: "Bass", name: "808 Soft Floor", engine: Track::Bass808, key: "808 Soft Floor" },
+    Preset { cat: "Bass", name: "808 Short Knock", engine: Track::Bass808, key: "808 Short Knock" },
+    Preset { cat: "Bass", name: "808 Tape Long", engine: Track::Bass808, key: "808 Tape Long" },
+    Preset { cat: "Bass", name: "808 Brick", engine: Track::Bass808, key: "808 Brick" },
+    Preset { cat: "Bass", name: "808 Glide Bow", engine: Track::Bass808, key: "808 Glide Bow" },
 ];
 
 /// Names of the presets that belong to one instrument (for the Channel Rack menu).
@@ -266,10 +284,7 @@ fn apply_preset(project: &mut Project, p: &Preset) {
         Track::Synth => project.synth = SynthParams::preset(p.key),
         Track::Wavetable => project.wt = WavetableParams::preset(p.key),
         Track::Analog => project.analog = AnalogParams::preset(p.key),
-        Track::Bass808 => {
-            let dirty = p.key == "808 Dirty";
-            project.bass = Bass808Params { drive: if dirty { 8.0 } else { 3.0 }, glide_ms: 40.0, decay: 1.2, sustain: 0.5, release: 0.2, pitch_drop: 8.0, tone: if dirty { 3500.0 } else { 2400.0 }, volume: 0.9, ..Bass808Params::default() };
-        }
+        Track::Bass808 => project.bass = Bass808Params::preset(p.key),
         _ => {}
     }
 }
@@ -452,6 +467,14 @@ fn bass_panel(ui: &mut Ui, project: &mut Project) {
             row(ui, |ui| {
                 ui.label(egui::RichText::new("808 BASS").color(TEAL()).strong().size(15.0));
                 ui.label(egui::RichText::new("mono - glide - saturation").color(DIM()));
+                ui.menu_button("Presets", |ui| {
+                    for name in presets_of(Track::Bass808) {
+                        if ui.button(name).clicked() {
+                            *p = Bass808Params::preset(name);
+                            ui.close_menu();
+                        }
+                    }
+                });
                 if ui.small_button("Reset").clicked() {
                     *p = Default::default();
                 }
@@ -596,13 +619,15 @@ fn wavetable_panel(ui: &mut Ui, project: &mut Project) {
                     row(ui, |ui| {
                         ui.label(egui::RichText::new(prog.clone()).strong().size(13.0));
                         ui.menu_button("OPTIONS", |ui| {
-                            for name in ["Init", "Growl Bass", "Vowel Pad", "Metal Pluck", "Super Saw"] {
-                                if ui.button(name).clicked() {
-                                    *p = WavetableParams::preset(name);
-                                    prog = name.to_string();
-                                    ui.close_menu();
+                            egui::ScrollArea::vertical().max_height(280.0).show(ui, |ui| {
+                                for preset in PRESETS.iter().filter(|preset| preset.engine == Track::Wavetable) {
+                                    if ui.button(preset.name).clicked() {
+                                        *p = WavetableParams::preset(preset.key);
+                                        prog = preset.name.to_string();
+                                        ui.close_menu();
+                                    }
                                 }
-                            }
+                            });
                         });
                     });
                     row(ui, |ui| {
@@ -776,11 +801,14 @@ fn analog_panel(ui: &mut Ui, project: &mut Project) {
             });
             row(ui, |ui| {
                 ui.label("Presets:");
-                for name in ["Init", "Moog Bass", "PWM Strings", "Sync Lead", "Soft Keys"] {
-                    if ui.small_button(name).clicked() {
-                        *p = AnalogParams::preset(name);
+                ui.menu_button("Program", |ui| {
+                    for name in std::iter::once("Init").chain(presets_of(Track::Analog)) {
+                        if ui.button(name).clicked() {
+                            *p = AnalogParams::preset(name);
+                            ui.close_menu();
+                        }
                     }
-                }
+                });
             });
             section_label(ui, "OSCILLATORS");
             row_top(ui, |ui| {

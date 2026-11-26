@@ -609,6 +609,92 @@ impl WavetableParams {
                 p.env_amt = 1.0;
                 p.f_decay = 0.5;
             }
+            "Glass Current" => {
+                p.table_a = 3;
+                p.pos_a = 0.68;
+                p.level_b = 0.16;
+                p.pos_env = 0.4;
+                p.cutoff = 4700.0;
+                p.decay = 0.32;
+                p.sustain = 0.04;
+                p.release = 0.27;
+                p.volume = 0.49;
+            }
+            "Aurora Choir" => {
+                p.table_a = 2;
+                p.pos_a = 0.46;
+                p.table_b = 2;
+                p.pos_b = 0.79;
+                p.level_b = 0.32;
+                p.unison = 5;
+                p.uni_detune = 14.0;
+                p.attack = 0.62;
+                p.release = 1.6;
+                p.cutoff = 3200.0;
+                p.lfo_rate = 0.32;
+                p.lfo_depth = 0.38;
+                p.volume = 0.50;
+            }
+            "Drift Cowbell" => {
+                p.table_a = 3;
+                p.pos_a = 0.36;
+                p.table_b = 3;
+                p.pos_b = 0.78;
+                p.oct_b = 1.0;
+                p.level_b = 0.28;
+                p.attack = 0.001;
+                p.decay = 0.24;
+                p.sustain = 0.0;
+                p.release = 0.15;
+                p.filter = FilterType::Bp;
+                p.cutoff = 2150.0;
+                p.res = 0.36;
+                p.volume = 0.59;
+            }
+            "Neon Reese" => {
+                p.table_a = 1;
+                p.pos_a = 0.73;
+                p.level_b = 0.21;
+                p.sub = 0.34;
+                p.unison = 3;
+                p.uni_detune = 21.0;
+                p.cutoff = 1260.0;
+                p.env_amt = 0.7;
+                p.lfo_target = WtTarget::Cutoff;
+                p.lfo_depth = 0.26;
+                p.lfo_rate = 0.84;
+                p.volume = 0.54;
+            }
+            "Orbital Lead" => {
+                p.table_a = 0;
+                p.pos_a = 0.71;
+                p.table_b = 1;
+                p.pos_b = 0.57;
+                p.oct_b = 1.0;
+                p.level_b = 0.23;
+                p.unison = 3;
+                p.uni_detune = 9.0;
+                p.cutoff = 4300.0;
+                p.env_amt = 0.8;
+                p.lfo_target = WtTarget::Pitch;
+                p.lfo_depth = 0.09;
+                p.volume = 0.49;
+            }
+            "Afterhours Chord" => {
+                p.table_a = 0;
+                p.pos_a = 0.48;
+                p.table_b = 2;
+                p.pos_b = 0.36;
+                p.level_b = 0.30;
+                p.cutoff = 2100.0;
+                p.env_amt = 1.8;
+                p.f_decay = 0.21;
+                p.f_sustain = 0.1;
+                p.decay = 0.36;
+                p.sustain = 0.26;
+                p.release = 0.34;
+                p.volume = 0.50;
+            }
             _ => {}
         }
         p
@@ -758,6 +844,82 @@ impl AnalogParams {
                 p.sustain = 0.2;
                 p.cutoff = 2600.0;
                 p.env_amt = 1.0;
+            }
+            "Tape Keys" => {
+                p.wave1 = AnalogWave::Tri;
+                p.wave2 = AnalogWave::Sine;
+                p.semi2 = 12.0;
+                p.mix = 0.17;
+                p.drift = 0.48;
+                p.cutoff = 1920.0;
+                p.decay = 0.82;
+                p.sustain = 0.19;
+                p.release = 0.48;
+                p.volume = 0.58;
+            }
+            "Basement Acid" => {
+                p.wave1 = AnalogWave::Saw;
+                p.mix = 0.0;
+                p.cutoff = 520.0;
+                p.res = 0.64;
+                p.drive = 1.9;
+                p.env_amt = 3.0;
+                p.f_decay = 0.19;
+                p.f_sustain = 0.04;
+                p.sustain = 0.44;
+                p.release = 0.12;
+                p.volume = 0.49;
+            }
+            "Silk Brass" => {
+                p.wave2 = AnalogWave::Pulse;
+                p.detune2 = 6.0;
+                p.cutoff = 2300.0;
+                p.env_amt = 1.15;
+                p.f_attack = 0.13;
+                p.attack = 0.075;
+                p.f_decay = 0.36;
+                p.sustain = 0.73;
+                p.release = 0.28;
+                p.volume = 0.50;
+            }
+            "Velvet Strings" => {
+                p.wave1 = AnalogWave::Pulse;
+                p.wave2 = AnalogWave::Saw;
+                p.pw = 0.38;
+                p.detune2 = -15.0;
+                p.cutoff = 1750.0;
+                p.attack = 0.48;
+                p.release = 1.15;
+                p.lfo_shape = LfoShape::Tri;
+                p.lfo_rate = 0.56;
+                p.lfo_depth = 0.35;
+                p.volume = 0.49;
+            }
+            "Circuit Pulse" => {
+                p.wave1 = AnalogWave::Pulse;
+                p.wave2 = AnalogWave::Tri;
+                p.pw = 0.25;
+                p.mix = 0.30;
+                p.cutoff = 2750.0;
+                p.res = 0.28;
+                p.attack = 0.002;
+                p.decay = 0.16;
+                p.sustain = 0.03;
+                p.release = 0.16;
+                p.env_amt = 1.2;
+                p.volume = 0.53;
+            }
+            "Low Orbit" => {
+                p.wave1 = AnalogWave::Tri;
+                p.wave2 = AnalogWave::Pulse;
+                p.mix = 0.28;
+                p.sub = 0.32;
+                p.cutoff = 440.0;
+                p.env_amt = 1.65;
+                p.f_decay = 0.29;
+                p.glide_ms = 85.0;
+                p.drive = 1.7;
+                p.volume = 0.56;
             }
             _ => {}
         }
