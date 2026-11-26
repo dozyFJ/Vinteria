@@ -800,3 +800,8 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 - Projects can import editable .wd, .vpd and .synthesia files from the Android file picker. Imports keep the original and receive a distinct name if necessary.
 - Built-in project folders remain discoverable with a sync folder configured, and their projects save beside their linked media.
 - Android handset verification pending.
+
+### Android 1.0.159
+
+- Added Dark Graphite with muted warm-white controls and Toxic Dark with lime accents. Existing mobile themes and preferences remain available.
+- Android handset verification pending.
