@@ -816,3 +816,8 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 - Track preset picker now plays a short dry preview independently of the Playlist.
 - Revoiced Drift Cowbell and Glass Current, strengthened Aurora Choir, corrected Orbital Lead oscillator tuning and pulled back the six new 808 presets.
 - Android handset verification pending.
+
+### Android 1.0.162
+
+- Graphite Silver now uses brighter silver controls, cooler slate panels, clearer text and more visible selection and grid colors.
+- Android handset verification pending.

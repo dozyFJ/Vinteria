@@ -114,15 +114,15 @@ fn mobile_color(winteria: u32, silver: u32, day: u32, graphite: u32, toxic: u32)
 
 /// main text
 fn ink() -> Color32 {
-    mobile_color(0xFFE7ECFF, 0xFFF1F3F5, 0xFF202B39, 0xFFDDDAD4, 0xFFE6ECDD)
+    mobile_color(0xFFE7ECFF, 0xFFF6F8FB, 0xFF202B39, 0xFFDDDAD4, 0xFFE6ECDD)
 }
 /// secondary text
 fn muted() -> Color32 {
-    mobile_color(0xFFBFC1DC, 0xFFBFC5CC, 0xFF46556A, 0xFFA8A6A0, 0xFFA5B497)
+    mobile_color(0xFFBFC1DC, 0xFFD0D6DE, 0xFF46556A, 0xFFA8A6A0, 0xFFA5B497)
 }
 /// Silver accent from Chat Pulse in dark mode.
 fn p_accent() -> Color32 {
-    mobile_color(0xFFA79CFF, 0xFFDCE5EE, 0xFF345983, 0xFFC9C5BC, 0xFFB9E86D)
+    mobile_color(0xFFA79CFF, 0xFFEEF3F8, 0xFF345983, 0xFFC9C5BC, 0xFFB9E86D)
 }
 fn on_accent() -> Color32 {
     mobile_color(0xFF17122C, 0xFF1A1B1D, 0xFFF0F2F8, 0xFF1D1D20, 0xFF15200B)
@@ -131,31 +131,31 @@ fn p_bg() -> Color32 {
     mobile_color(0xFF0E1017, 0xFF191A1C, 0xFFEAF0F6, 0xFF141416, 0xFF10140E)
 }
 fn bar_fill() -> Color32 {
-    mobile_color(0xFF1C1A2A, 0xFF24272B, 0xFFF5F8FC, 0xFF202023, 0xFF1B2317)
+    mobile_color(0xFF1C1A2A, 0xFF2B3036, 0xFFF5F8FC, 0xFF202023, 0xFF1B2317)
 }
 fn surface_fill() -> Color32 {
-    mobile_color(0xFF2D2648, 0xFF353B42, 0xFFFAFCFF, 0xFF262629, 0xFF212D1B)
+    mobile_color(0xFF2D2648, 0xFF3C444E, 0xFFFAFCFF, 0xFF262629, 0xFF212D1B)
 }
 
 fn surface_edge() -> Color32 {
-    mobile_color(0xFF75669D, 0xFF74808C, 0xFFA2B3CA, 0xFF686763, 0xFF59734A)
+    mobile_color(0xFF75669D, 0xFF929FAA, 0xFFA2B3CA, 0xFF686763, 0xFF59734A)
 }
 
 fn piano_note_fill() -> Color32 {
-    mobile_color(0xFFC9C0FF, 0xFFC9BAF6, 0xFFBBACE9, 0xFFBCB8AF, 0xFFA5CB69)
+    mobile_color(0xFFC9C0FF, 0xFFDDE4EC, 0xFFBBACE9, 0xFFBCB8AF, 0xFFA5CB69)
 }
 
 fn outline() -> Color32 {
-    mobile_color(0xFF605382, 0xFF555F69, 0xFF8496AE, 0xFF4D4B48, 0xFF41543A)
+    mobile_color(0xFF605382, 0xFF67737F, 0xFF8496AE, 0xFF4D4B48, 0xFF41543A)
 }
 fn card_fill() -> Color32 {
-    mobile_color(0xFF252139, 0xFF2B2F34, 0xFFDAE4EF, 0xFF29292C, 0xFF242D1D)
+    mobile_color(0xFF252139, 0xFF323941, 0xFFDAE4EF, 0xFF29292C, 0xFF242D1D)
 }
 fn selected_fill() -> Color32 {
-    mobile_color(0xFF393066, 0xFF424A53, 0xFFC6D9F0, 0xFF3A3937, 0xFF38492B)
+    mobile_color(0xFF393066, 0xFF525F6D, 0xFFC6D9F0, 0xFF3A3937, 0xFF38492B)
 }
 fn grid_line() -> Color32 {
-    mobile_color(0xFF443A60, 0xFF454C54, 0xFFA5B5CA, 0xFF383838, 0xFF374431)
+    mobile_color(0xFF443A60, 0xFF525E6B, 0xFFA5B5CA, 0xFF383838, 0xFF374431)
 }
 
 fn panel(p: &Painter, rect: Rect, radius: f32) {
@@ -621,7 +621,7 @@ fn mobile_visuals(ui: &mut Ui) {
     v.selection.stroke = Stroke::new(1.0, p_accent());
     for (widget, fill) in [
         (&mut v.widgets.inactive, card_fill()),
-        (&mut v.widgets.hovered, mobile_color(0xFF524485, 0xFF393F46, 0xFFD4DCE7, 0xFF333234, 0xFF303F26)),
+        (&mut v.widgets.hovered, mobile_color(0xFF524485, 0xFF414B57, 0xFFD4DCE7, 0xFF333234, 0xFF303F26)),
         (&mut v.widgets.active, selected_fill()),
         (&mut v.widgets.open, bar_fill()),
     ] {
@@ -8776,7 +8776,7 @@ fn mobile_side_editor(ctx: &egui::Context, id: egui::Id, title: &str, side: egui
             let (rect, _) = ui.allocate_exact_size(vec2(width, screen.height()), Sense::click());
             let corners = if right { egui::Rounding { nw: 18.0, sw: 18.0, ..Default::default() } }
                 else { egui::Rounding { ne: 18.0, se: 18.0, ..Default::default() } };
-            ui.painter().rect_filled(rect, corners, mobile_color(0xFF191628, 0xFF202226, 0xFFEAF0F6, 0xFF1B1B1E, 0xFF171F13));
+            ui.painter().rect_filled(rect, corners, mobile_color(0xFF191628, 0xFF272D35, 0xFFEAF0F6, 0xFF1B1B1E, 0xFF171F13));
             ui.painter().rect_stroke(rect, corners, Stroke::new(1.0, surface_edge().gamma_multiply(0.7)));
             let header = Rect::from_min_size(rect.min, vec2(width, 54.0));
             let header_corners = egui::Rounding { sw: 0.0, se: 0.0, ..corners };
