@@ -4801,9 +4801,17 @@ impl VinteriaApp {
         }
         if let Some((t, preset)) = pick_preset {
             instruments_ui::apply_named_lane(&mut self.project, lane, t, preset);
+            self.m_playlist_undo_step();
+            self.publish_edits();
+            if let Some(sample) = instruments_ui::preset_preview(t, preset) {
+                self.shared.send(Cmd::Preview(std::sync::Arc::new(sample)));
+            }
             ctx.data_mut(|d| d.insert_temp(id.with(("preset", lane)), preset.to_owned()));
         }
         if close || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if kind == 2 {
+                self.shared.send(Cmd::PreviewStop);
+            }
             ctx.data_mut(|d| d.remove::<(usize, u8)>(id));
         }
     }

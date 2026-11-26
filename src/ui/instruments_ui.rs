@@ -289,6 +289,71 @@ fn apply_preset(project: &mut Project, p: &Preset) {
     }
 }
 
+/// Render a short dry audition independently of song playback and track effects.
+pub(super) fn preset_preview(track: Track, name: &str) -> Option<crate::project::SampleData> {
+    use crate::instruments::{analog::AnalogSynth, bass808::Bass808, synth::Synth, wavetable::WtSynth};
+
+    let preset = PRESETS.iter().find(|p| p.engine == track && p.name == name)?;
+    let pitch = match (track, preset.cat) {
+        (Track::Bass808, _) => 36,
+        (_, "Bass" | "Hardbass") => 43,
+        (_, "Bell") => 72,
+        _ => 60,
+    };
+    let hold_frames = match preset.cat {
+        "Pad" | "Strings" => 19_200,
+        "Bell" | "Pluck" => 6_000,
+        _ => 11_520,
+    };
+    const RATE: u32 = 24_000;
+    let total_frames = hold_frames + 12_000;
+    let mut mono = Vec::with_capacity(total_frames);
+    macro_rules! render_voice {
+        ($voice:ident, $params:expr, $release:expr) => {{
+            let params = $params;
+            for frame in 0..total_frames {
+                if frame == hold_frames {
+                    $release;
+                }
+                mono.push($voice.render_sample(&params, RATE as f32));
+            }
+        }};
+    }
+    let velocity = 0.79;
+    match track {
+        Track::Wavetable => {
+            let mut voice = WtSynth::new();
+            voice.note_on(pitch, velocity, u64::MAX);
+            render_voice!(voice, WavetableParams::preset(preset.key), voice.note_off(pitch));
+        }
+        Track::Analog => {
+            let mut voice = AnalogSynth::new();
+            voice.note_on(pitch, velocity, u64::MAX);
+            render_voice!(voice, AnalogParams::preset(preset.key), voice.note_off(pitch));
+        }
+        Track::Synth => {
+            let mut voice = Synth::new();
+            voice.note_on(pitch, velocity, u64::MAX);
+            render_voice!(voice, SynthParams::preset(preset.key), voice.note_off(pitch));
+        }
+        Track::Bass808 => {
+            let mut voice = Bass808::new();
+            voice.note_on(pitch, velocity, false, u64::MAX);
+            render_voice!(voice, Bass808Params::preset(preset.key), voice.note_off());
+        }
+        _ => return None,
+    }
+
+    let peak = mono.iter().fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+    let gain = (0.23 / peak.max(0.001)).clamp(0.0, 3.0);
+    let frames = mono.len();
+    for (i, sample) in mono.iter_mut().enumerate() {
+        let fade = ((frames - 1 - i) as f32 / 960.0).min(1.0);
+        *sample *= gain * fade;
+    }
+    Some(crate::project::SampleData { rate: RATE, mono })
+}
+
 /// Shows the preset library on top of the engine editor. Returns the engine the user switched the track to, if any.
 pub fn show(ui: &mut Ui, project: &mut Project, inst: &mut Inst, lane: usize) -> Option<Track> {
     swap_lane_params(project, lane);

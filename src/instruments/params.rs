@@ -610,15 +610,19 @@ impl WavetableParams {
                 p.f_decay = 0.5;
             }
             "Glass Current" => {
-                p.table_a = 3;
-                p.pos_a = 0.68;
-                p.level_b = 0.16;
+                p.table_a = 0;
+                p.pos_a = 0.38;
+                p.table_b = 3;
+                p.pos_b = 0.62;
+                p.oct_b = 12.0;
+                p.unison = 1;
+                p.level_b = 0.24;
                 p.pos_env = 0.4;
                 p.cutoff = 4700.0;
                 p.decay = 0.32;
                 p.sustain = 0.04;
                 p.release = 0.27;
-                p.volume = 0.49;
+                p.volume = 0.70;
             }
             "Aurora Choir" => {
                 p.table_a = 2;
@@ -628,28 +632,29 @@ impl WavetableParams {
                 p.level_b = 0.32;
                 p.unison = 5;
                 p.uni_detune = 14.0;
-                p.attack = 0.62;
+                p.attack = 0.38;
                 p.release = 1.6;
                 p.cutoff = 3200.0;
                 p.lfo_rate = 0.32;
                 p.lfo_depth = 0.38;
-                p.volume = 0.50;
+                p.volume = 0.67;
             }
             "Drift Cowbell" => {
-                p.table_a = 3;
-                p.pos_a = 0.36;
-                p.table_b = 3;
-                p.pos_b = 0.78;
-                p.oct_b = 1.0;
-                p.level_b = 0.28;
+                p.table_a = 0;
+                p.pos_a = 1.0;
+                p.table_b = 0;
+                p.pos_b = 1.0;
+                p.unison = 1;
+                p.oct_b = 6.7;
+                p.level_b = 0.54;
                 p.attack = 0.001;
-                p.decay = 0.24;
+                p.decay = 0.18;
                 p.sustain = 0.0;
                 p.release = 0.15;
                 p.filter = FilterType::Bp;
-                p.cutoff = 2150.0;
+                p.cutoff = 1470.0;
                 p.res = 0.36;
-                p.volume = 0.59;
+                p.volume = 1.05;
             }
             "Neon Reese" => {
                 p.table_a = 1;
@@ -670,7 +675,7 @@ impl WavetableParams {
                 p.pos_a = 0.71;
                 p.table_b = 1;
                 p.pos_b = 0.57;
-                p.oct_b = 1.0;
+                p.oct_b = 12.0;
                 p.level_b = 0.23;
                 p.unison = 3;
                 p.uni_detune = 9.0;

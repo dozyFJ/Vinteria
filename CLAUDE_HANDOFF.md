@@ -810,3 +810,9 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 
 - Added 18 factory sounds across Wavetable, Analog and 808 Bass. The sounds are available in the preset browser and in instrument editors.
 - Android handset verification pending.
+
+### Android 1.0.161
+
+- Track preset picker now plays a short dry preview independently of the Playlist.
+- Revoiced Drift Cowbell and Glass Current, strengthened Aurora Choir, corrected Orbital Lead oscillator tuning and pulled back the six new 808 presets.
+- Android handset verification pending.
