@@ -831,3 +831,9 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 
 - Track Effects opens a scrollable bottom sheet to add a device on mobile.
 - Android handset verification pending.
+
+### Android 1.0.165
+
+- Effect preset menus use the mobile bottom sheet. Filter type labels reflect the filter mode, and the device distinguishes FX Mix from Slot mix.
+- Piano Roll now fits about one bar in portrait, shows beat guides when snap is Off, and gives short notes a separate resize edge. Ctrl/Cmd+A selects all editable notes and arrow keys nudge the selection.
+- Android handset verification pending.

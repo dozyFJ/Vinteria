@@ -3119,7 +3119,7 @@ impl VinteriaApp {
         );
         let zoom_id = egui::Id::new(("m_piano_step_w", portrait, drawer.is_some()));
         let default_step_w = if portrait {
-            32.0
+            ((ui.available_width() - ruler_width) / 16.0).clamp(14.0, 36.0)
         } else {
             ((ui.available_width() - ruler_width - toolbar_width - 8.0) / steps.min(16) as f32).clamp(32.0, 72.0)
         };
@@ -3532,20 +3532,19 @@ impl VinteriaApp {
                     p.rect_filled(band, 0.0, piano_note_fill().gamma_multiply(0.16));
                 }
             }
-            let division = visible_grid_step(snap, pixels_per_tick);
+            let beat = crate::sequencer::PPQ;
+            let division = if snap == 1 { beat } else { visible_grid_step(snap, pixels_per_tick).min(beat) };
             let first_tick = ((p.clip_rect().left() - rect.left()).max(0.0) / pixels_per_tick) as u32;
             let last_tick = (((p.clip_rect().right() - rect.left()).max(0.0) / pixels_per_tick).ceil() as u32)
                 .min(duration);
-            let beat = TICKS_PER_BAR / 4;
-            let spacing = division.min(beat);
-            for tick in (first_tick.div_ceil(spacing) * spacing..=last_tick).step_by(spacing as usize) {
+            for tick in (first_tick.div_ceil(division) * division..=last_tick).step_by(division as usize) {
                 let x = rect.left() + tick as f32 * pixels_per_tick;
                 let stroke = if tick % TICKS_PER_BAR == 0 {
-                    Stroke::new(1.4, outline())
-                } else if tick % division == 0 {
-                    Stroke::new(1.0, pick(0xFF677681, 0xFF839AB6))
+                    Stroke::new(1.5, surface_edge())
+                } else if tick % beat == 0 {
+                    Stroke::new(1.0, outline())
                 } else {
-                    Stroke::new(0.7, grid_line())
+                    Stroke::new(0.6, grid_line().gamma_multiply(0.62))
                 };
                 p.line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], stroke);
             }
@@ -3583,9 +3582,11 @@ impl VinteriaApp {
             let tap_wait = std::time::Duration::from_millis(320);
             let mut pending = ui.data_mut(|d| d.remove_temp::<(f64, u32, u8)>(pending_id));
             let mut place_note = None;
-            let mut select_all = !pinching && !slide_mode && resp.double_clicked();
+            let key_input = !ui.ctx().wants_keyboard_input();
+            let select_shortcut = key_input && ui.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, egui::Key::A));
+            let mut select_all = !pinching && (select_shortcut || (!slide_mode && resp.double_clicked()));
             let mut group_delta = (0i64, 0i32);
-            let mut commit_group = false;
+            let mut end_group_move = false;
             if !selecting || pinching {
                 ui.data_mut(|d| {
                     d.remove::<(Pos2, Pos2, bool, bool)>(drag_id);
@@ -3638,25 +3639,10 @@ impl VinteriaApp {
                     let stopped = if held { released } else { resp.drag_stopped() };
                     let point = point.or(raw_point).unwrap_or(last).clamp(p.clip_rect().min, p.clip_rect().max);
                     if moving && !selected.is_empty() {
-                        let mut min_start = editable_end;
-                        let mut max_end = clip_start;
-                        let mut min_pitch = high_pitch;
-                        let mut max_pitch = 0;
-                        for index in &selected {
-                            let note = notes[*index];
-                            min_start = min_start.min(note.start);
-                            max_end = max_end.max(note.start + note.len);
-                            min_pitch = min_pitch.min(note.pitch);
-                            max_pitch = max_pitch.max(note.pitch);
-                        }
-                        let step = i64::from(snap);
-                        let left = i64::from(min_start - clip_start) / step;
-                        let right = i64::from(editable_end - max_end) / step;
                         let units = ((point.x - origin.x) / pixels_per_tick / snap as f32).round() as i64;
                         let semitones = ((origin.y - point.y) / row_h).round() as i32;
-                        group_delta = (units.clamp(-left, right) * step,
-                            semitones.clamp(-i32::from(min_pitch), i32::from(high_pitch - max_pitch)));
-                        commit_group = stopped && !selected.is_empty() && group_delta != (0, 0);
+                        group_delta = (units, semitones);
+                        end_group_move = stopped;
                     } else {
                         let area = Rect::from_two_pos(origin, point);
                         selected = notes.iter().enumerate().filter(|(_, note)| {
@@ -3682,6 +3668,39 @@ impl VinteriaApp {
                     }
                 });
             }
+            if key_input && selecting && !pinching && !selected.is_empty() && group_delta == (0, 0) {
+                let (x, y) = ui.input_mut(|input| {
+                    let key = egui::Modifiers::NONE;
+                    let x = i64::from(input.consume_key(key, egui::Key::ArrowRight))
+                        - i64::from(input.consume_key(key, egui::Key::ArrowLeft));
+                    let y = i32::from(input.consume_key(key, egui::Key::ArrowUp))
+                        - i32::from(input.consume_key(key, egui::Key::ArrowDown));
+                    (x, y)
+                });
+                if (x, y) != (0, 0) {
+                    group_delta = (x, y);
+                    end_group_move = true;
+                }
+            }
+            if group_delta != (0, 0) {
+                let mut min_start = editable_end;
+                let mut max_end = clip_start;
+                let mut min_pitch = high_pitch;
+                let mut max_pitch = 0;
+                for index in &selected {
+                    let note = notes[*index];
+                    min_start = min_start.min(note.start);
+                    max_end = max_end.max(note.start + note.len);
+                    min_pitch = min_pitch.min(note.pitch);
+                    max_pitch = max_pitch.max(note.pitch);
+                }
+                let step = i64::from(snap);
+                let left = i64::from(min_start - clip_start) / step;
+                let right = i64::from(editable_end - max_end) / step;
+                group_delta = (group_delta.0.clamp(-left, right) * step,
+                    group_delta.1.clamp(-i32::from(min_pitch), i32::from(high_pitch - max_pitch)));
+            }
+            let commit_group = end_group_move && group_delta != (0, 0);
             let tap_id = resp.id.with("last_piano_note_tap");
             let mut remove = None;
             let mut toggle_slide = None;
@@ -3721,7 +3740,7 @@ impl VinteriaApp {
                 let note_response = ui.interact(original.expand(1.0), id, if selecting || pinching { Sense::hover() } else { Sense::click_and_drag() })
                     .on_hover_cursor(egui::CursorIcon::Grab);
                 let edge = Rect::from_min_max(
-                    pos2(original.right() - original.width().min(14.0), original.top()),
+                    pos2(original.right() - (original.width() * 0.35).min(13.0), original.top()),
                     original.right_bottom());
                 let handle = ui.interact(edge, id.with("length"), if selecting || pinching { Sense::hover() } else { Sense::click_and_drag() })
                     .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
@@ -4629,14 +4648,20 @@ impl VinteriaApp {
                     &mut detail, &mut self.plugin_window, &mut self.lib, &self.shared);
             });
         let picker = egui::Id::new(devices_ui::EFFECT_PICKER);
-        let picking = ctx.data(|d| d.get_temp::<usize>(picker)) == Some(self.arr.sel_lane);
+        let presets = egui::Id::new(devices_ui::EFFECT_PRESETS);
+        let target = ctx.data(|d| d.get_temp::<devices_ui::EffectPresetTarget>(presets))
+            .filter(|target| target.0 == self.arr.sel_lane);
+        let picking = target.is_some() || ctx.data(|d| d.get_temp::<usize>(picker)) == Some(self.arr.sel_lane);
         if done || (!picking && ctx.input(|input| input.key_pressed(egui::Key::Escape))) {
             ctx.data_mut(|d| {
                 d.remove::<bool>(id);
                 d.remove::<(usize, u8)>(egui::Id::new(devices_ui::INSTRUMENT_PANEL));
                 d.remove::<usize>(egui::Id::new(devices_ui::INSTRUMENT_EDITOR));
                 d.remove::<usize>(picker);
+                d.remove::<devices_ui::EffectPresetTarget>(presets);
             });
+        } else if let Some(target) = target {
+            self.m_track_effect_presets(ctx, presets, target);
         } else if picking {
             self.m_track_effect_picker(ctx, picker, self.arr.sel_lane);
         } else {
@@ -4646,45 +4671,21 @@ impl VinteriaApp {
     }
 
     fn m_track_effect_picker(&mut self, ctx: &egui::Context, id: egui::Id, lane: usize) {
-        let screen = ctx.screen_rect();
-        let height = (screen.height() * 0.72).min(560.0);
-        let mut close = ctx.input(|input| input.key_pressed(egui::Key::Escape));
         let mut picked = None;
         let error_id = id.with("error");
-        let layer = egui::LayerId::new(egui::Order::Foreground, id);
-        ctx.memory_mut(|m| m.areas_mut().move_to_top(layer));
-        egui::Area::new(id).order(layer.order).fixed_pos(screen.min).movable(false).constrain(false)
-            .show(ctx, |ui| {
-                let (rect, _) = ui.allocate_exact_size(screen.size(), Sense::hover());
-                let top = rect.bottom() - height;
-                let backdrop = Rect::from_min_max(rect.min, pos2(rect.right(), top));
-                close |= ui.interact(backdrop, id.with("backdrop"), Sense::click()).clicked();
-                ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha(125));
-                let sheet = Rect::from_min_max(pos2(rect.left(), top), rect.max);
-                let corners = egui::Rounding { nw: 18.0, ne: 18.0, ..Default::default() };
-                ui.painter().rect_filled(sheet, corners, p_bg());
-                ui.painter().rect_stroke(sheet, corners, Stroke::new(1.0, surface_edge()));
-                ui.interact(sheet, id.with("surface"), Sense::click());
-                let mut content = ui.new_child(egui::UiBuilder::new().max_rect(sheet.shrink(12.0)));
-                content.set_clip_rect(sheet.intersect(screen));
-                mobile_visuals(&mut content);
-                content.horizontal(|ui| {
-                    close |= p_button(ui, "Done", true, vec2(57.0, 36.0)).clicked();
-                    ui.label(RichText::new("Add effect").size(18.0).strong());
-                });
-                content.separator();
-                if let Some(error) = content.data(|d| d.get_temp::<String>(error_id)) {
-                    content.colored_label(RED, error);
-                }
-                mobile_scroll(egui::ScrollArea::vertical()).id_salt(id.with("effects"))
-                    .auto_shrink([false, false]).show(&mut content, |ui| {
-                        for kind in crate::fx::ALL {
-                            if option_row(ui, kind.name(), kind.category()).clicked() {
-                                picked = Some(kind);
-                            }
+        let mut close = mobile_effect_sheet(ctx, id, "Add effect", |content| {
+            if let Some(error) = content.data(|d| d.get_temp::<String>(error_id)) {
+                content.colored_label(RED, error);
+            }
+            mobile_scroll(egui::ScrollArea::vertical()).id_salt(id.with("effects"))
+                .auto_shrink([false, false]).show(content, |ui| {
+                    for kind in crate::fx::ALL {
+                        if option_row(ui, kind.name(), kind.category()).clicked() {
+                            picked = Some(kind);
                         }
-                    });
-            });
+                    }
+                });
+        });
         if let Some(kind) = picked {
             match devices_ui::add_effect(&mut self.project, lane, kind) {
                 Ok(()) => {
@@ -4700,6 +4701,40 @@ impl VinteriaApp {
                 d.remove::<usize>(id);
                 d.remove::<String>(error_id);
             });
+            ctx.request_repaint();
+        }
+    }
+
+    fn m_track_effect_presets(&mut self, ctx: &egui::Context, id: egui::Id, target: devices_ui::EffectPresetTarget) {
+        let (lane, insert, index, kind) = target;
+        let slot = self.project.arrangement.tracks.get(lane).filter(|track| track.output == Some(insert))
+            .and_then(|_| self.project.insert_fx.get_mut(insert))
+            .and_then(|chain| chain.get_mut(index))
+            .filter(|slot| !slot.empty && slot.kind == kind);
+        let Some(slot) = slot else {
+            ctx.data_mut(|d| d.remove::<devices_ui::EffectPresetTarget>(id));
+            return;
+        };
+        let title = format!("{} presets", kind.name());
+        let mut picked = None;
+        let close = mobile_effect_sheet(ctx, id, &title, |ui| {
+            let current = slot.all();
+            mobile_scroll(egui::ScrollArea::vertical()).auto_shrink([false, false]).show(ui, |ui| {
+                for (name, values) in kind.presets() {
+                    let active = values == current;
+                    if p_button(ui, name, active, vec2(ui.available_width(), 40.0)).clicked() {
+                        picked = Some(values);
+                    }
+                }
+            });
+        });
+        if let Some(values) = picked {
+            slot.set_all(&values);
+            self.m_playlist_undo_step();
+            self.publish_edits();
+        }
+        if close || picked.is_some() {
+            ctx.data_mut(|d| d.remove::<devices_ui::EffectPresetTarget>(id));
             ctx.request_repaint();
         }
     }
@@ -8901,6 +8936,37 @@ fn mobile_side_editor(ctx: &egui::Context, id: egui::Id, title: &str, side: egui
         ctx.animate_bool(id.with("animation"), false);
     }
     done
+}
+
+fn mobile_effect_sheet(ctx: &egui::Context, id: egui::Id, title: &str, body: impl FnOnce(&mut Ui)) -> bool {
+    let screen = ctx.screen_rect();
+    let height = (screen.height() * 0.72).min(560.0);
+    let mut close = ctx.input(|input| input.key_pressed(egui::Key::Escape));
+    let layer = egui::LayerId::new(egui::Order::Foreground, id);
+    ctx.memory_mut(|m| m.areas_mut().move_to_top(layer));
+    egui::Area::new(id).order(layer.order).fixed_pos(screen.min).movable(false).constrain(false)
+        .show(ctx, |ui| {
+            let (rect, _) = ui.allocate_exact_size(screen.size(), Sense::hover());
+            let top = rect.bottom() - height;
+            let backdrop = Rect::from_min_max(rect.min, pos2(rect.right(), top));
+            close |= ui.interact(backdrop, id.with("backdrop"), Sense::click()).clicked();
+            ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha(125));
+            let sheet = Rect::from_min_max(pos2(rect.left(), top), rect.max);
+            let corners = egui::Rounding { nw: 18.0, ne: 18.0, ..Default::default() };
+            ui.painter().rect_filled(sheet, corners, p_bg());
+            ui.painter().rect_stroke(sheet, corners, Stroke::new(1.0, surface_edge()));
+            ui.interact(sheet, id.with("surface"), Sense::click());
+            let mut content = ui.new_child(egui::UiBuilder::new().max_rect(sheet.shrink(12.0)));
+            content.set_clip_rect(sheet.intersect(screen));
+            mobile_visuals(&mut content);
+            content.horizontal(|ui| {
+                close |= p_button(ui, "Done", true, vec2(57.0, 36.0)).clicked();
+                ui.label(RichText::new(title).size(18.0).strong());
+            });
+            content.separator();
+            body(&mut content);
+        });
+    close
 }
 
 fn mobile_editor_sheet(ctx: &egui::Context, id: &'static str, title: &str, body: impl FnOnce(&mut Ui)) -> bool {

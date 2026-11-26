@@ -14,6 +14,8 @@ fn free_insert(p: &Project) -> Option<usize> {
 pub(super) const INSTRUMENT_PANEL: &str = "m_instrument_panel";
 /// Lane whose instrument editor is open full screen on the phone.
 pub(super) const EFFECT_PICKER: &str = "m_track_effect_picker";
+pub(super) const EFFECT_PRESETS: &str = "m_track_effect_presets";
+pub(super) type EffectPresetTarget = (usize, usize, usize, crate::fx::FxKind);
 pub(super) const INSTRUMENT_EDITOR: &str = "m_instrument_editor";
 
 /// What each instrument is for, shown in the phone's instrument list.
@@ -231,7 +233,9 @@ fn show(ui: &mut Ui, p: &mut Project, st: &mut ArrState, dc: &mut DetailCtx, plu
                         let folded = ui.data(|d| d.get_temp::<bool>(fold_id)).unwrap_or(false);
                         let response = if mobile_effects {
                             card_ui(ui, (ui.available_width() - 22.0).max(0.0), |ui| {
-                                super::plugin_ui::plugin_grid(ui, slot);
+                                if super::plugin_ui::mobile_plugin_grid(ui, slot) {
+                                    ui.data_mut(|d| d.insert_temp(egui::Id::new(EFFECT_PRESETS), (lane, i, k, slot.kind)));
+                                }
                             })
                         } else if folded {
                             let h = ui.available_height().max(150.0).min(240.0);

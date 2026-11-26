@@ -14,6 +14,9 @@ fn fmt_value(kind: FxKind, i: usize, spec: &ParamSpec, v: f32) -> String {
     if kind == FxKind::ViHalla && (i == 0 || i == 9) {
         return HALLA_MODES[(v.round() as usize).min(11)].0.to_string();
     }
+    if kind == FxKind::Filter && i == 0 {
+        return ["Low Pass", "High Pass", "Band Pass"][(v.round() as usize).min(2)].to_string();
+    }
     if spec.0.starts_with("Type") {
         return ["Tape", "Tube", "Fold"][(v.round() as usize).min(2)].to_string();
     }
@@ -203,7 +206,7 @@ fn graph(ui: &mut Ui, slot: &FxSlot) {
 }
 
 /// Small peak indicator next to the header (driven by the slot's wet level setting, not the audio thread).
-fn header(ui: &mut Ui, slot: &mut FxSlot) {
+fn header(ui: &mut Ui, slot: &mut FxSlot, mobile: bool) -> bool {
     let compact = ui.available_width() < 350.0;
     ui.horizontal_wrapped(|ui| {
         super::widgets::led_tip(ui, &mut slot.on, "Enable / bypass");
@@ -214,6 +217,9 @@ fn header(ui: &mut Ui, slot: &mut FxSlot) {
                 ui.label(RichText::new("WINTERIA").small().color(CYAN()));
             }
         }
+        if mobile {
+            return super::mobile::p_button(ui, "Presets", false, vec2(82.0, 32.0)).clicked();
+        }
         let presets = slot.kind.presets();
         let width = if compact { 72.0 } else { 120.0 };
         egui::ComboBox::from_id_salt(("preset", slot.kind as u8)).selected_text("Presets").width(width).show_ui(ui, |ui| {
@@ -223,12 +229,21 @@ fn header(ui: &mut Ui, slot: &mut FxSlot) {
                 }
             }
         });
-    });
+        false
+    }).inner
 }
 
 /// The template. Draws header, graph, knobs and the dry/wet row for one slot.
 pub fn plugin_grid(ui: &mut Ui, slot: &mut FxSlot) {
-    header(ui, slot);
+    plugin_grid_inner(ui, slot, false);
+}
+
+pub(super) fn mobile_plugin_grid(ui: &mut Ui, slot: &mut FxSlot) -> bool {
+    plugin_grid_inner(ui, slot, true)
+}
+
+fn plugin_grid_inner(ui: &mut Ui, slot: &mut FxSlot, mobile: bool) -> bool {
+    let presets = header(ui, slot, mobile);
     ui.add_space(4.0);
     graph(ui, slot);
     ui.add_space(6.0);
@@ -251,7 +266,8 @@ pub fn plugin_grid(ui: &mut Ui, slot: &mut FxSlot) {
                 let log = lo > 0.0 && hi / lo >= 40.0;
                 let stepped = matches!(spec.0, "Mode A" | "Mode B") || spec.0.starts_with("Type");
                 let spec_c = *spec;
-                knob(ui, &short(spec.0), &mut v, lo, hi, log, |x| fmt_value(kind, i, &spec_c, x));
+                let label = if mobile && spec.0 == "Mix" { "FX Mix".to_owned() } else { short(spec.0) };
+                knob(ui, &label, &mut v, lo, hi, log, |x| fmt_value(kind, i, &spec_c, x));
                 if stepped {
                     v = v.round();
                 }
@@ -260,7 +276,13 @@ pub fn plugin_grid(ui: &mut Ui, slot: &mut FxSlot) {
         }
     });
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Dry / Wet").small().color(DIM()));
-        ui.add(egui::Slider::new(&mut slot.wet, 0.0..=1.0).show_value(true));
+        ui.label(RichText::new(if mobile { "Slot mix" } else { "Dry / Wet" }).small().color(DIM()))
+            .on_hover_text("Blend between dry input and the output of the whole effect.");
+        ui.add(egui::Slider::new(&mut slot.wet, 0.0..=1.0).show_value(!mobile))
+            .on_hover_text(format!("{:.0}% effect output", slot.wet * 100.0));
+        if mobile {
+            ui.label(format!("{:.0}%", slot.wet * 100.0));
+        }
     });
+    presets
 }
