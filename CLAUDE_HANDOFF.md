@@ -826,3 +826,8 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 
 - Mobile Playlist clips highlight and pulse in sync with the beat. Both orientations show progress, and muted clips and inactive MIDI steps stay unlit.
 - Android handset verification pending.
+
+### Android 1.0.164
+
+- Track Effects opens a scrollable bottom sheet to add a device on mobile.
+- Android handset verification pending.

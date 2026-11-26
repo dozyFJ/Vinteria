@@ -13,6 +13,7 @@ fn free_insert(p: &Project) -> Option<usize> {
 /// Side panel the phone instrument actions open: (lane, 0 = instruments, 1 = WAV samples, 2 = presets).
 pub(super) const INSTRUMENT_PANEL: &str = "m_instrument_panel";
 /// Lane whose instrument editor is open full screen on the phone.
+pub(super) const EFFECT_PICKER: &str = "m_track_effect_picker";
 pub(super) const INSTRUMENT_EDITOR: &str = "m_instrument_editor";
 
 /// What each instrument is for, shown in the phone's instrument list.
@@ -275,9 +276,15 @@ fn show(ui: &mut Ui, p: &mut Project, st: &mut ArrState, dc: &mut DetailCtx, plu
                 ui.label(RichText::new("Audio effects").strong()); ui.separator();
                 ui.label(RichText::new("Add the next device\nto this signal chain").small().color(DIM()));
                 ui.add_space(10.0);
-                ui.menu_button("+ Add effect", |ui| {
-                    for kind in ALL { if ui.button(kind.name()).clicked() { add_fx = Some(kind); ui.close_menu(); } }
-                });
+                if mobile_effects {
+                    if super::mobile::p_button(ui, "+ Add effect", false, vec2(ui.available_width(), 42.0)).clicked() {
+                        ui.data_mut(|d| d.insert_temp(egui::Id::new(EFFECT_PICKER), lane));
+                    }
+                } else {
+                    ui.menu_button("+ Add effect", |ui| {
+                        for kind in ALL { if ui.button(kind.name()).clicked() { add_fx = Some(kind); ui.close_menu(); } }
+                    });
+                }
             }); }
     };
     if mobile_instrument || mobile_effects {
@@ -288,12 +295,24 @@ fn show(ui: &mut Ui, p: &mut Project, st: &mut ArrState, dc: &mut DetailCtx, plu
         });
     }
     if let Some(kind) = add_fx {
-        if let Some(i) = out.or_else(|| free_insert(p)) {
-            p.arrangement.tracks[lane].output = Some(i);
-            let chain = &mut p.insert_fx[i];
-            if let Some(slot) = chain.iter_mut().find(|s| s.empty) { *slot = FxSlot::new(kind); } else { chain.push(FxSlot::new(kind)); }
-        } else { lib.message = "No free mixer insert. Choose a channel in the track routing first.".into(); }
+        if let Err(error) = add_effect(p, lane, kind) {
+            lib.message = error.into();
+        }
     }
+}
+
+pub(super) fn add_effect(p: &mut Project, lane: usize, kind: crate::fx::FxKind) -> Result<(), &'static str> {
+    let out = p.arrangement.tracks.get(lane).ok_or("No such track")?.output.filter(|&i| i < NUM_INSERTS);
+    let insert = out.or_else(|| free_insert(p)).ok_or("No free mixer insert. Choose a channel in the track routing first.")?;
+    p.insert_fx.resize_with(NUM_INSERTS, Vec::new);
+    p.arrangement.tracks[lane].output = Some(insert);
+    let chain = &mut p.insert_fx[insert];
+    if let Some(slot) = chain.iter_mut().find(|slot| slot.empty) {
+        *slot = FxSlot::new(kind);
+    } else {
+        chain.push(FxSlot::new(kind));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

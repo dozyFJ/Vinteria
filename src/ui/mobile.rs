@@ -4628,14 +4628,79 @@ impl VinteriaApp {
                 devices_ui::mobile_track_settings(&mut content, &mut self.project, &mut self.arr,
                     &mut detail, &mut self.plugin_window, &mut self.lib, &self.shared);
             });
-        if done || ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+        let picker = egui::Id::new(devices_ui::EFFECT_PICKER);
+        let picking = ctx.data(|d| d.get_temp::<usize>(picker)) == Some(self.arr.sel_lane);
+        if done || (!picking && ctx.input(|input| input.key_pressed(egui::Key::Escape))) {
             ctx.data_mut(|d| {
                 d.remove::<bool>(id);
                 d.remove::<(usize, u8)>(egui::Id::new(devices_ui::INSTRUMENT_PANEL));
                 d.remove::<usize>(egui::Id::new(devices_ui::INSTRUMENT_EDITOR));
+                d.remove::<usize>(picker);
             });
+        } else if picking {
+            self.m_track_effect_picker(ctx, picker, self.arr.sel_lane);
         } else {
+            ctx.data_mut(|d| d.remove::<usize>(picker));
             self.m_instrument_panel(ctx);
+        }
+    }
+
+    fn m_track_effect_picker(&mut self, ctx: &egui::Context, id: egui::Id, lane: usize) {
+        let screen = ctx.screen_rect();
+        let height = (screen.height() * 0.72).min(560.0);
+        let mut close = ctx.input(|input| input.key_pressed(egui::Key::Escape));
+        let mut picked = None;
+        let error_id = id.with("error");
+        let layer = egui::LayerId::new(egui::Order::Foreground, id);
+        ctx.memory_mut(|m| m.areas_mut().move_to_top(layer));
+        egui::Area::new(id).order(layer.order).fixed_pos(screen.min).movable(false).constrain(false)
+            .show(ctx, |ui| {
+                let (rect, _) = ui.allocate_exact_size(screen.size(), Sense::hover());
+                let top = rect.bottom() - height;
+                let backdrop = Rect::from_min_max(rect.min, pos2(rect.right(), top));
+                close |= ui.interact(backdrop, id.with("backdrop"), Sense::click()).clicked();
+                ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha(125));
+                let sheet = Rect::from_min_max(pos2(rect.left(), top), rect.max);
+                let corners = egui::Rounding { nw: 18.0, ne: 18.0, ..Default::default() };
+                ui.painter().rect_filled(sheet, corners, p_bg());
+                ui.painter().rect_stroke(sheet, corners, Stroke::new(1.0, surface_edge()));
+                ui.interact(sheet, id.with("surface"), Sense::click());
+                let mut content = ui.new_child(egui::UiBuilder::new().max_rect(sheet.shrink(12.0)));
+                content.set_clip_rect(sheet.intersect(screen));
+                mobile_visuals(&mut content);
+                content.horizontal(|ui| {
+                    close |= p_button(ui, "Done", true, vec2(57.0, 36.0)).clicked();
+                    ui.label(RichText::new("Add effect").size(18.0).strong());
+                });
+                content.separator();
+                if let Some(error) = content.data(|d| d.get_temp::<String>(error_id)) {
+                    content.colored_label(RED, error);
+                }
+                mobile_scroll(egui::ScrollArea::vertical()).id_salt(id.with("effects"))
+                    .auto_shrink([false, false]).show(&mut content, |ui| {
+                        for kind in crate::fx::ALL {
+                            if option_row(ui, kind.name(), kind.category()).clicked() {
+                                picked = Some(kind);
+                            }
+                        }
+                    });
+            });
+        if let Some(kind) = picked {
+            match devices_ui::add_effect(&mut self.project, lane, kind) {
+                Ok(()) => {
+                    self.m_playlist_undo_step();
+                    self.publish_edits();
+                    close = true;
+                }
+                Err(error) => ctx.data_mut(|d| d.insert_temp(error_id, error.to_owned())),
+            }
+        }
+        if close {
+            ctx.data_mut(|d| {
+                d.remove::<usize>(id);
+                d.remove::<String>(error_id);
+            });
+            ctx.request_repaint();
         }
     }
 
