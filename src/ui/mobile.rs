@@ -98,11 +98,11 @@ impl MobileTheme {
 
 /// Track / clip colours of the phone UI, one palette per theme (the PC keeps theme::lane_col). Shadows the glob import.
 fn lane_col(i: usize) -> Color32 {
-    const WINTERIA: [u32; 10] = [0xA79CFF, 0xFF8FB8, 0x7FD6FF, 0xC38BFF, 0x6FE3C2, 0xFFB38A, 0x9DB4FF, 0xF2A6FF, 0x8FE88F, 0xFFD27A];
-    const LIGHT: [u32; 10] = [0x7A6BEF, 0xE0608F, 0x3A9FD6, 0xA35FE0, 0x2EAA8A, 0xE07F45, 0x5C7BE0, 0xC766D6, 0x4FA34F, 0xD49A26];
-    const SILVER: [u32; 10] = [0x9FB7D6, 0xD3A9B8, 0x86B6D9, 0xB4ABD6, 0x8FC2B6, 0xD9BE98, 0xA9BCCB, 0xC9A7CF, 0xA2C79F, 0xE0D29A];
-    const GRAPHITE: [u32; 10] = [0xC9B79C, 0xD99A86, 0x9FB3A8, 0xB3A3C2, 0x8FAFB8, 0xD6BE7F, 0xC48F8F, 0xA0A8BA, 0xB2C08A, 0xE0AC80];
-    const TOXIC: [u32; 10] = [0xB9E86D, 0x6DE8A8, 0xE6F06D, 0x6DE0D0, 0x9FD04F, 0xF0C85A, 0x8FD9E0, 0xD2F08F, 0x5FC86D, 0xE8A85A];
+    const WINTERIA: [u32; 10] = [0xB9B3FE, 0xFF9ABE, 0x73CAF3, 0xD0A9FF, 0x61D6B6, 0xF5AA81, 0xA6BBFE, 0xE99DF5, 0x7ED67E, 0xE3B75E];
+    const LIGHT: [u32; 10] = [0x7D73E7, 0xD25383, 0x1690CA, 0xA066D6, 0x069D7D, 0xC7692D, 0x5F7EE4, 0xB45DC2, 0x489C48, 0xAF7B05];
+    const SILVER: [u32; 10] = [0x9EBEE0, 0xD4B491, 0xCDAED2, 0xA5C5A1, 0xDEADA1, 0x8EC5D2, 0xB7B6E0, 0xBFBE91, 0xDCABBA, 0x91C8BA];
+    const GRAPHITE: [u32; 10] = [0xCEA98B, 0x8FB7D4, 0xA3BA92, 0xBEA7CD, 0x83BDC3, 0xD5A39F, 0xBCB286, 0xA6AED8, 0x8CBEAA, 0xCFA2B8];
+    const TOXIC: [u32; 10] = [0xAFD46A, 0xD5B2FF, 0x11DFE3, 0xFEAAAD, 0xADC2FE, 0xE9BF4A, 0x62E0A6, 0xFFA0DE, 0x77D0FF, 0xFEAF7D];
     let palette = match MobileTheme::current() {
         MobileTheme::Winteria => &WINTERIA,
         MobileTheme::Day => &LIGHT,
@@ -139,23 +139,23 @@ fn muted() -> Color32 {
 }
 /// Silver accent from Chat Pulse in dark mode.
 fn p_accent() -> Color32 {
-    mobile_color(0xFFA79CFF, 0xFFEEF3F8, 0xFF7A6BEF, 0xFFC9C5BC, 0xFFB9E86D)
+    mobile_color(0xFFA79CFF, 0xFF9FC3E8, 0xFF5B4BD6, 0xFFD9A066, 0xFFA8D861)
 }
 fn on_accent() -> Color32 {
-    mobile_color(0xFF17122C, 0xFF1A1B1D, 0xFFFFFFFF, 0xFF1D1D20, 0xFF15200B)
+    mobile_color(0xFF17122C, 0xFF14202D, 0xFFFFFFFF, 0xFF1D1D20, 0xFF15200B)
 }
 fn p_bg() -> Color32 {
-    mobile_color(0xFF0E1017, 0xFF191A1C, 0xFFF1EEFB, 0xFF141416, 0xFF10140E)
+    mobile_color(0xFF111320, 0xFF191A1C, 0xFFF0ECFA, 0xFF161618, 0xFF12170F)
 }
 fn bar_fill() -> Color32 {
-    mobile_color(0xFF1C1A2A, 0xFF2B3036, 0xFFE6E1F8, 0xFF202023, 0xFF1B2317)
+    mobile_color(0xFF1C1A2A, 0xFF2B3036, 0xFFE3DCF6, 0xFF202023, 0xFF1B2317)
 }
 fn surface_fill() -> Color32 {
-    mobile_color(0xFF2D2648, 0xFF3C444E, 0xFFFBFAFF, 0xFF262629, 0xFF212D1B)
+    mobile_color(0xFF2D2648, 0xFF3C444E, 0xFFFAF8FF, 0xFF2E2E31, 0xFF27341F)
 }
 
 fn surface_edge() -> Color32 {
-    mobile_color(0xFF75669D, 0xFF929FAA, 0xFFB9AEE6, 0xFF686763, 0xFF59734A)
+    mobile_color(0xFF75669D, 0xFF929FAA, 0xFF9E92D6, 0xFF686763, 0xFF59734A)
 }
 
 fn piano_note_fill() -> Color32 {
@@ -163,16 +163,16 @@ fn piano_note_fill() -> Color32 {
 }
 
 fn outline() -> Color32 {
-    mobile_color(0xFF605382, 0xFF67737F, 0xFF9A8FC7, 0xFF4D4B48, 0xFF41543A)
+    mobile_color(0xFF605382, 0xFF67737F, 0xFF8F83C2, 0xFF4D4B48, 0xFF41543A)
 }
 fn card_fill() -> Color32 {
-    mobile_color(0xFF252139, 0xFF323941, 0xFFE9E4FA, 0xFF29292C, 0xFF242D1D)
+    mobile_color(0xFF252139, 0xFF323941, 0xFFFFFFFF, 0xFF29292C, 0xFF242D1D)
 }
 fn selected_fill() -> Color32 {
-    mobile_color(0xFF393066, 0xFF525F6D, 0xFFCFC6F7, 0xFF3A3937, 0xFF38492B)
+    mobile_color(0xFF463A80, 0xFF5A6878, 0xFFD4C9F7, 0xFF4A4845, 0xFF44592F)
 }
 fn grid_line() -> Color32 {
-    mobile_color(0xFF443A60, 0xFF525E6B, 0xFFC9C1E6, 0xFF383838, 0xFF374431)
+    mobile_color(0xFF443A60, 0xFF525E6B, 0xFFC3BAE3, 0xFF383838, 0xFF374431)
 }
 
 fn panel(p: &Painter, rect: Rect, radius: f32) {
@@ -556,6 +556,64 @@ fn segmented(ui: &mut Ui, id_salt: &str, items: &[&str]) -> usize {
     ui.data_mut(|d| d.insert_temp(id, sel));
     ui.add_space(8.0);
     sel
+}
+
+/// One-finger scrolling of a zoomable grid with its own fling. egui's drag-to-scroll keeps its fling speed while a pinch
+/// switches it off and replays it when the fingers lift, so the view flew away after every zoom; this one is cancelled
+/// by a pinch. `blocked(press)` says the press grabbed something (a note, the selected clip) instead of the view.
+#[derive(Clone, Copy, Default)]
+struct TouchPan {
+    origin: Pos2,
+    start: egui::Vec2,
+    vel: egui::Vec2,
+    active: bool,
+    moved: bool,
+}
+
+fn touch_pan(ui: &Ui, id: egui::Id, grid: Rect, content: egui::Vec2, offset: egui::Vec2, enabled: bool,
+    blocked: impl Fn(Pos2) -> bool) -> egui::Vec2
+{
+    let mut pan = ui.data(|d| d.get_temp::<TouchPan>(id)).unwrap_or_default();
+    let max = (content - grid.size()).max(egui::Vec2::ZERO);
+    let (pressed, down, origin, pos, velocity, dt) = ui.input(|i| (i.pointer.any_pressed(), i.pointer.primary_down(),
+        i.pointer.press_origin(), i.pointer.interact_pos(), i.pointer.velocity(), i.stable_dt.min(0.1)));
+    let mut offset = offset;
+    if !enabled {
+        pan = TouchPan::default();
+    } else if pressed {
+        pan = match origin.filter(|o| grid.contains(*o) && !blocked(*o)) {
+            Some(origin) => TouchPan { origin, start: offset, active: true, ..Default::default() },
+            None => TouchPan::default(),
+        };
+    } else if pan.active && down {
+        if let Some(pos) = pos {
+            let moved = pos - pan.origin;
+            pan.moved |= moved.length() > 6.0;
+            if pan.moved {
+                offset = pan.start - moved;
+                pan.vel = velocity;
+            }
+        }
+    } else if pan.active {
+        pan.active = false;
+        if !pan.moved || pan.vel.length() < 60.0 {
+            pan.vel = egui::Vec2::ZERO;
+        }
+    } else if pan.vel != egui::Vec2::ZERO {
+        offset -= pan.vel * dt;
+        let speed = pan.vel.length();
+        let slower = (speed - 2400.0 * dt).max(0.0);
+        pan.vel = if slower < 30.0 { egui::Vec2::ZERO } else { pan.vel * (slower / speed) };
+        ui.ctx().request_repaint();
+    }
+    let clamped = offset.clamp(egui::Vec2::ZERO, max);
+    if clamped != offset {
+        // hit an edge: stop the fling on that axis
+        if clamped.x != offset.x { pan.vel.x = 0.0; }
+        if clamped.y != offset.y { pan.vel.y = 0.0; }
+    }
+    ui.data_mut(|d| d.insert_temp(id, pan));
+    clamped
 }
 
 /// egui widgets (sliders, text fields, drag values) restyled with solid fills.
@@ -3550,8 +3608,25 @@ impl VinteriaApp {
         grid_ui.set_clip_rect(grid.intersect(ui.clip_rect()));
         let grid_id = ("m_piano_grid_pc", editor);
         let initialized = egui::Id::new((grid_id, "initialized"));
+        // one-finger scrolling is ours (see touch_pan); a press on a note edits the note instead
+        let stored = ui.data(|d| d.get_temp::<egui::Vec2>(offset_id)).unwrap_or_default();
+        let content = vec2(duration as f32 / TICKS_PER_STEP as f32 * step_w, rows as f32 * row_h);
+        let panned = {
+            let notes = &self.project.patterns[pi].notes;
+            let origin = grid.min - stored;
+            touch_pan(ui, zoom_id.with("pan"), grid, content, stored, !pinching && !selecting, |press| {
+                notes.iter().any(|note| {
+                    if note.start.saturating_add(note.len) <= clip_start || note.start >= pattern_end { return false; }
+                    let x = origin.x + note.start.saturating_sub(clip_start) as f32 / TICKS_PER_STEP as f32 * step_w;
+                    let y = origin.y + f32::from(high_pitch - note.pitch.min(high_pitch)) * row_h;
+                    let w = (note.len as f32 / TICKS_PER_STEP as f32 * step_w).max(6.0);
+                    Rect::from_min_size(pos2(x, y), vec2(w, row_h)).expand(2.0).contains(press)
+                })
+            })
+        };
         let mut scroll = mobile_scroll(egui::ScrollArea::both()).id_salt(grid_id)
-            .drag_to_scroll(!pinching && !selecting).max_height(grid.height()).auto_shrink([false, false]);
+            .drag_to_scroll(false).max_height(grid.height()).auto_shrink([false, false])
+            .horizontal_scroll_offset(panned.x).vertical_scroll_offset(panned.y);
         // no auto-follow: the view stays where the user scrolled it, only the playhead line moves
         let first_view = !ui.data(|d| d.get_temp::<bool>(initialized)).unwrap_or(false);
         if first_view || oct != previous_oct {
@@ -3864,7 +3939,7 @@ impl VinteriaApp {
                 let visual = body(len, pitch, start);
                 p.rect_filled(visual, 5.0, if highlighted { mobile_color(0xFFE7ECFF, 0xFFDCEAFF, 0xFFD8D0FF, 0xFFE0DBCF, 0xFFD8FBA1) } else { piano_note_fill() });
                 if highlighted {
-                    p.rect_stroke(visual, 5.0, Stroke::new(1.4, mobile_color(0xFFA79CFF, 0xFF89B3FF, 0xFF7A6BEF, 0xFFC9C5BC, 0xFFB9E86D)));
+                    p.rect_stroke(visual, 5.0, Stroke::new(1.4, mobile_color(0xFFA79CFF, 0xFF89B3FF, 0xFF5B4BD6, 0xFFD9A066, 0xFFA8D861)));
                 }
                 if note.slide { piano_slide_mark(&p, visual); }
                 let grip = Rect::from_center_size(visual.right_center() - vec2(3.0, 0.0), vec2(2.0, 10.0));
@@ -4016,7 +4091,7 @@ impl VinteriaApp {
             None
         };
         let painter = ui.painter_at(ruler);
-        painter.rect_filled(ruler, 5.0, pick(0xFFCED6E0, 0xFFE6E1F8));
+        painter.rect_filled(ruler, 5.0, mobile_color(0xFFD6D2EE, 0xFFD3D9E0, 0xFFE6E1F8, 0xFFD5D2CC, 0xFFD2DCC8));
         for row in 0..rows {
             let pitch = high_pitch - row as u8;
             let y = out.inner.y + row as f32 * row_h;
@@ -4028,7 +4103,7 @@ impl VinteriaApp {
             let down = side_pressed == Some(pitch) || held.is_some_and(|(_, key)| key == pitch);
             if black {
                 let key = Rect::from_min_size(lane.min, vec2(lane.width() * 0.62, row_h));
-                painter.rect_filled(key.shrink2(vec2(0.0, 1.0)), 2.0, if down { lane_col(3) } else { pick(0xFF242B38, 0xFF4A4170) });
+                painter.rect_filled(key.shrink2(vec2(0.0, 1.0)), 2.0, if down { lane_col(3) } else { mobile_color(0xFF241F38, 0xFF242B38, 0xFF4A4170, 0xFF2A2927, 0xFF1F2A1A) });
             } else {
                 if down {
                     painter.rect_filled(lane.shrink(0.5), 2.0, lane_col(3));
@@ -7201,12 +7276,15 @@ impl VinteriaApp {
         }
         let mut size = ui.data(|d| d.get_temp::<egui::Vec2>(id.with("size")))
             .unwrap_or(vec2((grid.width() / 3.0).clamp(66.0, 112.0), 48.0));
+        // zoomed out, the columns stretch to the screen instead of leaving an empty strip on the right
+        let min_column = (grid.width() / lanes.len() as f32).clamp(42.0, 200.0);
+        size.x = size.x.clamp(min_column, 200.0);
         let (pinching, zoom) = grid_pinch(ui, id.with("pinch"), grid);
         let mut pinch_offset = None;
         if let Some((axis, factor, center)) = zoom {
             // zoom around the fingers: the cell under the pinch centre stays under it
             let before = size[axis];
-            size[axis] = (size[axis] * factor).clamp(42.0, 200.0);
+            size[axis] = (size[axis] * factor).clamp(if axis == 0 { min_column } else { 42.0 }, 200.0);
             let applied = size[axis] / before;
             if (applied - 1.0).abs() > f32::EPSILON {
                 let anchor = (center[axis] - grid.min[axis]).max(0.0);
@@ -7220,7 +7298,9 @@ impl VinteriaApp {
         let scale = bar_height / TICKS_PER_BAR as f32;
         let bars = self.project.arrangement.song_end_bar()
             .max(if self.project.loop_on { self.project.loop_start.saturating_add(self.project.loop_bars) } else { 0 })
-            .saturating_add(8).max(16);
+            .saturating_add(8).max(16)
+            // zoomed out, enough bars to fill the screen
+            .max((grid.height() / bar_height).ceil() as u32 + 1);
         let snap = self.arr.snap.max(1);
         let pos = self.shared.position.load(Ordering::Relaxed);
         let playing = self.playing() && self.project.song_mode;
@@ -7229,9 +7309,19 @@ impl VinteriaApp {
             d.remove_temp::<u32>(egui::Id::new("m_playlist_reveal_tick")),
             d.remove_temp::<bool>(egui::Id::new("playlist_return_to_start")).unwrap_or(false),
         ));
-        let mut scroll = mobile_scroll(egui::ScrollArea::both().id_salt(id))
-            .drag_to_scroll(!pinching && !select).auto_shrink([false, false]);
         let old = ui.data(|d| d.get_temp::<egui::Vec2>(id.with("offset"))).unwrap_or_default();
+        // one-finger scrolling is ours (see touch_pan); a press on the selected clip moves the clip instead
+        let content = vec2(column * lanes.len() as f32, bar_height * bars as f32);
+        let selected_rect = self.arr.sel_clip.and_then(|index| self.project.arrangement.clips.get(index)).and_then(|clip| {
+            let i = columns.get(clip.lane).copied().flatten()?;
+            Some(Rect::from_min_size(grid.min - old + vec2(i as f32 * column, clip.start as f32 * scale),
+                vec2(column, (clip.len as f32 * scale).max(5.0))))
+        });
+        let panned = touch_pan(ui, id.with("pan"), grid, content, old, !pinching && !select,
+            |press| selected_rect.is_some_and(|rect| rect.contains(press)));
+        let mut scroll = mobile_scroll(egui::ScrollArea::both().id_salt(id))
+            .drag_to_scroll(false).auto_shrink([false, false])
+            .horizontal_scroll_offset(panned.x).vertical_scroll_offset(panned.y);
         if let Some(index) = reveal_lane.and_then(|lane| lanes.iter().position(|&v| v == lane)) {
             let x = index as f32 * column;
             if x < old.x || x + column > old.x + grid.width() {

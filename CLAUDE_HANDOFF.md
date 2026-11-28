@@ -878,3 +878,17 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 - Known, not fixed: landscape bottom dock's last icon sits under the right edge (the dock scrolls); Drum Rack has three
   control rows above the grid; Mixer FX slot list takes half the width; values under knobs use the monospace font.
 - Handset verification pending.
+
+### Android 1.0.170
+
+- Pinch zoom in the vertical Playlist and the Piano Roll: egui's drag-to-scroll kept its fling speed while a pinch
+  switched it off and replayed it when the fingers lifted, so the view flew away after every zoom. One-finger scrolling
+  is now our own `touch_pan` (with its own fling, cancelled by a pinch); a press on the selected clip / on a note still
+  edits it. Zoomed out, Playlist columns stretch to the screen width and bars fill its height (no empty strips).
+- Theme palette pass (contrast and OKLab lightness): Winteria Light accent #5B4BD6 (white text 6.1:1), white cards with
+  a stronger edge; selected fills brighter in every theme (1.6–2.0:1 against cards, was ~1.3); Graphite Silver gets a
+  blue accent, Dark Graphite a copper one (both used to equal the text colour); surfaces above cards again in Dark
+  Graphite and Toxic Dark; dark backgrounds lifted a little, Toxic accent toned down; track palettes at one lightness
+  per theme, Silver / Graphite / Toxic with evenly spread hues; Piano Roll keyboard tinted per theme.
+- Not done: the palette is still passed as five positional colours (`mobile_color`), a per-theme struct would be safer.
+- Handset verification pending (pinch can't be tested with a mouse).
