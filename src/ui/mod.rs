@@ -764,9 +764,10 @@ impl VinteriaApp {
         if let Some(kit) = crate::templates::template_kit(name) {
             self.lib.apply_kit(&mut self.project, &kit);
         }
-        if let Some(file) = crate::templates::cowbell_sample(name) {
+        // the cowbell pack is not shipped (no third-party samples in the APK): without it the hook stays on the Analog synth
+        if let Some(path) = crate::templates::cowbell_sample_path(name) {
             crate::templates::cowbell_to_sampler(&mut self.project);
-            self.lib.assign_sampler(&mut self.project, &std::path::PathBuf::from("samples").join(file));
+            self.lib.assign_sampler(&mut self.project, &path);
         }
         {
             let lib = &mut self.lib;
@@ -915,9 +916,10 @@ impl VinteriaApp {
         if let Some(kit) = crate::templates::template_kit(name) {
             self.lib.apply_kit(&mut t, &kit);
         }
-        if let Some(file) = crate::templates::cowbell_sample(name) {
+        // the cowbell pack is not shipped (no third-party samples in the APK): without it the hook stays on the Analog synth
+        if let Some(path) = crate::templates::cowbell_sample_path(name) {
             crate::templates::cowbell_to_sampler(&mut t);
-            self.lib.assign_sampler(&mut t, &std::path::PathBuf::from("samples").join(file));
+            self.lib.assign_sampler(&mut t, &path);
         }
         {
             let lib = &mut self.lib;

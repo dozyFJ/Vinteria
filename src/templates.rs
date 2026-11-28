@@ -184,6 +184,13 @@ pub fn cowbell_sample(name: &str) -> Option<&'static str> {
     }
 }
 
+/// The cowbell file of a template, only if it is really in the samples folder. Without it the template keeps its hook on
+/// the Analog synth: moving the notes to an empty Sampler would make the melody silent.
+pub fn cowbell_sample_path(name: &str) -> Option<std::path::PathBuf> {
+    let path = std::path::Path::new("samples").join(cowbell_sample(name)?);
+    crate::project::load_wav(&path).is_ok().then_some(path)
+}
+
 /// Move the cowbell hook from the synthesized Analog voice to the Sampler (which then plays the cowbell sample). The sampler's
 /// root note becomes the middle pitch of the hook, so the hook's main notes sound at the sample's own pitch.
 pub fn cowbell_to_sampler(p: &mut Project) {
@@ -2022,10 +2029,10 @@ mod kits {
         use crate::audio_engine::Engine;
         use std::sync::Arc;
         for (name, make) in TEMPLATES.iter() {
-            let Some(file) = cowbell_sample(name) else { continue };
+            // the Phonk pack is local only (not in git / the APK); without it see cowbell_hook_stays_on_analog_without_the_pack
+            let Some(path) = cowbell_sample_path(name) else { continue };
             let mut p = make();
             cowbell_to_sampler(&mut p);
-            let path = std::path::Path::new("samples").join(file);
             let data = crate::project::load_wav(&path).unwrap();
             p.sampler.sample = Some(crate::project::SampleRef { name: "cowbell".into(), path: path.to_string_lossy().to_string(), data: Some(Arc::new(data)) });
             p.song_mode = false;
@@ -2044,7 +2051,38 @@ mod kits {
     }
 
     #[test]
+    fn cowbell_hook_stays_on_analog_without_the_pack() {
+        use crate::audio_engine::Engine;
+        use std::sync::Arc;
+        for (name, make) in TEMPLATES.iter() {
+            if cowbell_sample(name).is_none() || cowbell_sample_path(name).is_some() {
+                continue;
+            }
+            // what load_template does when the cowbell file is missing: the notes stay on the Analog synth and sound
+            let mut p = make();
+            assert!(p.patterns.iter().any(|pat| pat.notes.iter().any(|n| n.track == Track::Analog)), "{name}: no Analog hook");
+            p.song_mode = false;
+            p.current_pattern = 1;
+            let mut e = Engine::new(48000.0);
+            e.set_project(Arc::new(p));
+            e.play();
+            let mut buf = vec![0.0f32; 48000 * 2 * 4];
+            for c in buf.chunks_mut(512) {
+                e.render(c);
+            }
+            let peaks = e.take_peaks();
+            let ch = Track::Analog.channel();
+            assert!(peaks[ch][0] + peaks[ch][1] > 0.0, "{name}: the hook is silent without the cowbell pack");
+        }
+    }
+
+    #[test]
     fn every_kit_sound_of_a_template_exists_in_the_samples_folder() {
+        // the kits are local-only packs (AGENTS.md: no third-party samples in git / the APK); check them only where present
+        if !["808 Mafia", "Phonk Kit", "Yeat KanKan Kit"].iter().all(|d| std::path::Path::new("samples").join(d).is_dir()) {
+            eprintln!("sample packs not present, skipping");
+            return;
+        }
         for (name, _) in TEMPLATES.iter() {
             if let Some(kit) = template_kit(name) {
                 for file in kit {

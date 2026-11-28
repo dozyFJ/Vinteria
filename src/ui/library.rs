@@ -650,6 +650,10 @@ mod tests {
     fn search_list_contains_sounds_from_sub_folders() {
         let l = Library::new();
         let samples = std::path::Path::new("samples");
+        if !std::fs::read_dir(samples).map_or(false, |mut d| d.any(|e| e.map_or(false, |e| e.path().is_dir()))) {
+            eprintln!("no sample sub-folders (packs are local only), skipping");
+            return;
+        }
         // the 808 Mafia / Phonk kits live in sub-folders: the flat list used by the search has to reach them
         assert!(l.files.iter().any(|f| f.parent().map_or(false, |d| d != samples)), "no file from a sub-folder in the search list");
     }
@@ -658,6 +662,10 @@ mod tests {
 
     #[test]
     fn default_kit_loads_all_lanes() {
+        if !std::path::Path::new("samples/808 Mafia").is_dir() {
+            eprintln!("808 Mafia pack not present (local only), skipping");
+            return;
+        }
         let mut p = Project::default();
         let mut l = Library::new();
         l.apply_default_kit(&mut p);

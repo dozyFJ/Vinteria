@@ -842,3 +842,12 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 
 - Moved mobile device actions into an explicit button so the full-card context menu no longer intercepts taps on effect controls or presets.
 - Android handset verification pending.
+
+### Android 1.0.167
+
+- Phonk templates with a cowbell hook (Drift Phonk Hard, Phonk House 2, Memphis Phonk) no longer go silent when the
+  Phonk pack is missing (it is local only, not in git / the APK): the hook stays on the Analog synth unless the cowbell
+  file really loads (`templates::cowbell_sample_path`).
+- Tests that need the local-only packs (808 Mafia, Phonk Kit, Yeat KanKan Kit) skip when they are absent; new test
+  `cowbell_hook_stays_on_analog_without_the_pack`. `cargo test --release`: 117 passed.
+- Android handset verification pending.
