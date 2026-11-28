@@ -264,3 +264,40 @@ mod tests {
         assert_eq!(d.len() / 2, 4 * 48000);
     }
 }
+
+#[cfg(test)]
+mod punch_render_tests {
+    use super::*;
+
+    /// RMS of `x` after a band-pass made of two one-pole filters (rough "what earbuds play" band)
+    fn band_rms(x: &[f32], sr: f32, lo: f32, hi: f32) -> f32 {
+        let (a_hp, a_lp) = ((-std::f32::consts::TAU * lo / sr).exp(), 1.0 - (-std::f32::consts::TAU * hi / sr).exp());
+        let (mut hp_prev_x, mut hp_y, mut lp_y, mut sum) = (0.0f32, 0.0f32, 0.0f32, 0.0f64);
+        for &v in x {
+            hp_y = a_hp * (hp_y + v - hp_prev_x);
+            hp_prev_x = v;
+            lp_y += a_lp * (hp_y - lp_y);
+            sum += (lp_y * lp_y) as f64;
+        }
+        (sum / x.len().max(1) as f64).sqrt() as f32
+    }
+
+    #[test]
+    fn punch_lifts_the_earbud_band_of_a_trap_template_and_keeps_the_ceiling() {
+        let (_, make) = crate::templates::TEMPLATES.iter().find(|t| t.0.contains("Trap")).unwrap();
+        let settings = ExportSettings { sample_rate: 48000, depth: BitDepth::Float32, bars: 4, tail_secs: 0.0 };
+        let mut off = make();
+        off.punch = 0.0;
+        let mut on = make();
+        on.punch = 0.6;
+        let (a, b) = (render(&off, &settings), render(&on, &settings));
+        let mono = |v: &[f32]| v.chunks(2).map(|f| (f[0] + f[1]) * 0.5).collect::<Vec<f32>>();
+        let (a, b) = (mono(&a), mono(&b));
+        let (band_a, band_b) = (band_rms(&a, 48000.0, 90.0, 360.0), band_rms(&b, 48000.0, 90.0, 360.0));
+        let rms = |v: &[f32]| (v.iter().map(|x| (x * x) as f64).sum::<f64>() / v.len() as f64).sqrt() as f32;
+        eprintln!("earbud band 90-360 Hz: off {band_a:.4} on {band_b:.4} (+{:.1} dB), overall RMS +{:.1} dB",
+            20.0 * (band_b / band_a).log10(), 20.0 * (rms(&b) / rms(&a)).log10());
+        assert!(band_b > band_a * 1.12, "Punch should lift the 90–360 Hz band: {band_a} -> {band_b}");
+        assert!(b.iter().all(|v| v.is_finite() && v.abs() <= 0.95), "over the ceiling");
+    }
+}

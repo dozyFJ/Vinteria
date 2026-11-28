@@ -8703,6 +8703,21 @@ impl VinteriaApp {
             ui.label(RichText::new(format!("Running buffers: {} · reconnects: {}",
                 self.shared.callbacks.load(Ordering::Relaxed), self.audio.reopens)).size(11.0).color(muted()));
             ui.add_space(10.0);
+            // master Punch: psychoacoustic bass + mono low end + soft clip, saved with the project and in exports
+            ui.label(RichText::new("Punch (808 you can hear on earbuds and phone speakers)").size(12.0).color(muted()));
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let w = (ui.available_width() - 8.0) / 3.0;
+                for (amount, label) in [(0.0f32, "Off"), (0.6, "On"), (1.0, "Max")] {
+                    let on = (self.project.punch - amount).abs() < 0.05;
+                    if p_button(ui, label, on, vec2(w, 44.0)).clicked() && !on {
+                        self.m_playlist_undo_step();
+                        self.project.punch = amount;
+                        self.publish_edits();
+                    }
+                }
+            });
+            ui.add_space(10.0);
             #[cfg(target_os = "android")]
             if let Some(updater) = &mut self.android_updater {
                 heading(ui, "Updates");

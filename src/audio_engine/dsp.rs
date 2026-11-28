@@ -127,3 +127,35 @@ impl Rng {
         (x as f32 / u32::MAX as f32) * 2.0 - 1.0
     }
 }
+
+/// 4-point Hermite interpolation of `d` at `i + f` (`f` in 0..1): cleaner highs than linear interpolation when a
+/// sample plays at another rate (pitched hats, 44.1 kHz files on a 48 kHz device). Edges repeat the end samples.
+#[inline]
+pub fn hermite(d: &[f32], i: usize, f: f32) -> f32 {
+    let n = d.len();
+    if n == 0 {
+        return 0.0;
+    }
+    let at = |k: usize| d[k.min(n - 1)];
+    let xm1 = if i == 0 { at(0) } else { at(i - 1) };
+    let (x0, x1, x2) = (at(i), at(i + 1), at(i + 2));
+    let c = (x1 - xm1) * 0.5;
+    let v = x0 - x1;
+    let w = c + v;
+    let a = w + v + (x2 - x0) * 0.5;
+    let b = w + a;
+    ((a * f - b) * f + c) * f + x0
+}
+
+#[cfg(test)]
+mod hermite_tests {
+    #[test]
+    fn hermite_hits_the_samples_and_is_smooth_between() {
+        let d = [0.0, 1.0, 0.0, -1.0, 0.0];
+        for i in 0..4 {
+            assert!((super::hermite(&d, i, 0.0) - d[i]).abs() < 1e-6);
+        }
+        let mid = super::hermite(&d, 1, 0.5);
+        assert!(mid > 0.5 && mid < 1.0, "{mid}");
+    }
+}

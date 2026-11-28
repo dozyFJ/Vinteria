@@ -135,7 +135,7 @@ impl Sampler {
             let f = (v.pos - i as f64) as f32;
             // a slice stops with a 4 ms fade so the cut does not click
             let tail = if v.end < f64::MAX { ((v.end - v.pos) / (0.004 * sd.rate as f64)).min(1.0) as f32 } else { 1.0 };
-            out += (sd.mono[i] * (1.0 - f) + sd.mono[i + 1] * f) * v.gain * v.vel * tail;
+            out += crate::audio_engine::dsp::hermite(&sd.mono, i, f) * v.gain * v.vel * tail;
             v.pos += step * v.ratio;
         }
         out * p.volume

@@ -196,6 +196,8 @@ pub struct Project {
     pub swing: f32,
     pub metronome: bool,
     pub master_volume: f32,
+    /// master "Punch" (psychoacoustic bass, mono low end, soft clip): 0 = off, 0.6 = on, 1 = max
+    pub punch: f32,
     /// automation of the master level (multiplier of `master_volume`)
     pub master_auto: Vec<crate::arrangement::AutoPoint>,
     /// per insert: how far (0..1) the sidechain sources push its level down on every hit
@@ -244,6 +246,7 @@ impl Default for Project {
             swing: 0.0,
             metronome: false,
             master_volume: 0.65,
+            punch: 0.6,
             master_auto: Vec::new(),
             duck: vec![0.0; crate::mixer::NUM_INSERTS],
             song_mode: false,

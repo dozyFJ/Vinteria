@@ -892,3 +892,18 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
   per theme, Silver / Graphite / Toxic with evenly spread hues; Piano Roll keyboard tinted per theme.
 - Not done: the palette is still passed as five positional colours (`mobile_color`), a per-theme struct would be safer.
 - Handset verification pending (pinch can't be tested with a mouse).
+
+### Android 1.0.171 — sound engine: Punch
+
+- New master stage `effects::Punch` (before the limiter), saved per project as `project.punch` (0 off, 0.6 on — the
+  default, also for old projects — 1 max), switch in phone Settings → Sound. Applies to playback and exports.
+  - psychoacoustic bass: 2nd/3rd harmonics of the band under ~110 Hz added at 90–360 Hz, so an 808 is heard on earbuds
+    and phone speakers that cannot play the sub;
+  - mono low end under 120 Hz (side through a 24 dB/oct high-pass);
+  - soft clipper (knee 0.72, a little drive) so kick / 808 peaks are rounded before the limiter instead of pumping it.
+  - Trap template, 4 bars: +2.3 dB in the 90–360 Hz band and +2.3 dB RMS, peaks stay under the ceiling.
+- Limiter ceiling 0.95 -> 0.9 (≈ -0.9 dBFS) for Bluetooth / AAC / MP3 headroom.
+- Samples, drums and audio clips use 4-point Hermite interpolation (`dsp::hermite`) instead of linear.
+- Tests: Punch bypass, harmonics, mono low end, template render; the mixer pan test runs with Punch off.
+- Not done: samples are still mono (`SampleData::mono`), stereo loops are folded; desktop UI has no Punch switch yet.
+- Handset listening check pending.

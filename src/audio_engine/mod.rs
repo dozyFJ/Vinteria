@@ -277,6 +277,7 @@ pub struct Engine {
     click_hz: f32,
     delay: Delay,
     limiter: Limiter,
+    punch: crate::effects::Punch,
     pub(super) output_gain: f32,
     comp: Compressor,
     eq_lo: [Biquad; 2],
@@ -326,6 +327,7 @@ impl Engine {
             click_hz: 1000.0,
             delay: Delay::new(sr),
             limiter: Limiter::new(),
+            punch: crate::effects::Punch::new(),
             output_gain: 1.0,
             comp: Compressor::new(),
             eq_lo: [Biquad::default(); 2],
@@ -984,7 +986,7 @@ impl Engine {
                     cg = cg.min(((v.len_s - v.elapsed) / v.fade_out_s).clamp(0.0, 1.0) as f32);
                 }
                 v.elapsed += 1.0;
-                let x = (sd.mono[i] * (1.0 - fr) + sd.mono[i + 1] * fr) * v.fade * v.gain * cg * self.lane_auto.get(v.lane).copied().unwrap_or(1.0);
+                let x = dsp::hermite(&sd.mono, i, fr) * v.fade * v.gain * cg * self.lane_auto.get(v.lane).copied().unwrap_or(1.0);
                 let track = proj.arrangement.tracks.get(v.lane);
                 match track.and_then(|track| track.output) {
                     Some(o) => ins_mono[o.min(NUM_INSERTS - 1)] += x * proj.channels[crate::mixer::CH_AUDIO].volume,
@@ -1096,7 +1098,8 @@ impl Engine {
                 self.gr_db = self.gr_db.max(gr);
             }
             let (l, r) = if proj.master_chain.is_empty() { (l, r) } else { self.master_run.process(&proj.master_chain, l, r, bpm, sr) };
-            let (l, r) = self.limiter.process(l * self.output_gain, r * self.output_gain, sr);
+            let (l, r) = self.punch.process(l * self.output_gain, r * self.output_gain, proj.punch, sr);
+            let (l, r) = self.limiter.process(l, r, sr);
             let l = if l.is_finite() { l } else { 0.0 };
             let r = if r.is_finite() { r } else { 0.0 };
             self.peaks[NUM_STRIPS][0] = self.peaks[NUM_STRIPS][0].max(l.abs());
@@ -1420,6 +1423,8 @@ mod tests {
         let peaks = |pan: f32| {
             let mut p = routed_project(Some(0));
             p.channels[NUM_CH].pan = pan;
+            // the mixer's pan alone: Punch folds the low end to mono on purpose
+            p.punch = 0.0;
             let (buf, _) = render_secs(p, 1.0);
             let l = buf.iter().step_by(2).fold(0.0f32, |m, v| m.max(v.abs()));
             let r = buf.iter().skip(1).step_by(2).fold(0.0f32, |m, v| m.max(v.abs()));

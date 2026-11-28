@@ -64,7 +64,8 @@ impl Limiter {
     }
     #[inline]
     pub fn process(&mut self, l: f32, r: f32, sr: f32) -> (f32, f32) {
-        let ceiling = 0.95;
+        // -0.9 dBFS: headroom for inter-sample peaks after Bluetooth / AAC / MP3 encoding
+        let ceiling = 0.9;
         self.buf[self.pos] = [l, r];
         // loudest sample inside the look-ahead window
         let mut peak = 0.0f32;
@@ -83,6 +84,58 @@ impl Limiter {
         // safety net: smooth saturation instead of a hard clip if a peak still gets through
         let sat = |x: f32| if x.abs() > 0.97 { x.signum() * (0.97 + 0.03 * ((x.abs() - 0.97) * 8.0).ftanh()) } else { x };
         (sat(d[0] * self.gain), sat(d[1] * self.gain))
+    }
+}
+
+/// "Punch" on the master, for beats that still hit on cheap earbuds and phone speakers:
+/// - psychoacoustic bass: harmonics of everything under ~110 Hz are added at 90–360 Hz, so the ear rebuilds an 808 the
+///   earbud cannot play;
+/// - mono low end under 120 Hz;
+/// - a soft clipper that rounds kick / 808 peaks off before the limiter (louder without the limiter pumping).
+/// `amount` 0 = off (bit-exact bypass), 1 = max.
+#[derive(Default)]
+pub struct Punch {
+    side_hp_a: Svf,
+    side_hp_b: Svf,
+    low_a: Svf,
+    low_b: Svf,
+    band_hp: Svf,
+    band_lp: Svf,
+}
+
+impl Punch {
+    pub fn new() -> Self {
+        Punch::default()
+    }
+
+    #[inline]
+    pub fn process(&mut self, l: f32, r: f32, amount: f32, sr: f32) -> (f32, f32) {
+        if amount <= 0.0 {
+            return (l, r);
+        }
+        let amount = amount.min(1.0);
+        let mut mid = (l + r) * 0.5;
+        let mut side = (l - r) * 0.5;
+        // mono below 120 Hz: the side signal goes through a 24 dB/oct high-pass
+        let (_, side_hp) = self.side_hp_a.process(side, 120.0, 0.0, sr);
+        let (_, side_hp) = self.side_hp_b.process(side_hp, 120.0, 0.0, sr);
+        side = side_hp;
+        // psychoacoustic bass: even (|x|) and odd (tanh) harmonics of the low band, kept to 90–360 Hz
+        let (low, _) = self.low_a.process(mid, 110.0, 0.0, sr);
+        let (low, _) = self.low_b.process(low, 110.0, 0.0, sr);
+        let harmonics = low.abs() * 1.6 + ((low * 4.0).ftanh() / 4.0 - low) * 2.5;
+        let (_, above) = self.band_hp.process(harmonics, 90.0, 0.0, sr);
+        let (band, _) = self.band_lp.process(above, 360.0, 0.0, sr);
+        mid += band * 1.8 * amount;
+        // soft clipper: a little drive, then peaks above the knee are rounded off (never above 1.0)
+        let drive = 1.0 + 0.5 * amount;
+        let clip = |x: f32| {
+            let x = x * drive;
+            let knee = 0.72;
+            let a = x.abs();
+            if a <= knee { x } else { x.signum() * (knee + (1.0 - knee) * ((a - knee) / (1.0 - knee)).ftanh()) }
+        };
+        (clip(mid + side), clip(mid - side))
     }
 }
 
@@ -206,5 +259,57 @@ impl Biquad {
         self.y2 = self.y1;
         self.y1 = y;
         y
+    }
+}
+
+#[cfg(test)]
+mod punch_tests {
+    use super::*;
+
+    /// energy of `x` at `hz` (one DFT bin)
+    fn bin(x: &[f32], hz: f32, sr: f32) -> f32 {
+        let (mut re, mut im) = (0.0f64, 0.0f64);
+        for (n, v) in x.iter().enumerate() {
+            let w = std::f64::consts::TAU * hz as f64 * n as f64 / sr as f64;
+            re += *v as f64 * w.cos();
+            im += *v as f64 * w.sin();
+        }
+        ((re * re + im * im).sqrt() / x.len() as f64) as f32
+    }
+
+    #[test]
+    fn punch_off_is_a_bypass() {
+        let mut p = Punch::new();
+        for n in 0..1000 {
+            let x = (n as f32 * 0.01).sin() * 0.9;
+            assert_eq!(p.process(x, -x, 0.0, 48000.0), (x, -x));
+        }
+    }
+
+    #[test]
+    fn punch_makes_a_sub_808_audible_above_90_hz_and_stays_under_full_scale() {
+        let sr = 48000.0;
+        let mut p = Punch::new();
+        // a 45 Hz "808": earbuds barely play it, its 2nd / 3rd harmonics (90 / 135 Hz) they do
+        let dry: Vec<f32> = (0..sr as usize).map(|n| (std::f32::consts::TAU * 45.0 * n as f32 / sr).sin() * 0.8).collect();
+        let wet: Vec<f32> = dry.iter().map(|&x| p.process(x, x, 0.6, sr).0).collect();
+        let tail = &wet[4800..];
+        let dry_tail = &dry[4800..];
+        assert!(bin(tail, 135.0, sr) > 10.0 * bin(dry_tail, 135.0, sr).max(1e-6), "no 3rd harmonic added");
+        assert!(bin(tail, 90.0, sr) > 0.01, "no 2nd harmonic added");
+        assert!(wet.iter().all(|v| v.is_finite() && v.abs() <= 1.0));
+    }
+
+    #[test]
+    fn punch_folds_the_low_end_to_mono() {
+        let sr = 48000.0;
+        let mut p = Punch::new();
+        let mut diff = 0.0f32;
+        for n in 0..48000 {
+            let x = (std::f32::consts::TAU * 50.0 * n as f32 / sr).sin() * 0.3;
+            let (l, r) = p.process(x, -x, 0.6, sr); // pure side signal at 50 Hz
+            if n > 9600 { diff = diff.max((l - r).abs()); }
+        }
+        assert!(diff < 0.1, "side bass still {diff}");
     }
 }

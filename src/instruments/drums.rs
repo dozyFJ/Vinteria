@@ -46,7 +46,7 @@ impl DrumVoice {
                 return 0.0;
             }
             let fr = (self.pos - i as f64) as f32;
-            let s = sd.mono[i] * (1.0 - fr) + sd.mono[i + 1] * fr;
+            let s = crate::audio_engine::dsp::hermite(&sd.mono, i, fr);
             self.pos += sd.rate as f64 / sr as f64 * pm as f64;
             return s * self.vel;
         }
