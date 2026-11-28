@@ -851,3 +851,17 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
 - Tests that need the local-only packs (808 Mafia, Phonk Kit, Yeat KanKan Kit) skip when they are absent; new test
   `cowbell_hook_stays_on_analog_without_the_pack`. `cargo test --release`: 117 passed.
 - Android handset verification pending.
+
+### Android 1.0.168
+
+- Portrait Playlist: columns show real names (instrument or first clip instead of "MIDI 3"), default bar height 48 (pinch
+  still zooms, now around the fingers), Stop / Prev / Next moved into the bottom dock next to Play, narrower right sidebar,
+  round Undo / Redo.
+- Playlist gestures: a single tap on an empty cell no longer creates a clip (double tap does, single tap deselects);
+  only the selected clip can be dragged, a swipe that starts on any other clip scrolls; steadier pinch axis.
+- Themes: "Day" replaced by "Winteria Light" (light lavender version of Winteria; a saved "Day" opens it); track / clip
+  colours have their own palette per theme (`mobile::lane_col`).
+- Piano Roll: transport and tools in two rows in portrait (+1 beat and Undo / Redo were hidden off the right edge), round
+  Stop, Zoom − no longer jumps in after a pinch below 14 px, grid lines / ruler labels / tap placement / loop and beat
+  selection follow the pattern's beats when a clip starts mid-bar.
+- Checked in a 360x780 desktop window (SYNTHESIA_MOBILE=1). Pinch and long-press need a phone: handset verification pending.

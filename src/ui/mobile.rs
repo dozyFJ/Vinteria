@@ -44,7 +44,7 @@ enum MobileTheme {
 }
 
 impl MobileTheme {
-    const ALL: [Self; 5] = [Self::Winteria, Self::DarkGraphite, Self::ToxicDark, Self::Graphite, Self::Day];
+    const ALL: [Self; 5] = [Self::Winteria, Self::Day, Self::DarkGraphite, Self::ToxicDark, Self::Graphite];
 
     #[cfg(target_arch = "wasm32")]
     const KEY: &'static str = "winteria:mobile-theme";
@@ -55,7 +55,7 @@ impl MobileTheme {
         match self {
             Self::Winteria => "Winteria",
             Self::Graphite => "Graphite Silver",
-            Self::Day => "Day",
+            Self::Day => "Winteria Light",
             Self::DarkGraphite => "Dark Graphite",
             Self::ToxicDark => "Toxic Dark",
         }
@@ -69,7 +69,7 @@ impl MobileTheme {
             #[cfg(not(target_arch = "wasm32"))]
             let saved = std::fs::read_to_string(Self::FILE).ok();
             let theme = Self::ALL.into_iter()
-                .find(|theme| saved.as_deref().map(str::trim) == Some(theme.name()))
+                .find(|theme| saved.as_deref().map(str::trim).map(|s| if s == "Day" { "Winteria Light" } else { s }) == Some(theme.name()))
                 .unwrap_or(if saved.is_none() && !is_dark() { Self::Day } else { Self::Winteria });
             std::sync::atomic::AtomicU8::new(theme as u8)
         })
@@ -96,6 +96,23 @@ impl MobileTheme {
     }
 }
 
+/// Track / clip colours of the phone UI, one palette per theme (the PC keeps theme::lane_col). Shadows the glob import.
+fn lane_col(i: usize) -> Color32 {
+    const WINTERIA: [u32; 10] = [0xA79CFF, 0xFF8FB8, 0x7FD6FF, 0xC38BFF, 0x6FE3C2, 0xFFB38A, 0x9DB4FF, 0xF2A6FF, 0x8FE88F, 0xFFD27A];
+    const LIGHT: [u32; 10] = [0x7A6BEF, 0xE0608F, 0x3A9FD6, 0xA35FE0, 0x2EAA8A, 0xE07F45, 0x5C7BE0, 0xC766D6, 0x4FA34F, 0xD49A26];
+    const SILVER: [u32; 10] = [0x9FB7D6, 0xD3A9B8, 0x86B6D9, 0xB4ABD6, 0x8FC2B6, 0xD9BE98, 0xA9BCCB, 0xC9A7CF, 0xA2C79F, 0xE0D29A];
+    const GRAPHITE: [u32; 10] = [0xC9B79C, 0xD99A86, 0x9FB3A8, 0xB3A3C2, 0x8FAFB8, 0xD6BE7F, 0xC48F8F, 0xA0A8BA, 0xB2C08A, 0xE0AC80];
+    const TOXIC: [u32; 10] = [0xB9E86D, 0x6DE8A8, 0xE6F06D, 0x6DE0D0, 0x9FD04F, 0xF0C85A, 0x8FD9E0, 0xD2F08F, 0x5FC86D, 0xE8A85A];
+    let palette = match MobileTheme::current() {
+        MobileTheme::Winteria => &WINTERIA,
+        MobileTheme::Day => &LIGHT,
+        MobileTheme::Graphite => &SILVER,
+        MobileTheme::DarkGraphite => &GRAPHITE,
+        MobileTheme::ToxicDark => &TOXIC,
+    };
+    argb(0xFF00_0000 | palette[i % palette.len()])
+}
+
 fn argb(v: u32) -> Color32 {
     Color32::from_rgba_unmultiplied((v >> 16) as u8, (v >> 8) as u8, v as u8, (v >> 24) as u8)
 }
@@ -114,48 +131,48 @@ fn mobile_color(winteria: u32, silver: u32, day: u32, graphite: u32, toxic: u32)
 
 /// main text
 fn ink() -> Color32 {
-    mobile_color(0xFFE7ECFF, 0xFFF6F8FB, 0xFF202B39, 0xFFDDDAD4, 0xFFE6ECDD)
+    mobile_color(0xFFE7ECFF, 0xFFF6F8FB, 0xFF241E3D, 0xFFDDDAD4, 0xFFE6ECDD)
 }
 /// secondary text
 fn muted() -> Color32 {
-    mobile_color(0xFFBFC1DC, 0xFFD0D6DE, 0xFF46556A, 0xFFA8A6A0, 0xFFA5B497)
+    mobile_color(0xFFBFC1DC, 0xFFD0D6DE, 0xFF625A80, 0xFFA8A6A0, 0xFFA5B497)
 }
 /// Silver accent from Chat Pulse in dark mode.
 fn p_accent() -> Color32 {
-    mobile_color(0xFFA79CFF, 0xFFEEF3F8, 0xFF345983, 0xFFC9C5BC, 0xFFB9E86D)
+    mobile_color(0xFFA79CFF, 0xFFEEF3F8, 0xFF7A6BEF, 0xFFC9C5BC, 0xFFB9E86D)
 }
 fn on_accent() -> Color32 {
-    mobile_color(0xFF17122C, 0xFF1A1B1D, 0xFFF0F2F8, 0xFF1D1D20, 0xFF15200B)
+    mobile_color(0xFF17122C, 0xFF1A1B1D, 0xFFFFFFFF, 0xFF1D1D20, 0xFF15200B)
 }
 fn p_bg() -> Color32 {
-    mobile_color(0xFF0E1017, 0xFF191A1C, 0xFFEAF0F6, 0xFF141416, 0xFF10140E)
+    mobile_color(0xFF0E1017, 0xFF191A1C, 0xFFF1EEFB, 0xFF141416, 0xFF10140E)
 }
 fn bar_fill() -> Color32 {
-    mobile_color(0xFF1C1A2A, 0xFF2B3036, 0xFFF5F8FC, 0xFF202023, 0xFF1B2317)
+    mobile_color(0xFF1C1A2A, 0xFF2B3036, 0xFFE6E1F8, 0xFF202023, 0xFF1B2317)
 }
 fn surface_fill() -> Color32 {
-    mobile_color(0xFF2D2648, 0xFF3C444E, 0xFFFAFCFF, 0xFF262629, 0xFF212D1B)
+    mobile_color(0xFF2D2648, 0xFF3C444E, 0xFFFBFAFF, 0xFF262629, 0xFF212D1B)
 }
 
 fn surface_edge() -> Color32 {
-    mobile_color(0xFF75669D, 0xFF929FAA, 0xFFA2B3CA, 0xFF686763, 0xFF59734A)
+    mobile_color(0xFF75669D, 0xFF929FAA, 0xFFB9AEE6, 0xFF686763, 0xFF59734A)
 }
 
 fn piano_note_fill() -> Color32 {
-    mobile_color(0xFFC9C0FF, 0xFFDDE4EC, 0xFFBBACE9, 0xFFBCB8AF, 0xFFA5CB69)
+    mobile_color(0xFFC9C0FF, 0xFFDDE4EC, 0xFFB4A8F5, 0xFFBCB8AF, 0xFFA5CB69)
 }
 
 fn outline() -> Color32 {
-    mobile_color(0xFF605382, 0xFF67737F, 0xFF8496AE, 0xFF4D4B48, 0xFF41543A)
+    mobile_color(0xFF605382, 0xFF67737F, 0xFF9A8FC7, 0xFF4D4B48, 0xFF41543A)
 }
 fn card_fill() -> Color32 {
-    mobile_color(0xFF252139, 0xFF323941, 0xFFDAE4EF, 0xFF29292C, 0xFF242D1D)
+    mobile_color(0xFF252139, 0xFF323941, 0xFFE9E4FA, 0xFF29292C, 0xFF242D1D)
 }
 fn selected_fill() -> Color32 {
-    mobile_color(0xFF393066, 0xFF525F6D, 0xFFC6D9F0, 0xFF3A3937, 0xFF38492B)
+    mobile_color(0xFF393066, 0xFF525F6D, 0xFFCFC6F7, 0xFF3A3937, 0xFF38492B)
 }
 fn grid_line() -> Color32 {
-    mobile_color(0xFF443A60, 0xFF525E6B, 0xFFA5B5CA, 0xFF383838, 0xFF374431)
+    mobile_color(0xFF443A60, 0xFF525E6B, 0xFFC9C1E6, 0xFF383838, 0xFF374431)
 }
 
 fn panel(p: &Painter, rect: Rect, radius: f32) {
@@ -466,7 +483,7 @@ fn list_row(ui: &mut Ui, badge: Color32, letter: &str, title: &str, sub: &str, n
     }
     let b = Rect::from_center_size(pos2(rect.left() + 32.0, rect.center().y), vec2(42.0, 42.0));
     p.circle_filled(b.center(), 21.0, badge.linear_multiply(0.85));
-    p.text(b.center(), Align2::CENTER_CENTER, letter, FontId::proportional(18.0), pick(0xFFFFFFFF, 0xFF172227));
+    p.text(b.center(), Align2::CENTER_CENTER, letter, FontId::proportional(18.0), pick(0xFFFFFFFF, 0xFF241E3D));
     p.text(pos2(rect.left() + 64.0, rect.top() + 14.0), Align2::LEFT_TOP, title, FontId::proportional(16.0), ink());
     if !sub.is_empty() {
         p.text(pos2(rect.left() + 64.0, rect.top() + 36.0), Align2::LEFT_TOP, sub, FontId::proportional(12.0), muted());
@@ -569,7 +586,7 @@ fn grid_pinch(ui: &Ui, id: egui::Id, grid: Rect) -> (bool, Option<(usize, f32, P
         }
         let baseline = *state.baseline.get_or_insert(span);
         let delta = (span - baseline).abs();
-        if state.axis.is_none() && delta.max_elem() >= 8.0 {
+        if state.axis.is_none() && delta.max_elem() >= 16.0 {
             state.axis = Some(usize::from(delta.y > delta.x));
             state.previous = baseline;
         }
@@ -616,12 +633,12 @@ fn mobile_visuals(ui: &mut Ui) {
     v.override_text_color = Some(ink());
     v.window_fill = card_fill();
     v.panel_fill = p_bg();
-    v.extreme_bg_color = mobile_color(0xFF171523, 0xFF212327, 0xFFADB9C6, 0xFF19191B, 0xFF171D13);
+    v.extreme_bg_color = mobile_color(0xFF171523, 0xFF212327, 0xFFD9D2F3, 0xFF19191B, 0xFF171D13);
     v.selection.bg_fill = selected_fill();
     v.selection.stroke = Stroke::new(1.0, p_accent());
     for (widget, fill) in [
         (&mut v.widgets.inactive, card_fill()),
-        (&mut v.widgets.hovered, mobile_color(0xFF524485, 0xFF414B57, 0xFFD4DCE7, 0xFF333234, 0xFF303F26)),
+        (&mut v.widgets.hovered, mobile_color(0xFF524485, 0xFF414B57, 0xFFD6CEF8, 0xFF333234, 0xFF303F26)),
         (&mut v.widgets.active, selected_fill()),
         (&mut v.widgets.open, bar_fill()),
     ] {
@@ -1399,19 +1416,13 @@ impl VinteriaApp {
     /// Undo / Redo for the phone (the PC has Ctrl+Z / Ctrl+Y). A finished drag or edit is one step.
     fn m_studio_undo_redo(&mut self, ui: &mut Ui, width: f32, captions: bool) -> bool {
         let (can_undo, can_redo) = (!self.undo.is_empty(), !self.redo.is_empty());
-        let undo = studio_icon(ui, width, Icon::Undo, false, "Undo");
-        if !can_undo {
-            ui.painter().rect_filled(undo.rect, 8.0, bar_fill().gamma_multiply(0.6));
-        }
+        let undo = round_icon(ui, width, Icon::Undo, can_undo, "Undo");
         let did_undo = undo.clicked() && can_undo;
         if did_undo {
             self.undo();
         }
         if captions { sidebar_caption(ui, "Undo"); }
-        let redo = studio_icon(ui, width, Icon::Redo, false, "Redo");
-        if !can_redo {
-            ui.painter().rect_filled(redo.rect, 8.0, bar_fill().gamma_multiply(0.6));
-        }
+        let redo = round_icon(ui, width, Icon::Redo, can_redo, "Redo");
         let did_redo = redo.clicked() && can_redo;
         if did_redo {
             self.redo();
@@ -1708,14 +1719,19 @@ impl VinteriaApp {
                     {
                         self.m_toggle_play(ctx);
                     }
+                    if portrait_view(ui) {
+                        self.m_dock_transport_buttons(ui, ctx);
+                    }
                     let space = ui.available_width().max(12.0);
                     let (rect, scrub) = ui.allocate_exact_size(vec2(space, 44.0), Sense::click_and_drag());
                     let track = Rect::from_center_size(rect.center() + vec2(0.0, 7.0), vec2((rect.width() - 14.0).max(1.0), 5.0));
                     let head = track.left() + track.width() * (tick as f32 / end as f32).clamp(0.0, 1.0);
                     let p = ui.painter();
                     let caption_y = rect.top() + 9.0;
-                    p.text(pos2(track.left(), caption_y), Align2::LEFT_CENTER,
-                        "Position", FontId::proportional(11.0), muted());
+                    if track.width() > 150.0 {
+                        p.text(pos2(track.left(), caption_y), Align2::LEFT_CENTER,
+                            "Position", FontId::proportional(11.0), muted());
+                    }
                     p.text(pos2(track.right(), caption_y), Align2::RIGHT_CENTER,
                         format!("Bar {} / {bars}", bar.saturating_add(1).min(bars)),
                         FontId::proportional(11.0), ink());
@@ -1806,22 +1822,23 @@ impl VinteriaApp {
         }
     }
 
-    fn m_studio_sidebar_transport(&mut self, ui: &mut Ui, ctx: &egui::Context) {
+    /// Stop / previous bar / next bar beside Play in the bottom dock, so the whole transport sits in one place.
+    fn m_dock_transport_buttons(&mut self, ui: &mut Ui, ctx: &egui::Context) {
         if dock_icon(ui, Icon::Stop, false, "Stop").clicked() {
             self.m_stop(ctx);
         }
-        sidebar_caption(ui, "Stop");
         let tick = self.shared.position.load(Ordering::Relaxed);
         let bar = tick / TICKS_PER_BAR;
         if dock_icon(ui, Icon::Rewind, false, "Previous bar").clicked() {
             let previous = if tick % TICKS_PER_BAR == 0 { bar.saturating_sub(1) } else { bar };
             self.m_seek(ctx, previous * TICKS_PER_BAR);
         }
-        sidebar_caption(ui, "Prev bar");
         if dock_icon(ui, Icon::Forward, false, "Next bar").clicked() {
             self.m_seek(ctx, (bar + 1).min(self.m_studio_transport_bars() - 1) * TICKS_PER_BAR);
         }
-        sidebar_caption(ui, "Next bar");
+    }
+
+    fn m_studio_sidebar_transport(&mut self, ui: &mut Ui, ctx: &egui::Context) {
         let (name, symbol) = STUDIO_SECTIONS.get(self.m_sec).copied().unwrap_or(STUDIO_SECTIONS[0]);
         let views = dock_icon(ui, symbol, true, name);
         let sheet = egui::Id::new("m_studio_menu_overlay");
@@ -1882,9 +1899,9 @@ impl VinteriaApp {
     fn m_studio_portrait_sidebar(&mut self, ctx: &egui::Context) {
         let drawer = egui::Id::new("m_studio_project_drawer");
         egui::SidePanel::right("m_studio_portrait_sidebar")
-            .resizable(false).exact_width(TOUCH + 14.0).show_separator_line(false)
+            .resizable(false).exact_width(TOUCH + 6.0).show_separator_line(false)
             .frame(Frame::none().fill(surface_fill()).stroke(Stroke::new(1.0, surface_edge()))
-                .inner_margin(Margin::symmetric(3.0, 4.0)))
+                .inner_margin(Margin::symmetric(1.0, 4.0)))
             .show(ctx, |ui| {
                 mobile_visuals(ui);
                 mobile_scroll(egui::ScrollArea::vertical()).id_salt("m_studio_sidebar_tools")
@@ -3175,7 +3192,7 @@ impl VinteriaApp {
                         self.m_start_playback_in_range(ui.ctx(), false, pi, looping, range);
                     }
                 }
-                if studio_icon(ui, 44.0, Icon::Stop, false, "Stop").clicked() {
+                if round_icon(ui, 44.0, Icon::Stop, true, "Stop").clicked() {
                     self.m_stop(ui.ctx());
                 }
                 if !portrait {
@@ -3248,7 +3265,7 @@ impl VinteriaApp {
                                     }
                                 });
                             if p_button(ui, "Zoom −", false, vec2(70.0, 44.0)).clicked() {
-                                step_w = (step_w / 1.25).max(14.0);
+                                step_w = (step_w / 1.25).max(8.0);
                                 zoom_changed = true;
                             }
                             if p_button(ui, "Zoom +", false, vec2(70.0, 44.0)).clicked() {
@@ -3301,9 +3318,14 @@ impl VinteriaApp {
         };
         let mut grid_ui;
         let ui = if portrait {
+            // two rows: the transport, then the tools and +1 beat / Undo / Redo (they used to hide off the right edge)
             mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_piano_toolbar_scroll")
                 .auto_shrink([false, true]).show(ui, |ui| {
-                    ui.horizontal(|ui| toolbar(ui, 2));
+                    ui.horizontal(|ui| toolbar(ui, 0));
+                });
+            mobile_scroll(egui::ScrollArea::horizontal()).id_salt("m_piano_toolbar_scroll_tools")
+                .auto_shrink([false, true]).show(ui, |ui| {
+                    ui.horizontal(|ui| toolbar(ui, 1));
                 });
             ui
         } else {
@@ -3534,11 +3556,12 @@ impl VinteriaApp {
             }
             let beat = crate::sequencer::PPQ;
             let division = if snap == 1 { beat } else { visible_grid_step(snap, pixels_per_tick).min(beat) };
-            let first_tick = ((p.clip_rect().left() - rect.left()).max(0.0) / pixels_per_tick) as u32;
-            let last_tick = (((p.clip_rect().right() - rect.left()).max(0.0) / pixels_per_tick).ceil() as u32)
+            let first_tick = clip_start + ((p.clip_rect().left() - rect.left()).max(0.0) / pixels_per_tick) as u32;
+            let last_tick = clip_start + (((p.clip_rect().right() - rect.left()).max(0.0) / pixels_per_tick).ceil() as u32)
                 .min(duration);
+            // `tick` is a pattern tick: a clip trimmed from the left keeps the lines on the pattern's beats
             for tick in (first_tick.div_ceil(division) * division..=last_tick).step_by(division as usize) {
-                let x = rect.left() + tick as f32 * pixels_per_tick;
+                let x = rect.left() + (tick - clip_start) as f32 * pixels_per_tick;
                 let stroke = if tick % TICKS_PER_BAR == 0 {
                     Stroke::new(1.5, surface_edge())
                 } else if tick % beat == 0 {
@@ -3796,9 +3819,9 @@ impl VinteriaApp {
                     pitch = (i32::from(pitch) + group_delta.1) as u8;
                 }
                 let visual = body(len, pitch, start);
-                p.rect_filled(visual, 5.0, if highlighted { mobile_color(0xFFE7ECFF, 0xFFDCEAFF, 0xFFC5DDF7, 0xFFE0DBCF, 0xFFD8FBA1) } else { piano_note_fill() });
+                p.rect_filled(visual, 5.0, if highlighted { mobile_color(0xFFE7ECFF, 0xFFDCEAFF, 0xFFD8D0FF, 0xFFE0DBCF, 0xFFD8FBA1) } else { piano_note_fill() });
                 if highlighted {
-                    p.rect_stroke(visual, 5.0, Stroke::new(1.4, mobile_color(0xFFA79CFF, 0xFF89B3FF, 0xFF345983, 0xFFC9C5BC, 0xFFB9E86D)));
+                    p.rect_stroke(visual, 5.0, Stroke::new(1.4, mobile_color(0xFFA79CFF, 0xFF89B3FF, 0xFF7A6BEF, 0xFFC9C5BC, 0xFFB9E86D)));
                 }
                 if note.slide { piano_slide_mark(&p, visual); }
                 let grip = Rect::from_center_size(visual.right_center() - vec2(3.0, 0.0), vec2(2.0, 10.0));
@@ -3838,7 +3861,7 @@ impl VinteriaApp {
                     let row = (((pt.y - rect.top()) / row_h) as usize).min(rows - 1);
                     let pitch = high_pitch - row as u8;
                     let raw = ((pt.x - rect.left()) / pixels_per_tick).max(0.0) as u32;
-                    let tick = clip_start + (raw / snap * snap).min((duration - 1) / snap * snap);
+                    let tick = ((clip_start + raw.min(duration - 1)) / snap * snap).max(clip_start);
                     if tick < editable_end {
                         if slide_mode {
                             place_note = Some((tick, pitch));
@@ -3950,7 +3973,7 @@ impl VinteriaApp {
             None
         };
         let painter = ui.painter_at(ruler);
-        painter.rect_filled(ruler, 5.0, pick(0xFFCED6E0, 0xFFE7ECF2));
+        painter.rect_filled(ruler, 5.0, pick(0xFFCED6E0, 0xFFE6E1F8));
         for row in 0..rows {
             let pitch = high_pitch - row as u8;
             let y = out.inner.y + row as f32 * row_h;
@@ -3962,7 +3985,7 @@ impl VinteriaApp {
             let down = side_pressed == Some(pitch) || held.is_some_and(|(_, key)| key == pitch);
             if black {
                 let key = Rect::from_min_size(lane.min, vec2(lane.width() * 0.62, row_h));
-                painter.rect_filled(key.shrink2(vec2(0.0, 1.0)), 2.0, if down { lane_col(3) } else { pick(0xFF242B38, 0xFF3A4656) });
+                painter.rect_filled(key.shrink2(vec2(0.0, 1.0)), 2.0, if down { lane_col(3) } else { pick(0xFF242B38, 0xFF4A4170) });
             } else {
                 if down {
                     painter.rect_filled(lane.shrink(0.5), 2.0, lane_col(3));
@@ -3997,7 +4020,7 @@ impl VinteriaApp {
                     let origin = if ruler_hit.clicked() { point } else {
                         ui.input(|input| input.pointer.press_origin()).unwrap_or(point)
                     };
-                    let beat_at = |x| clip_start + (tick_at(x) - clip_start) / beat * beat;
+                    let beat_at = |x| (tick_at(x) / beat * beat).max(clip_start);
                     let (a, b) = (beat_at(origin.x), beat_at(point.x));
                     selection = Some((a.min(b), (a.max(b) + beat).min(pattern_end)));
                 }
@@ -4011,8 +4034,8 @@ impl VinteriaApp {
             });
         } else if !pinching && ruler_hit.dragged() {
             if let Some((origin, point)) = ui.input(|input| input.pointer.press_origin()).zip(ruler_hit.interact_pointer_pos()) {
-                let a = clip_start + (tick_at(origin.x) - clip_start) / beat * beat;
-                let b = clip_start + (tick_at(point.x) - clip_start) / beat * beat;
+                let a = (tick_at(origin.x) / beat * beat).max(clip_start);
+                let b = (tick_at(point.x) / beat * beat).max(clip_start);
                 let range = (a.min(b), (a.max(b) + beat).min(pattern_end));
                 if loop_range != Some(range) {
                     loop_range = Some(range);
@@ -4058,8 +4081,9 @@ impl VinteriaApp {
                 d.remove::<(u32, u32)>(id);
             }
         });
-        for step in (0..steps).step_by(4) {
-            let x = out.inner.x + step as f32 * step_w;
+        let first_step = (clip_start / TICKS_PER_STEP) as usize;
+        for step in (first_step.div_ceil(4) * 4..first_step + steps).step_by(4) {
+            let x = out.inner.x + (step - first_step) as f32 * step_w;
             if x + 36.0 <= timeline.left() || x >= timeline.right() {
                 continue;
             }
@@ -6210,9 +6234,9 @@ impl VinteriaApp {
                 let track = &self.project.arrangement.tracks[lane];
                 let audio = track.kind == crate::arrangement::TrackKind::Audio;
                 let base_fill = if audio {
-                    mobile_color(0xFF1B1A2B, 0xFF232A2B, 0xFFDDEBED, 0xFF222225, 0xFF1B2416)
+                    mobile_color(0xFF1B1A2B, 0xFF232A2B, 0xFFE7E2F7, 0xFF222225, 0xFF1B2416)
                 } else {
-                    mobile_color(0xFF191725, 0xFF25282D, 0xFFE1E9F3, 0xFF1C1C1F, 0xFF181F14)
+                    mobile_color(0xFF191725, 0xFF25282D, 0xFFEEEAFB, 0xFF1C1C1F, 0xFF181F14)
                 };
                 let row_fill = if lane == self.arr.sel_lane {
                     tint(base_fill, selected_fill(), 0.24)
@@ -6223,7 +6247,7 @@ impl VinteriaApp {
                 if lane == self.arr.sel_lane {
                     p.rect_filled(Rect::from_min_size(r.min, vec2(3.0, r.height())), 0.0, lane_col(lane));
                 }
-                p.line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, pick(0xFF535E68, 0xFF92A7BF)));
+                p.line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, pick(0xFF535E68, 0xFFA79CD8)));
             }
             for (index, item) in rows.iter().enumerate() {
                 if let PlaylistRow::FxAutomation(lane, clip) = *item {
@@ -6254,7 +6278,7 @@ impl VinteriaApp {
                         }
                         let x = gx + division as f32 * gap;
                         p.line_segment([pos2(x, gy), pos2(x, gy + full_h)],
-                            Stroke::new(0.65, pick(0xFF383F47, 0xFFB7C5D7)));
+                            Stroke::new(0.65, pick(0xFF383F47, 0xFFCBC3EA)));
                     }
                 }
             }
@@ -6263,7 +6287,7 @@ impl VinteriaApp {
                 let strong = b % 4 == 0;
                 p.line_segment([pos2(x, gy), pos2(x, gy + full_h)],
                     Stroke::new(if strong { 1.6 } else { 1.15 },
-                        if strong { pick(0xFF98A6B3, 0xFF637C9C) } else { pick(0xFF677681, 0xFF839AB6) }));
+                        if strong { pick(0xFF98A6B3, 0xFF6E62A3) } else { pick(0xFF677681, 0xFF9388C4) }));
             }
             for (i, c) in self.project.arrangement.clips.iter().enumerate() {
                 let Some(row) = track_rows.get(c.lane).copied().flatten() else { continue; };
@@ -6354,7 +6378,7 @@ impl VinteriaApp {
                     box_hits.push(i);
                 }
                 if in_box || (box_area.is_none() && self.arr.is_sel(i)) {
-                    p.rect_stroke(r.shrink(1.0), 5.0, Stroke::new(1.8, pick(0xFFF2F6FF, 0xFF243D62)));
+                    p.rect_stroke(r.shrink(1.0), 5.0, Stroke::new(1.8, pick(0xFFF2F6FF, 0xFF3B2F7A)));
                 }
                 let pattern = (!c.audio).then(|| self.project.patterns.get(c.pattern)).flatten();
                 let notes_visible = pattern.is_some_and(|pattern| !pattern.notes.is_empty()) && r.height() >= 32.0;
@@ -7133,10 +7157,19 @@ impl VinteriaApp {
             return;
         }
         let mut size = ui.data(|d| d.get_temp::<egui::Vec2>(id.with("size")))
-            .unwrap_or(vec2((grid.width() / 3.0).clamp(66.0, 112.0), 74.0));
+            .unwrap_or(vec2((grid.width() / 3.0).clamp(66.0, 112.0), 48.0));
         let (pinching, zoom) = grid_pinch(ui, id.with("pinch"), grid);
-        if let Some((axis, factor, _)) = zoom {
+        let mut pinch_offset = None;
+        if let Some((axis, factor, center)) = zoom {
+            // zoom around the fingers: the cell under the pinch centre stays under it
+            let before = size[axis];
             size[axis] = (size[axis] * factor).clamp(42.0, 200.0);
+            let applied = size[axis] / before;
+            if (applied - 1.0).abs() > f32::EPSILON {
+                let anchor = (center[axis] - grid.min[axis]).max(0.0);
+                let offset = ui.data(|d| d.get_temp::<egui::Vec2>(id.with("offset"))).unwrap_or_default()[axis];
+                pinch_offset = Some((axis, ((offset + anchor) * applied - anchor).max(0.0)));
+            }
             ui.data_mut(|d| d.insert_temp(id.with("size"), size));
         }
         let column = size.x;
@@ -7170,6 +7203,11 @@ impl VinteriaApp {
                 scroll = scroll.vertical_scroll_offset(y);
             }
         }
+        match pinch_offset {
+            Some((0, x)) => scroll = scroll.horizontal_scroll_offset(x),
+            Some((_, y)) => scroll = scroll.vertical_scroll_offset(y),
+            None => {}
+        }
 
         let mut picked_clip = None;
         let mut open = None;
@@ -7194,8 +7232,8 @@ impl VinteriaApp {
                 let rect = Rect::from_min_size(pos2(area.left() + i as f32 * column, area.top()), vec2(column, area.height()));
                 if !rect.intersects(visible) { continue; }
                 let base = if self.project.arrangement.kind(lane) == TrackKind::Audio {
-                    mobile_color(0xFF1B1A2B, 0xFF232A2B, 0xFFDDEBED, 0xFF222225, 0xFF1B2416)
-                } else { mobile_color(0xFF191725, 0xFF25282D, 0xFFE1E9F3, 0xFF1C1C1F, 0xFF181F14) };
+                    mobile_color(0xFF1B1A2B, 0xFF232A2B, 0xFFE7E2F7, 0xFF222225, 0xFF1B2416)
+                } else { mobile_color(0xFF191725, 0xFF25282D, 0xFFEEEAFB, 0xFF1C1C1F, 0xFF181F14) };
                 let fill = if self.arr.sel_lane == lane { tint(base, selected_fill(), 0.28) } else { base };
                 p.rect_filled(rect, 0.0, fill);
                 p.vline(rect.left(), rect.y_range(), Stroke::new(1.0, grid_line()));
@@ -7231,8 +7269,10 @@ impl VinteriaApp {
                 let clip_id = id.with(("clip", index));
                 if !bounds_at.intersects(visible) && !ctx.is_being_dragged(clip_id) { continue; }
                 let locked = self.project.arrangement.tracks[clip.lane].playlist_locked;
+                // tap selects, then the selected clip can be dragged; a swipe that starts on any other clip scrolls
+                let movable = self.arr.sel_clip == Some(index) || ctx.is_being_dragged(clip_id);
                 let hit = ui.interact(bounds_at, clip_id, if locked || pinching { Sense::hover() }
-                    else if select { Sense::click() } else { Sense::click_and_drag() });
+                    else if select || !movable { Sense::click() } else { Sense::click_and_drag() });
                 let rect = bounds_at.shrink2(vec2(3.0, 1.0));
                 let track_color = lane_col(clip.lane);
                 let fill = tint(card_fill(), track_color, 0.34);
@@ -7254,8 +7294,8 @@ impl VinteriaApp {
                     let short = (rect.width() < 87.0)
                         .then(|| name.strip_prefix("MIDI clip ").filter(|n| n.parse::<usize>().is_ok()))
                         .flatten().map(|n| format!("MIDI {n}"));
-                    fit_label(&p, rect.shrink2(vec2(4.0, 0.0)), rect.top() + 8.0,
-                        short.as_deref().unwrap_or(name), ink(), 11.0);
+                    fit_label(&p, rect.shrink2(vec2(3.0, 0.0)), rect.top() + 8.0,
+                        short.as_deref().unwrap_or(name), ink(), if rect.width() < 60.0 { 9.5 } else { 11.0 });
                 }
                 if let Some(pattern) = pattern.filter(|_| rect.height() > 27.0) {
                     // mini notes: time runs down the clip, pitch across it, each note as long as it plays
@@ -7397,12 +7437,16 @@ impl VinteriaApp {
                     self.arr.sel_clip = None;
                     ui.data_mut(|d| d.remove::<Pos2>(box_id));
                 }
-            } else if background.clicked() && !pinching && !select
+            } else if background.double_clicked() && !pinching && !select
                 && !ui.data(|d| d.get_temp::<bool>(egui::Id::new(CLIP_MENU_DISMISSED))).unwrap_or(false)
             {
+                // a double tap creates a clip; a single tap (often the end of a scroll) never does
                 if let Some(point) = background.interact_pointer_pos() {
                     create = lane_at(point.x).map(|lane| (lane, tick_at(point.y)));
                 }
+            } else if background.clicked() && !pinching && !select {
+                self.arr.sel_clip = None;
+                self.arr.sel.clear();
             }
             if ui.rect_contains_pointer(area) && ui.input(|i| i.pointer.primary_released()) {
                 if let Some(point) = ctx.pointer_interact_pos() {
@@ -7481,8 +7525,9 @@ impl VinteriaApp {
             let label: String = letters.into_iter().rev().collect();
             painter.text(pos2(cell.center().x, cell.top() + 11.0), Align2::CENTER_CENTER,
                 label, FontId::proportional(12.0), ink());
-            fit_label(&painter, cell.shrink2(vec2(6.0, 0.0)).intersect(header), cell.top() + 28.0,
-                &track.name, if track.mute { muted() } else { ink() }, 11.0);
+            let shown = vertical_track_label(&self.project, lane);
+            fit_label(&painter, cell.shrink2(vec2(4.0, 0.0)).intersect(header), cell.top() + 28.0,
+                &shown, if track.mute { muted() } else { ink() }, if column < 64.0 { 10.0 } else { 11.0 });
 
             let hit = ui.interact(hit_rect, id.with(("column_header", lane)), Sense::click())
                 .on_hover_text(format!("{} · {}", track.name, if track.kind == TrackKind::Audio { "Audio" } else { "MIDI" }));
@@ -8863,8 +8908,8 @@ fn sidebar_caption(ui: &mut Ui, label: &str) {
 }
 
 fn sidebar_caption_color(ui: &mut Ui, label: &str, color: Color32) {
-    let (rect, _) = ui.allocate_exact_size(vec2(TOUCH + 6.0, 12.0), Sense::hover());
-    ui.painter().text(rect.center(), Align2::CENTER_CENTER, label, FontId::proportional(9.0), color);
+    let (rect, _) = ui.allocate_exact_size(vec2(TOUCH + 4.0, 12.0), Sense::hover());
+    ui.painter().text(rect.center(), Align2::CENTER_CENTER, label, FontId::proportional(8.5), color);
 }
 
 fn dock_icon(ui: &mut Ui, symbol: Icon, active: bool, label: &str) -> Response {
@@ -8878,6 +8923,40 @@ fn dock_menu(ui: &mut Ui, symbol: Icon, label: &str, active: bool, body: impl Fn
     let menu = egui::menu::menu_custom_button(ui, button, body);
     paint_dock_icon(ui, &menu.response, symbol, active);
     menu.response.on_hover_text(label);
+}
+
+/// A round button like the dock icons; a disabled one is drawn dimmed instead of with a dark square over it.
+fn round_icon(ui: &mut Ui, width: f32, symbol: Icon, enabled: bool, label: &str) -> Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(width.max(TOUCH), TOUCH), Sense::click());
+    let circle = Rect::from_center_size(rect.center(), vec2(TOUCH, TOUCH)).shrink(2.0);
+    let p = ui.painter();
+    let radius = circle.height() * 0.5;
+    p.rect_filled(circle, radius, card_fill());
+    let color = if enabled { ink() } else { muted().gamma_multiply(0.55) };
+    if enabled {
+        control_state(p, circle, radius, &response, color);
+    }
+    icon(p, symbol, circle.center(), color);
+    response.on_hover_text(label)
+}
+
+/// The name a phone Playlist column shows: generic names ("MIDI 3", "Audio 1") give way to the instrument or the first
+/// clip on the track, so narrow columns show "808 Bass" or "Kick" instead of "MI…".
+fn vertical_track_label(project: &crate::project::Project, lane: usize) -> String {
+    let Some(track) = project.arrangement.tracks.get(lane) else { return String::new() };
+    let generic = ["MIDI ", "Audio ", "Track "].iter().any(|prefix| track.name.strip_prefix(prefix)
+        .is_some_and(|n| n.trim().parse::<u32>().is_ok()));
+    if !generic {
+        return track.name.clone();
+    }
+    if let Some(instrument) = track.instrument {
+        return instrument.name().to_string();
+    }
+    project.arrangement.clips.iter().filter(|c| c.lane == lane)
+        .find_map(|c| if c.audio { project.audio_pool.get(c.pattern).map(|s| s.name.clone()) }
+            else { project.patterns.get(c.pattern).map(|p| p.name.clone()) })
+        .filter(|n| !n.starts_with("MIDI clip ") && !n.is_empty())
+        .unwrap_or_else(|| track.name.clone())
 }
 
 fn studio_icon(ui: &mut Ui, width: f32, symbol: Icon, active: bool, label: &str) -> Response {
@@ -8910,7 +8989,7 @@ fn mobile_side_editor(ctx: &egui::Context, id: egui::Id, title: &str, side: egui
             let (rect, _) = ui.allocate_exact_size(vec2(width, screen.height()), Sense::click());
             let corners = if right { egui::Rounding { nw: 18.0, sw: 18.0, ..Default::default() } }
                 else { egui::Rounding { ne: 18.0, se: 18.0, ..Default::default() } };
-            ui.painter().rect_filled(rect, corners, mobile_color(0xFF191628, 0xFF272D35, 0xFFEAF0F6, 0xFF1B1B1E, 0xFF171F13));
+            ui.painter().rect_filled(rect, corners, mobile_color(0xFF191628, 0xFF272D35, 0xFFF1EEFB, 0xFF1B1B1E, 0xFF171F13));
             ui.painter().rect_stroke(rect, corners, Stroke::new(1.0, surface_edge().gamma_multiply(0.7)));
             let header = Rect::from_min_size(rect.min, vec2(width, 54.0));
             let header_corners = egui::Rounding { sw: 0.0, se: 0.0, ..corners };
