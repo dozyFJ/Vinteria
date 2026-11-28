@@ -488,11 +488,28 @@ fn list_row(ui: &mut Ui, badge: Color32, letter: &str, title: &str, sub: &str, n
     if !sub.is_empty() {
         p.text(pos2(rect.left() + 64.0, rect.top() + 36.0), Align2::LEFT_TOP, sub, FontId::proportional(12.0), muted());
     }
-    if !note.is_empty() {
+    if note == "Add" {
+        // an action, drawn as a button rather than a caption
+        let pill = Rect::from_min_size(pos2(rect.right() - 66.0, rect.center().y - 16.0), vec2(52.0, 32.0));
+        p.rect_filled(pill, 16.0, if resp.is_pointer_button_down_on() { p_accent() } else { p_accent().gamma_multiply(0.22) });
+        p.rect_stroke(pill, 16.0, Stroke::new(1.0, p_accent()));
+        p.text(pill.center(), Align2::CENTER_CENTER, note, FontId::proportional(13.0),
+            if resp.is_pointer_button_down_on() { on_accent() } else { ink() });
+    } else if !note.is_empty() {
         p.text(pos2(rect.right() - 14.0, rect.top() + 16.0), Align2::RIGHT_TOP, note, FontId::proportional(11.0), muted());
     }
     ui.add_space(8.0);
     resp
+}
+
+/// Up to two letters for a badge: "Poly Synth" -> "PS", "808 Bass" -> "8B", "Filter" -> "Fi".
+fn initials(name: &str) -> String {
+    let words: Vec<&str> = name.split(|c: char| c.is_whitespace() || c == '(' || c == '-').filter(|w| !w.is_empty()).collect();
+    match words.as_slice() {
+        [one] => one.chars().take(2).collect(),
+        [a, b, ..] => a.chars().take(1).chain(b.chars().take(1)).collect::<String>().to_uppercase(),
+        [] => "?".into(),
+    }
 }
 
 fn control_state(p: &Painter, rect: Rect, radius: f32, response: &Response, foreground: Color32) {
@@ -736,6 +753,7 @@ impl VinteriaApp {
     }
 
     pub(super) fn mobile_ui(&mut self, ctx: &egui::Context) {
+        super::theme::set_mobile_accent(Some(p_accent()));
         let crash_id = egui::Id::new("m_crash_report");
         if !ctx.data(|d| d.get_temp::<bool>(egui::Id::new("m_crash_checked")).unwrap_or(false)) {
             ctx.data_mut(|d| d.insert_temp(egui::Id::new("m_crash_checked"), true));
@@ -1191,6 +1209,28 @@ impl VinteriaApp {
             });
     }
 
+    /// Empty project list: say so and offer the two ways to start.
+    fn m_empty_projects(&mut self, ui: &mut Ui) {
+        ui.label(RichText::new("No projects yet. Start one:").color(muted()));
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            let width = ((ui.available_width() - 8.0) / 2.0).max(80.0);
+            if p_button(ui, "+ New project", true, vec2(width, 44.0)).clicked() {
+                let ctx = ui.ctx().clone();
+                if self.m_save_pending_project(&ctx) {
+                    self.new_project();
+                    if self.m_save_project_to_list(&ctx) {
+                        self.m_open_studio(0);
+                    }
+                }
+            }
+            if p_button(ui, "From template", false, vec2(width, 44.0)).clicked() {
+                self.m_tab = 0;
+                self.m_sec = 2;
+            }
+        });
+    }
+
     fn m_home(&mut self, ui: &mut Ui) {
         mobile_scroll(egui::ScrollArea::vertical()).id_salt("m_home_scroll")
             .auto_shrink([false, false]).show(ui, |ui| {
@@ -1269,10 +1309,10 @@ impl VinteriaApp {
                 if self.m_needs_project_save() || error.is_some() {
                     self.m_unsaved_project_actions(ui);
                 }
-                let projects = self.hub_cache.get_or_insert_with(|| hub_projects(&self.recent));
-                if projects.is_empty() {
-                    ui.label(RichText::new("No projects yet.").color(muted()));
+                if self.hub_cache.get_or_insert_with(|| hub_projects(&self.recent)).is_empty() {
+                    self.m_empty_projects(ui);
                 }
+                let projects = self.hub_cache.get_or_insert_with(|| hub_projects(&self.recent));
                 let width = ui.available_width();
                 for (index, (path, _, _)) in projects.iter().enumerate() {
                     let name = path.file_stem().and_then(|name| name.to_str()).unwrap_or("Project");
@@ -1350,7 +1390,7 @@ impl VinteriaApp {
                 });
                 ui.add_enabled_ui(accepts_instrument, |ui| {
                     for (index, track) in Track::ALL.into_iter().enumerate() {
-                        if list_row(ui, lane_col(index), "I", track.name(), "Instrument", "Add", false).clicked() {
+                        if list_row(ui, lane_col(index), &initials(track.name()), track.name(), "Instrument", "Add", false).clicked() {
                             instrument = Some(track);
                         }
                     }
@@ -1362,7 +1402,7 @@ impl VinteriaApp {
                 }
                 ui.add_enabled_ui(destination.is_some(), |ui| {
                     for (index, kind) in crate::fx::ALL.into_iter().enumerate() {
-                        if list_row(ui, lane_col(index), "FX", kind.name(), kind.category(), "Add", false).clicked() {
+                        if list_row(ui, lane_col(index), &initials(kind.name()), kind.name(), kind.category(), "Add", false).clicked() {
                             effect = Some(kind);
                         }
                     }
@@ -2456,8 +2496,11 @@ impl VinteriaApp {
                         self.hub_cache.as_deref().unwrap_or_default().iter().map(|(path, _, _)| path.clone()).collect()
                     };
                     if items.is_empty() {
-                        let blank = if backups { "No backups yet." } else { "No projects yet." };
-                        ui.label(RichText::new(blank).color(muted()));
+                        if backups {
+                            ui.label(RichText::new("No backups yet.").color(muted()));
+                        } else {
+                            self.m_empty_projects(ui);
+                        }
                     }
                     if section == 0 {
                         let width = ((ui.available_width() - ui.spacing().item_spacing.x) * 0.5).max(1.0);
@@ -5021,7 +5064,7 @@ impl VinteriaApp {
         let ruler_width = 34.0;
         let header = 34.0;
         let columns = BANK as f32;
-        let width_limit = (ui.available_width() - ruler_width) / columns - gap;
+        let width_limit = (ui.available_width() - ruler_width - 12.0) / columns - gap;
         let height_limit = (ui.available_height() - header) / columns - gap;
         let pad_size = width_limit.min(height_limit).clamp(44.0, 74.0);
         let beat = TICKS_PER_BAR / 4;

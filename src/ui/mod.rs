@@ -2432,6 +2432,7 @@ impl eframe::App for VinteriaApp {
             self.publish_edits();
             return;
         }
+        theme::set_mobile_accent(None);
         // the selected Playlist track is the one whose sampler plays live notes
         if self.arr.sel_lane != self.sent_lane {
             self.sent_lane = self.arr.sel_lane;

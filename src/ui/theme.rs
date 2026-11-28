@@ -221,7 +221,25 @@ pub fn DARK() -> Color32 { aos_tok(0.92, -0.80).unwrap_or_else(|| pk(0x11181E, 0
 pub fn INSET() -> Color32 { aos_tok(-0.70, -0.78).unwrap_or_else(|| pk(0x1B2127, 0x0C0F12)) }
 
 /// accent colours: (light, dark) per accent set -> [primary, secondary, highlight / playhead]
+/// The phone UI's accent (0 = none): shared widgets (knobs, sliders) inside mobile sheets follow the mobile theme
+/// instead of the desktop accent. Set every frame by the mobile UI, cleared by the desktop one.
+static MOBILE_ACCENT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn set_mobile_accent(color: Option<Color32>) {
+    let v = color.map_or(0, |c| 0xFF00_0000 | (u32::from(c.r()) << 16) | (u32::from(c.g()) << 8) | u32::from(c.b()));
+    MOBILE_ACCENT.store(v, Ordering::Relaxed);
+}
+
 fn acc(slot: usize) -> Color32 {
+    let mobile = MOBILE_ACCENT.load(Ordering::Relaxed);
+    if mobile != 0 {
+        let base = Color32::from_rgb((mobile >> 16) as u8, (mobile >> 8) as u8, mobile as u8);
+        return match slot {
+            0 => base,
+            1 => lerp_rgb(base, Color32::WHITE, 0.30),
+            _ => lerp_rgb(base, Color32::WHITE, 0.55),
+        };
+    }
     const SETS: [[(u32, u32); 3]; 6] = [
         [(0x0E9FC4, 0x4FD8F5), (0x1FA97A, 0x3DDC97), (0xE59A00, 0xFFB020)],
         [(0x1FA97A, 0x3DDC97), (0x0E9FC4, 0x4FD8F5), (0xE59A00, 0xFFB020)],

@@ -865,3 +865,16 @@ Piano Roll, ideas from FL Studio's PC Piano Roll:
   Stop, Zoom − no longer jumps in after a pinch below 14 px, grid lines / ruler labels / tap placement / loop and beat
   selection follow the pattern's beats when a clip starts mid-bar.
 - Checked in a 360x780 desktop window (SYNTHESIA_MOBILE=1). Pinch and long-press need a phone: handset verification pending.
+
+### Android 1.0.169 — global pass
+
+- Static: clippy correctness/suspicious clean (only a harmless unreachable `_` in fx.rs); tests 117 passed.
+- Walked every phone screen in 360x780 and 780x360 (Home, Projects, Plugin Store, Settings, Templates, project drawer,
+  Playlist, Drum Rack, Launchpad, Mixer, Piano Roll, track settings).
+- Fixed: Launchpad scene column was cut off at the right edge; shared desktop widgets (knobs, sliders) inside phone sheets
+  used the desktop Cyan accent — they now follow the phone theme (`theme::set_mobile_accent`); Plugin Store badges show
+  initials instead of a lone "I"/"FX" and "Add" is a real pill button; empty project lists offer "+ New project" and
+  "From template".
+- Known, not fixed: landscape bottom dock's last icon sits under the right edge (the dock scrolls); Drum Rack has three
+  control rows above the grid; Mixer FX slot list takes half the width; values under knobs use the monospace font.
+- Handset verification pending.
